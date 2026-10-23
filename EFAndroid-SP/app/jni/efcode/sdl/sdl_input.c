@@ -25,6 +25,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #else
 #	include <SDL.h>
 #endif
+#include <SDL_vulkan.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -471,7 +472,10 @@ static void IN_DeactivateMouse( qboolean isFullscreen, qboolean showSystemCursor
 			} else
 #endif
 			{
-				SDL_WarpMouseInWindow( SDL_window, cls.glconfig.vidWidth / 2, cls.glconfig.vidHeight / 2 );
+				// window coordinates are points; vidWidth is pixels (differs with r_highdpi)
+				int ww, wh;
+				SDL_GetWindowSize( SDL_window, &ww, &wh );
+				SDL_WarpMouseInWindow( SDL_window, ww / 2, wh / 2 );
 			}
 		}
 
@@ -495,6 +499,17 @@ void IN_UpdateMouseMenuPosition( int xabs, int yabs, int *xrelp, int *yrelp ) {
 
 	mouseLastX = xabs;
 	mouseLastY = yabs;
+
+	// SDL reports window coordinates in points; the UI mapping works in drawable
+	// pixels. They differ on a high-DPI (Retina) window, see r_highdpi.
+	{
+		int ww, wh;
+		SDL_GetWindowSize( SDL_window, &ww, &wh );
+		if ( ww > 0 && wh > 0 ) {
+			x *= (float)cls.glconfig.vidWidth / ww;
+			y *= (float)cls.glconfig.vidHeight / wh;
+		}
+	}
 
 	CL_AdjustToUI( &x, &y, NULL, NULL );
 
@@ -1939,6 +1954,16 @@ static void IN_ProcessEvents( void )
 
 							width = e.window.data1;
 							height = e.window.data2;
+
+							// event size is in points; renderer sizes are drawable pixels (r_highdpi)
+							{
+								int pw = 0, ph = 0;
+								SDL_Vulkan_GetDrawableSize( SDL_window, &pw, &ph );
+								if ( pw > 0 && ph > 0 ) {
+									width = pw;
+									height = ph;
+								}
+							}
 
 							// check if size actually changed
 							if( cls.glconfig.vidWidth == width && cls.glconfig.vidHeight == height )
