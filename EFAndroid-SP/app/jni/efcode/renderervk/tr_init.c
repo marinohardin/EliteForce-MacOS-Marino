@@ -2084,6 +2084,51 @@ void R_Init( void ) {
 }
 
 
+#if defined( USE_FLEXIBLE_DISPLAY ) && defined( USE_VULKAN ) && !defined( __ANDROID__ )
+/*
+===============
+RE_ResizeWindow
+
+Desktop: the window's drawable size changed (live fullscreen toggle or a new
+windowed size). Adopt it without a vid_restart: update glConfig and recreate the
+size-dependent Vulkan objects, keeping all registered media (SP cgame handles stay
+valid). Returns qfalse when the caller must fall back to a vid_restart.
+===============
+*/
+static qboolean RE_ResizeWindow( int width, int height )
+{
+	if ( !vk.active || width <= 0 || height <= 0 )
+		return qfalse;
+
+	// a fixed render size (r_renderScale) or supersampling is set up in R_Init only
+	if ( r_fbo->integer && ( r_renderScale->integer || r_ext_supersample->integer ) )
+		return qfalse;
+
+	if ( width == gls.windowWidth && height == gls.windowHeight
+		&& width == glConfig.vidWidth && height == glConfig.vidHeight )
+		return qtrue;
+
+	// r_smp: the back end must be idle before its swapchain goes away
+	R_SyncRenderThread();
+
+	ri.Printf( PRINT_ALL, "RE_ResizeWindow: %dx%d -> %dx%d\n", glConfig.vidWidth, glConfig.vidHeight, width, height );
+
+	glConfig.vidWidth = width;
+	glConfig.vidHeight = height;
+	glConfig.windowAspect = (float)width / (float)height;
+	gls.windowWidth = width;
+	gls.windowHeight = height;
+	gls.captureWidth = width;
+	gls.captureHeight = height;
+	ri.CL_SetScaling( 1.0, width, height );
+
+	vk_resize_swapchain();
+
+	return qtrue;
+}
+#endif
+
+
 /*
 ===============
 RE_Shutdown
@@ -2274,6 +2319,9 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 
 	re.RequestSaveThumb = RE_RequestSaveThumb;	// EFSP savegame thumbnail capture
 	re.GetSaveThumb = RE_GetSaveThumb;
+#if defined( USE_FLEXIBLE_DISPLAY ) && defined( USE_VULKAN ) && !defined( __ANDROID__ )
+	re.ResizeWindow = RE_ResizeWindow;
+#endif
 //VKPORT 	re.SetColorMappings = R_SetColorMappings;
 
 //VKPORT 	re.ThrottleBackend = RE_ThrottleBackend;

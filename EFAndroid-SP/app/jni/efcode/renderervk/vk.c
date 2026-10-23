@@ -4239,6 +4239,26 @@ static void vk_restart_swapchain( const char *funcname, VkResult res )
 }
 
 
+static void vk_set_render_scale( void );
+
+/*
+Desktop live window resize (fullscreen toggle, windowed size change): the caller
+(RE_ResizeWindow) has already updated glConfig/gls to the new drawable size.
+Rebuild everything sized from them -- swapchain, attachments, render passes,
+framebuffers, pipelines -- while keeping the device and every loaded texture,
+model and shader, so in-game handles stay valid.
+*/
+void vk_resize_swapchain( void )
+{
+	vk.blitFilter = GL_NEAREST;
+	vk.windowAdjusted = qfalse;
+	vk.blitX0 = vk.blitY0 = 0;
+	vk_set_render_scale();
+
+	vk_restart_swapchain( __func__, VK_SUCCESS );
+}
+
+
 static void vk_set_render_scale( void )
 {
 	if ( gls.windowWidth != glConfig.vidWidth || gls.windowHeight != glConfig.vidHeight )

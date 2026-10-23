@@ -1286,6 +1286,144 @@ GL-free: it creates an SDL_WINDOW_VULKAN window and a VkSurfaceKHR via SDL.
 */
 #include <SDL_vulkan.h>
 
+#ifndef __ANDROID__
+/*
+Desktop window settings. The window is created from r_fullscreen, r_mode/
+r_customwidth/r_customheight and r_highdpi. A vid_restart recreates the window when they
+changed (REF_DESTROY_WINDOW). VKimp_ApplyWindowSettings applies fullscreen and
+windowed-size changes to the live window instead, for Alt+Enter and while an SP
+game is running (vid_restart is refused then); only r_highdpi can't be applied live.
+*/
+typedef struct {
+	qboolean	fullscreen;
+	int			width, height;	// windowed size: pixels with r_highdpi, else points
+	qboolean	highdpi;
+} vkimpWindow_t;
+
+void IN_SyncWindowSize( void );			// sdl_input.c
+
+static vkimpWindow_t vkimp_window;		// what the live window currently is
+static qboolean vkimp_windowValid = qfalse;
+
+static void VKimp_DesiredWindow( vkimpWindow_t *win )
+{
+	// r_highdpi is latched: a pending value counts as the desired one
+	cvar_t *r_highdpi = ri.Cvar_Get( "r_highdpi", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	const char *hdpi = r_highdpi->latchedString ? r_highdpi->latchedString : r_highdpi->string;
+
+	win->highdpi = atoi( hdpi ) != 0;
+	win->fullscreen = ri.Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
+	win->width = 1280;
+	win->height = 720;
+	if ( ri.Cvar_VariableIntegerValue( "r_mode" ) == -1 ) {
+		int w = ri.Cvar_VariableIntegerValue( "r_customwidth" );
+		int h = ri.Cvar_VariableIntegerValue( "r_customheight" );
+		if ( w > 0 && h > 0 ) {
+			win->width = w;
+			win->height = h;
+		}
+	}
+}
+
+// pixels per point of the live window (2 on Retina with r_highdpi, else 1)
+static int VKimp_WindowScale( void )
+{
+	int pw = 0, ph = 0, ww = 0, wh = 0;
+	SDL_Vulkan_GetDrawableSize( SDL_window, &pw, &ph );
+	SDL_GetWindowSize( SDL_window, &ww, &wh );
+	if ( ww > 0 && pw > ww )
+		return pw / ww;
+	return 1;
+}
+
+static void VKimp_LogWindow( const char *what )
+{
+	int ww = 0, wh = 0, dw = 0, dh = 0;
+	SDL_GetWindowSize( SDL_window, &ww, &wh );
+	SDL_Vulkan_GetDrawableSize( SDL_window, &dw, &dh );
+	ri.Printf( PRINT_ALL, "...%s: window %dx%d points, drawable %dx%d pixels%s\n", what, ww, wh, dw, dh,
+		( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN ) ? ", fullscreen" : "" );
+}
+
+/*
+===============
+VKimp_WindowSettingsChanged
+
+qtrue when r_fullscreen, the windowed size (r_mode -1 + r_customwidth/height)
+or r_highdpi differ from the live window. vid_restart then recreates the window.
+===============
+*/
+qboolean VKimp_WindowSettingsChanged( void )
+{
+	vkimpWindow_t want;
+
+	if ( !SDL_window || !vkimp_windowValid )
+		return qfalse;
+
+	VKimp_DesiredWindow( &want );
+	if ( want.highdpi != vkimp_window.highdpi || want.fullscreen != vkimp_window.fullscreen )
+		return qtrue;
+	return !want.fullscreen && ( want.width != vkimp_window.width || want.height != vkimp_window.height );
+}
+
+/*
+===============
+VKimp_ApplyWindowSettings
+
+Bring the live window in line with r_fullscreen and the windowed size, without
+recreating it. The resulting drawable-size change reaches the renderer through
+IN_SyncWindowSize (re.ResizeWindow + CL_WindowResized). Returns qtrue if a change
+remains that needs a new window (r_highdpi).
+===============
+*/
+qboolean VKimp_ApplyWindowSettings( void )
+{
+	vkimpWindow_t want;
+	qboolean isFullscreen, changed = qfalse;
+
+	if ( !SDL_window || !vkimp_windowValid )
+		return qfalse;
+
+	VKimp_DesiredWindow( &want );
+	isFullscreen = ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN ) ? qtrue : qfalse;
+
+	if ( want.fullscreen ) {
+		if ( !isFullscreen ) {
+			if ( SDL_SetWindowFullscreen( SDL_window, SDL_WINDOW_FULLSCREEN_DESKTOP ) < 0 ) {
+				ri.Printf( PRINT_WARNING, "VKimp: entering fullscreen failed: %s\n", SDL_GetError() );
+				ri.Cvar_Set( "r_fullscreen", "0" );
+			} else {
+				changed = qtrue;
+			}
+		}
+	} else {
+		if ( isFullscreen ) {
+			if ( SDL_SetWindowFullscreen( SDL_window, 0 ) < 0 )
+				ri.Printf( PRINT_WARNING, "VKimp: leaving fullscreen failed: %s\n", SDL_GetError() );
+			changed = qtrue;
+		}
+		if ( changed || want.width != vkimp_window.width || want.height != vkimp_window.height ) {
+			// windowed sizes are pixels with r_highdpi: convert to points
+			int scale = vkimp_window.highdpi ? VKimp_WindowScale() : 1;
+			SDL_SetWindowSize( SDL_window, want.width / scale, want.height / scale );
+			SDL_SetWindowPosition( SDL_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED );
+			changed = qtrue;
+		}
+	}
+
+	vkimp_window.fullscreen = want.fullscreen && ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN );
+	vkimp_window.width = want.width;
+	vkimp_window.height = want.height;
+
+	if ( changed ) {
+		VKimp_LogWindow( "window mode changed" );
+		IN_SyncWindowSize();	// resize the renderer now, before the next present
+	}
+
+	return want.highdpi != vkimp_window.highdpi;
+}
+#endif // !__ANDROID__
+
 void VKimp_Init( glconfig_t *config )
 {
 	SDL_DisplayMode dm;
@@ -1294,13 +1432,19 @@ void VKimp_Init( glconfig_t *config )
 	ri.Printf( PRINT_ALL, "VKimp_Init( )\n" );
 
 	SDL_SetHint( SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight" );
+#ifdef __APPLE__
+	// Borderless fullscreen in place (instant, like a game) rather than an animated
+	// move to a new Space; makes the live Alt+Enter toggle synchronous.
+	SDL_SetHint( SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0" );
+#endif
 
 	if ( !SDL_WasInit( SDL_INIT_VIDEO ) ) {
 		if ( SDL_Init( SDL_INIT_VIDEO ) != 0 )
 			ri.Error( ERR_FATAL, "VKimp_Init: SDL_Init(VIDEO) failed: %s", SDL_GetError() );
 	}
 
-	if ( SDL_Vulkan_LoadLibrary( NULL ) != 0 )
+	// the loader stays loaded across a window-recreating vid_restart
+	if ( !SDL_Vulkan_GetVkGetInstanceProcAddr() && SDL_Vulkan_LoadLibrary( NULL ) != 0 )
 		ri.Error( ERR_FATAL, "VKimp_Init: SDL_Vulkan_LoadLibrary failed: %s", SDL_GetError() );
 
 	if ( SDL_GetDesktopDisplayMode( 0, &dm ) != 0 ) { dm.w = 1280; dm.h = 720; dm.refresh_rate = 60; }
@@ -1316,36 +1460,42 @@ void VKimp_Init( glconfig_t *config )
 	// of letting the OS upscale; windowed sizes are then in pixels, not points.
 	{
 		cvar_t *r_highdpi = ri.Cvar_Get( "r_highdpi", "0", CVAR_ARCHIVE | CVAR_LATCH );
-		qboolean fullscreen = ri.Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
-		int w = 1280, h = 720;
+		vkimpWindow_t want;
+		int w, h;
 		Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN;
 
-		if ( r_highdpi->integer )
+		// archive the window cvars so Alt+Enter / the Video menu persist
+		ri.Cvar_Get( "r_fullscreen", "0", CVAR_ARCHIVE );
+		ri.Cvar_Get( "r_mode", "-1", CVAR_ARCHIVE );
+		ri.Cvar_Get( "r_customwidth", "1280", CVAR_ARCHIVE );
+		ri.Cvar_Get( "r_customheight", "720", CVAR_ARCHIVE );
+
+		VKimp_DesiredWindow( &want );
+		want.highdpi = r_highdpi->integer != 0;	// latched value was applied by Cvar_Get
+		w = want.width; h = want.height;
+
+		if ( want.highdpi )
 			flags |= SDL_WINDOW_ALLOW_HIGHDPI;
 
-		if ( fullscreen ) {
+		if ( want.fullscreen ) {
 			w = dm.w; h = dm.h;
 			flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-		} else if ( ri.Cvar_VariableIntegerValue( "r_mode" ) == -1 ) {
-			w = ri.Cvar_VariableIntegerValue( "r_customwidth" );
-			h = ri.Cvar_VariableIntegerValue( "r_customheight" );
-			if ( w <= 0 || h <= 0 ) { w = 1280; h = 720; }
 		}
 		SDL_window = SDL_CreateWindow( CLIENT_WINDOW_TITLE,
 			SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags );
 
 		// The scale factor is only known once a window exists: shrink a high-DPI
 		// window so its pixel size, not its point size, matches the request.
-		if ( SDL_window && r_highdpi->integer && !fullscreen ) {
-			int pw = 0, ph = 0, ww = 0, wh = 0;
-			SDL_Vulkan_GetDrawableSize( SDL_window, &pw, &ph );
-			SDL_GetWindowSize( SDL_window, &ww, &wh );
-			if ( ww > 0 && pw > ww ) {
-				int scale = pw / ww;
+		if ( SDL_window && want.highdpi && !want.fullscreen ) {
+			int scale = VKimp_WindowScale();
+			if ( scale > 1 ) {
 				SDL_SetWindowSize( SDL_window, w / scale, h / scale );
 				SDL_SetWindowPosition( SDL_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED );
 			}
 		}
+
+		vkimp_window = want;
+		vkimp_windowValid = SDL_window != NULL;
 	}
 #endif
 	if ( !SDL_window )
@@ -1379,6 +1529,12 @@ void VKimp_Shutdown( qboolean unloadDLL )
 {
 	ri.IN_Shutdown();
 	if ( SDL_window ) { SDL_DestroyWindow( SDL_window ); SDL_window = NULL; }
+#ifndef __ANDROID__
+	vkimp_windowValid = qfalse;
+	// window-recreating vid_restart: keep SDL video and the Vulkan loader up
+	if ( !unloadDLL )
+		return;
+#endif
 	if ( unloadDLL ) SDL_Vulkan_UnloadLibrary();
 	SDL_QuitSubSystem( SDL_INIT_VIDEO );
 }

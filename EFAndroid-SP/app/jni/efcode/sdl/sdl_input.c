@@ -110,6 +110,65 @@ static int in_eventTime = 0;
 
 static SDL_Window *SDL_window = NULL;
 
+#ifndef __ANDROID__
+static int in_drawableWidth = 0, in_drawableHeight = 0;	// last drawable size handed to the renderer
+
+static void IN_DeactivateMouse( qboolean isFullscreen, qboolean showSystemCursor );
+
+/*
+===============
+IN_SyncWindowSize
+
+Desktop: when the window's drawable (pixel) size changes -- a live fullscreen
+toggle (Alt+Enter, Video menu) or a new windowed size -- resize the renderer in
+place and rescale the client's 2D/menu mapping, instead of a vid_restart (which
+is refused while an SP game is running). Checked once per frame (cheap) and
+right after VKimp_ApplyWindowSettings changes the window.
+===============
+*/
+void IN_SyncWindowSize( void )
+{
+	int width = 0, height = 0;
+
+	if ( !SDL_window || ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_MINIMIZED ) )
+		return;
+
+	SDL_Vulkan_GetDrawableSize( SDL_window, &width, &height );
+	if ( width <= 0 || height <= 0 )
+		return;
+
+	if ( width == in_drawableWidth && height == in_drawableHeight )
+		return;
+
+	if ( in_drawableWidth == 0 ) {
+		// first look at a new window: the renderer was created at this size
+		in_drawableWidth = width;
+		in_drawableHeight = height;
+		return;
+	}
+
+	in_drawableWidth = width;
+	in_drawableHeight = height;
+
+	if ( !cls.rendererStarted )
+		return;	// R_Init will pick up the new size
+
+#ifdef USE_FLEXIBLE_DISPLAY
+	if ( re.ResizeWindow && re.ResizeWindow( width, height ) ) {
+		CL_WindowResized( width, height );
+		Com_Printf( "...renderer resized to %dx%d\n", width, height );
+	} else
+#endif
+	{
+		// renderer can't resize in place (r_renderScale/supersample): restart
+		vidRestartTime = Sys_Milliseconds( ) + 100;
+	}
+
+	// re-grab with the new fullscreen state on the next IN_Frame
+	IN_DeactivateMouse( Cvar_VariableIntegerValue( "r_fullscreen" ) != 0, qfalse );
+}
+#endif
+
 #define CTRL(a) ((a)-'a'+1)
 
 /*
@@ -1948,6 +2007,12 @@ static void IN_ProcessEvents( void )
 			case SDL_WINDOWEVENT:
 				switch( e.window.event )
 				{
+#ifndef __ANDROID__
+					case SDL_WINDOWEVENT_RESIZED:
+					case SDL_WINDOWEVENT_SIZE_CHANGED:
+						IN_SyncWindowSize( );
+						break;
+#else
 					case SDL_WINDOWEVENT_RESIZED:
 						{
 							int width, height;
@@ -1990,6 +2055,7 @@ static void IN_ProcessEvents( void )
 							}
 						}
 						break;
+#endif
 
 					case SDL_WINDOWEVENT_MINIMIZED:    Cvar_SetValue( "com_minimized", 1 ); break;
 					case SDL_WINDOWEVENT_RESTORED:
@@ -2120,6 +2186,10 @@ void IN_Frame( void )
 
 	IN_ProcessEvents( );
 
+#ifndef __ANDROID__
+	IN_SyncWindowSize( );
+#endif
+
 	// Set event time for next frame to earliest possible time an event could happen
 	in_eventTime = Sys_Milliseconds( );
 
@@ -2147,6 +2217,12 @@ void IN_Init( void *windowData )
 	}
 
 	SDL_window = (SDL_Window *)windowData;
+#ifndef __ANDROID__
+	// the renderer is (re)created at the window's current drawable size
+	in_drawableWidth = in_drawableHeight = 0;
+	if ( SDL_window )
+		SDL_Vulkan_GetDrawableSize( SDL_window, &in_drawableWidth, &in_drawableHeight );
+#endif
 
 	Com_DPrintf( "\n------- Input Initialization -------\n" );
 
