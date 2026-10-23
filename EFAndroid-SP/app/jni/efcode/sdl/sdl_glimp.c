@@ -1305,9 +1305,30 @@ void VKimp_Init( glconfig_t *config )
 
 	if ( SDL_GetDesktopDisplayMode( 0, &dm ) != 0 ) { dm.w = 1280; dm.h = 720; dm.refresh_rate = 60; }
 
+#ifdef __ANDROID__
 	SDL_window = SDL_CreateWindow( CLIENT_WINDOW_TITLE,
 		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, dm.w, dm.h,
 		SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_FULLSCREEN );
+#else
+	// Desktop: honor r_fullscreen (borderless desktop-size fullscreen) and, for a
+	// window, r_customwidth/r_customheight when r_mode is -1 (else 1280x720).
+	{
+		qboolean fullscreen = ri.Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
+		int w = 1280, h = 720;
+		Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN;
+
+		if ( fullscreen ) {
+			w = dm.w; h = dm.h;
+			flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+		} else if ( ri.Cvar_VariableIntegerValue( "r_mode" ) == -1 ) {
+			w = ri.Cvar_VariableIntegerValue( "r_customwidth" );
+			h = ri.Cvar_VariableIntegerValue( "r_customheight" );
+			if ( w <= 0 || h <= 0 ) { w = 1280; h = 720; }
+		}
+		SDL_window = SDL_CreateWindow( CLIENT_WINDOW_TITLE,
+			SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags );
+	}
+#endif
 	if ( !SDL_window )
 		ri.Error( ERR_FATAL, "VKimp_Init: SDL_CreateWindow(VULKAN) failed: %s", SDL_GetError() );
 
@@ -1318,7 +1339,7 @@ void VKimp_Init( glconfig_t *config )
 	config->vidHeight = dh;
 	config->windowAspect = (float)dw / (float)dh;
 	config->displayFrequency = dm.refresh_rate;
-	config->isFullscreen = qtrue;
+	config->isFullscreen = ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN ) ? qtrue : qfalse;
 	config->deviceSupportsGamma = qfalse;
 	config->colorBits = 32;
 	config->depthBits = 24;

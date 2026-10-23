@@ -540,5 +540,15 @@ void IT_LoadItemParms (void)
 	IT_ParseParms(buffer);
 
 	gi.FS_FreeFile( buffer );	//let go of the buffer
+
+	// Retail items.dat has no entry for every ITM_* slot in this source (e.g. ITM_CHAOS_PICKUP).
+	// Item lookups walk bg_itemlist until the first NULL classname, so a hole would hide every
+	// later item (weapon_melee -> "Couldn't find item for weapon ... Need to update Items.dat!").
+	// Give holes a placeholder that matches no map entity and has giType 0 (IT_BAD).
+	for ( int i = 1; i < ITM_NUM_ITEMS; i++ ) {
+		if ( !bg_itemlist[i].classname ) {
+			bg_itemlist[i].classname = G_NewString( "item_unused" );
+		}
+	}
 }
 

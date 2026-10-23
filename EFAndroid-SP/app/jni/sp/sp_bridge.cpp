@@ -90,8 +90,14 @@ typedef void (*dllEntry_t)( intptr_t (*)(intptr_t,...) );
 static void          *g_lib = NULL;
 static game_export_t *ge    = NULL;
 static int            g_levelTime = 0;
-typedef intptr_t (*vmMain_t)( int cmd, ... );
+// The cgame's vmMain takes 9 fixed ints (cg_main.cpp). Call it through that exact type: a variadic
+// pointer happens to work on Linux/Android AAPCS64 (varargs in registers), but on Apple arm64 varargs
+// go on the stack and the callee reads garbage registers (-> "CG_DrawActive: Undefined stereoView").
+typedef int (*vmMain_t)( int cmd, int, int, int, int, int, int, int, int );
 static vmMain_t g_vmMain = NULL;
+static intptr_t SP_VmMain( int cmd, int a0=0, int a1=0, int a2=0, int a3=0, int a4=0, int a5=0, int a6=0, int a7=0 ){
+    return g_vmMain( cmd, a0, a1, a2, a3, a4, a5, a6, a7 );
+}
 static int g_spActive = 0;                          // cgame entry point
 static intptr_t SP_CgameSyscall( intptr_t cmd, ... );    // cgame->engine dispatcher (defined below)
 
@@ -542,7 +548,7 @@ static qboolean s_worldResident = qfalse;
 
 extern "C" void SP_UnloadGame( void ){
     if( g_lib ){
-        if( g_spActive && g_vmMain )            g_vmMain(CG_SHUTDOWN, 0,0,0);   // cgame teardown
+        if( g_spActive && g_vmMain )            SP_VmMain(CG_SHUTDOWN, 0,0,0);   // cgame teardown
         if( g_spActive && ge && ge->Shutdown )  ge->Shutdown();                // game/level teardown
         dlclose( g_lib );
     }
@@ -741,7 +747,7 @@ static void SP_CgameConsoleCmd(void){
     // setobjective/viewobjective, cg_main.cpp:1398-1406) are NOT in that table -> CG_ConsoleCommand returns
     // qfalse, and they must be forwarded to the game's ClientCommand (mirrors retail CL_GameCommand ->
     // CL_ForwardCommandToServer). argv is already tokenized; gi.argv==Cmd_Argv so ClientCommand reads it.
-    if(g_vmMain && g_vmMain(CG_CONSOLE_COMMAND, 0,0,0)) return;
+    if(g_vmMain && SP_VmMain(CG_CONSOLE_COMMAND, 0,0,0)) return;
     if(ge && g_spActive) ge->ClientCommand(0);
 }
 
@@ -1270,7 +1276,7 @@ extern "C" qboolean SP_FinishTransition(void){
     SPR_InitRenderer();                 // R_Init (the GPU teardown half, SPR_ShutdownRenderer, already ran ABOVE
                                         // before Hunk_Clear). Clears tr.worldMapLoaded so the new world loads
                                         // (fixes "redundantly load world map" on Load Game / level transition).
-    g_vmMain(CG_INIT, 0,0,0);           // new cgame (re-registers media + CG_R_LOADWORLDMAP)
+    SP_VmMain(CG_INIT, 0,0,0);           // new cgame (re-registers media + CG_R_LOADWORLDMAP)
     g_spActive = 1;
     s_worldResident = qtrue;            // C1: a world now occupies the hunk/GPU -> a later New Game must reclaim
     // EF1 SP 1:1: retail SV_SpawnServer always unpauses on spawn ("make sure we are not paused",
@@ -1612,7 +1618,7 @@ extern "C" qboolean SP_StartClient(void){
     // FIRST load (VK_ERROR_OUT_OF_POOL_MEMORY). The "redundantly load world map" error only occurs on a
     // *repeated* load of the SAME map, which is now prevented at the source by the SP_MapWrap_f debounce.
     // (SP_FinishTransition resets safely because it CG_SHUTDOWNs the prior cgame first, freeing those sets.)
-    g_vmMain(CG_INIT, 0, 0, 0);
+    SP_VmMain(CG_INIT, 0, 0, 0);
     blog("SP_StartClient: CG_INIT returned OK\n");
     g_spActive = 1;
     SP_EndLoad();   // SP cgame is live now -> SP_DrawFrame owns the screen; stop the load screen
@@ -1633,7 +1639,7 @@ extern "C" void SP_ClientFrames(int n){
         // NULL is fine — nothing flagged interpolate yet).
         int cgTime = g_levelTime - SP_INTERP_DELAY;
         if( cgTime < g_snapBaseTime ) cgTime = g_snapBaseTime;
-        g_vmMain(CG_DRAW_ACTIVE_FRAME, cgTime, 0 /*STEREO_CENTER*/, qfalse);
+        SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, 0 /*STEREO_CENTER*/, qfalse);
     }
     blog("SP_ClientFrames: drew %d cgame frames to levelTime=%d (numEntities=%d)\n", n, g_levelTime, g_snap.numEntities);
 }
@@ -1642,12 +1648,12 @@ extern "C" void SP_ClientFrames(int n){
 // CG_DrawInformation (cg_info.cpp) whenever cg.infoScreenText is set (CG_LoadingString sets it at each load
 // stage) -> the real levelshot + animated LCARS bar (driven by cg.loadLCARSStage) + the quoted level name
 // (CS_MESSAGE). This is exactly what retail's engine drives via trap_UpdateScreen during CG_INIT; the cgame is
-// alive here (we are inside the g_vmMain(CG_INIT) call that requested the redraw via cgi_UpdateScreen), so
+// alive here (we are inside the SP_VmMain(CG_INIT) call that requested the redraw via cgi_UpdateScreen), so
 // re-entering it to draw is retail-faithful and side-effect free (CG_BuildSolidList/CG_UpdateCvars guard on
 // cg.snap, identical to retail's info-screen path). Called only from SCR_DrawScreenField while a load is pumping.
 extern "C" void SP_DrawCGameLoad(void){
     if(!g_vmMain) return;
-    g_vmMain(CG_DRAW_ACTIVE_FRAME, g_levelTime, 0 /*STEREO_CENTER*/, qfalse);
+    SP_VmMain(CG_DRAW_ACTIVE_FRAME, g_levelTime, 0 /*STEREO_CENTER*/, qfalse);
 }
 
 extern "C" int SP_IsActive(void){ return g_spActive; }
@@ -1724,7 +1730,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         int cgTime = g_levelTime - SP_SV_FRAMEMSEC + g_simResidual;
         if( cgTime >= g_levelTime )    cgTime = g_levelTime - 1;
         if( cgTime < g_snapBaseTime )  cgTime = g_snapBaseTime;
-        g_vmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+        SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
         // The paused CG_DRAW_ACTIVE_FRAME above re-adds every entity loopSound, and CL_Frame's
         // unconditional per-frame S_Update re-mixes them -> machinery/ambient loops keep humming
         // through the pause (the edge-only S_StopAllSounds can't catch them). Clear the loop list
@@ -1788,5 +1794,5 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     int cgTime = g_levelTime - SP_SV_FRAMEMSEC + g_simResidual;
     if( cgTime >= g_levelTime )    cgTime = g_levelTime - 1;
     if( cgTime < g_snapBaseTime )  cgTime = g_snapBaseTime;
-    g_vmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+    SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
 }
