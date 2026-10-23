@@ -49,6 +49,7 @@ set(EF_COPTS
   # covers __FILE__ used inside macros (assert). Maps this source root to a neutral token.
   -ffile-prefix-map=${CMAKE_SOURCE_DIR}=/src
   -fmacro-prefix-map=${CMAKE_SOURCE_DIR}=/src
+  -DEF_DYLIB_MODULES        # macOS: don't take q_shared.h's OS X Server hard-link path
 )
 
 # ---- shared utility sources (compiled into BOTH modules, like the retail projects) ----

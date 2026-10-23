@@ -98,9 +98,14 @@
 
 #define	PATH_SEP	'/'
 
+// Raven's OS X Server build linked game/cgame/ui into the executable. The
+// macOS port loads them as dylibs like every other platform, so keep the
+// modules' own Com_Printf/Com_Error/Field_* definitions.
+#ifndef EF_DYLIB_MODULES
 #define	GAME_HARD_LINKED
 #define	CGAME_HARD_LINKED
 #define	UI_HARD_LINKED
+#endif
 
 #endif
 
