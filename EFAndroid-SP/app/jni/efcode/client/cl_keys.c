@@ -1234,6 +1234,27 @@ void CL_ParseBinding( int key, qboolean down, unsigned time )
 
 /*
 ===================
+Key_ToggleFullscreen_f
+
+Alt+Enter, also the "toggle_fullscreen" command
+===================
+*/
+void Key_ToggleFullscreen_f( void )
+{
+	Cvar_SetValue( "r_fullscreen",
+		!Cvar_VariableIntegerValue( "r_fullscreen" ) );
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+	{
+		// apply to the live window now; the renderer follows the new drawable
+		// size via IN_SyncWindowSize (no vid_restart, so it works in-game too)
+		extern qboolean VKimp_ApplyWindowSettings( void );
+		VKimp_ApplyWindowSettings( );
+	}
+#endif
+}
+
+/*
+===================
 CL_KeyDownEvent
 
 Called by CL_KeyEvent to handle a keypress
@@ -1253,8 +1274,7 @@ void CL_KeyDownEvent( int key, unsigned time )
 			return;
 		}
 
-		Cvar_SetValue( "r_fullscreen",
-			!Cvar_VariableIntegerValue( "r_fullscreen" ) );
+		Key_ToggleFullscreen_f( );
 		return;
 	}
 

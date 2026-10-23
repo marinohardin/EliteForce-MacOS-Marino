@@ -2001,7 +2001,22 @@ we also have to reload the UI and CGame because the renderer
 doesn't know what graphics to reload
 =================
 */
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+qboolean VKimp_WindowSettingsChanged( void );
+qboolean VKimp_ApplyWindowSettings( void );
+#endif
+static void CL_ShutdownRefCode( int code );
+void Key_ToggleFullscreen_f( void );	// cl_keys.c
+
 void CL_Vid_Restart_f( void ) {
+	int refShutdownCode = qtrue;	// REF_KEEP_WINDOW
+
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+	// Desktop: recreate the window when r_fullscreen, the windowed size or
+	// r_highdpi changed; otherwise keep it (fast path).
+	if ( VKimp_WindowSettingsChanged() )
+		refShutdownCode = 2;	// REF_DESTROY_WINDOW
+#endif
 
 	// EF1 SP (Route-b): the SP cgame is the dlopen'd libefgame.so, NOT the engine cgvm, so the renderer
 	// teardown/reinit below would invalidate every SP model/shader handle while the SP cgame keeps running
@@ -2011,6 +2026,12 @@ void CL_Vid_Restart_f( void ) {
 	{ extern int SP_IsActive(void);
 	  if ( SP_IsActive() && Cvar_VariableIntegerValue("sp_dropHM") ) {
 		Com_Printf("vid_restart deferred: settings saved, applied on next map load (SP game active)\n");
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+		// the window can't be recreated under a running SP game, but fullscreen
+		// and the windowed size apply live (the renderer resizes in place)
+		if ( refShutdownCode == 2 && VKimp_ApplyWindowSettings() )
+			Com_Printf("r_highdpi applies after a vid_restart from the main menu or a relaunch\n");
+#endif
 		return;
 	  } }
 
@@ -2044,7 +2065,7 @@ void CL_Vid_Restart_f( void ) {
 		// shutdown the CGame
 		CL_ShutdownCGame();
 		// shutdown the renderer and clear the renderer interface
-		CL_ShutdownRef();
+		CL_ShutdownRefCode( refShutdownCode );
 		// client is no longer pure until new checksums are sent
 		CL_ResetPureClientAtServer();
 		// clear pak references
@@ -3382,8 +3403,14 @@ CL_ShutdownRef
 ============
 */
 void CL_ShutdownRef( void ) {
+	CL_ShutdownRefCode( qtrue );	// REF_KEEP_WINDOW
+}
+
+// code is the renderer's refShutdownCode_t: 0 keep context, 1 (qtrue) keep window,
+// 2 destroy window, 3 unload
+static void CL_ShutdownRefCode( int code ) {
 	if ( re.Shutdown ) {
-		re.Shutdown( qtrue );
+		re.Shutdown( code );
 	}
 
 	Com_Memset( &re, 0, sizeof( re ) );
@@ -4195,6 +4222,7 @@ void CL_Init( void ) {
 	Cmd_AddCommand ("clientinfo", CL_Clientinfo_f);
 	Cmd_AddCommand ("snd_restart", CL_Snd_Restart_f);
 	Cmd_AddCommand ("vid_restart", CL_Vid_Restart_f);
+	Cmd_AddCommand ("toggle_fullscreen", Key_ToggleFullscreen_f);
 	Cmd_AddCommand ("disconnect", CL_Disconnect_f);
 	Cmd_AddCommand ("record", CL_Record_f);
 	Cmd_AddCommand ("demo", CL_PlayDemo_f);
@@ -4284,6 +4312,7 @@ void CL_Shutdown(char *finalmsg, qboolean disconnect, qboolean quit)
 	Cmd_RemoveCommand ("clientinfo");
 	Cmd_RemoveCommand ("snd_restart");
 	Cmd_RemoveCommand ("vid_restart");
+	Cmd_RemoveCommand ("toggle_fullscreen");
 	Cmd_RemoveCommand ("disconnect");
 	Cmd_RemoveCommand ("record");
 	Cmd_RemoveCommand ("demo");
