@@ -74,6 +74,12 @@ add_library(efgame SHARED ${EFGAME_SRC})
 target_include_directories(efgame PRIVATE ${EF_INCLUDES})
 target_compile_options(efgame PRIVATE ${EF_COPTS})
 target_compile_definitions(efgame PRIVATE NDEBUG)
+if(APPLE)
+  # macOS ld64: exported-symbols list stands in for the GNU version script;
+  # dynamic_lookup stands in for --unresolved-symbols=ignore-all.
+  target_link_options(efgame PRIVATE
+    -Wl,-exported_symbols_list,${AND}/efgame.exp -undefined dynamic_lookup)
+else()
 target_link_options(efgame PRIVATE
   -Wl,--version-script=${AND}/efgame.ver
   -Wl,--unresolved-symbols=ignore-all   # engine syscalls resolved at dlopen; libc/libm linked below
@@ -82,6 +88,7 @@ target_link_options(efgame PRIVATE
   # libc++abi cxa_guard.o emits a benign ARM/Thumb interworking warning that
   # then fails the link. Override (last-one-wins) so armv7 links cleanly.
   -Wl,--no-fatal-warnings)
+endif()
 target_link_libraries(efgame m)
 
 # ===================== libefui.so (ui) =====================
@@ -97,9 +104,14 @@ target_compile_options(efui PRIVATE ${EF_COPTS})
 # _USRDLL must be target-wide (not per-file) so the globbed gameinfo.cpp also takes the UI branch.
 # Do NOT add _USRDLL to the efgame target (the game build keeps g_weaponLoad's cgame funcs[] table).
 target_compile_definitions(efui PRIVATE NDEBUG _USRDLL UI_EXPORTS)
+if(APPLE)
+  target_link_options(efui PRIVATE
+    -Wl,-exported_symbols_list,${AND}/efui.exp -undefined dynamic_lookup)
+else()
 target_link_options(efui PRIVATE
   -Wl,--version-script=${AND}/efui.ver
   -Wl,--unresolved-symbols=ignore-all
   -Wl,-z,max-page-size=16384   # 16 KB page-size alignment (Android 15+)
   -Wl,--no-fatal-warnings)   # see efgame note above (NDK r25 armv7 libc++abi interworking)
+endif()
 target_link_libraries(efui m)
