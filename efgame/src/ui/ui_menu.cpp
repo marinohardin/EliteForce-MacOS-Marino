@@ -1215,13 +1215,8 @@ void UI_InGameMenu_Cache( void )
 
 
 	// Precache all menu graphics in array
-	for (i=0;i<IGMG_MAX;++i)
-	{
-		if (ingamemenu_graphics[i].type == MG_GRAPHIC)
-		{
-			ingamemenu_graphics[i].graphic = ui.R_RegisterShaderNoMip(ingamemenu_graphics[i].file);
-		}
-	}
+	// EFSP: shared helper also refreshes entries currently switched OFF (stale after a renderer restart)
+	UI_PrecacheMenuGraphics(ingamemenu_graphics,IGMG_MAX);
 
 	s_ingamemenu_cache.suit = ui.R_RegisterShaderNoMip("menu/suit/breakout_suit.tga");
 

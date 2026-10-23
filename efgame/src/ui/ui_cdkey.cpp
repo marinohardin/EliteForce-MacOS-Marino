@@ -200,6 +200,12 @@ void CDKeyMenu_Init(void)
 UI_CDKeyMenu
 ===============
 */
+// EFSP: see UI_GameMenus_FlushMedia (ui_game.cpp) -- re-init after a renderer restart.
+void UI_CDKeyMenu_FlushMedia( void )
+{
+	s_cdkey_menu.initialized = qfalse;
+}
+
 void UI_CDKeyMenu( void) 
 {
 	

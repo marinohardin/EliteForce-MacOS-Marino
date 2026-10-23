@@ -2932,6 +2932,15 @@ static void NewGameMenu_Init(void)
 UI_NewGameMenu
 ===============
 */
+// EFSP: called from UI_Init when the UI is re-initialized after a renderer restart (the bridge keeps the
+// module loaded, so these statics survive). Forces the menus to re-run their Init/Cache and re-register
+// shaders instead of drawing handles from the old renderer.
+void UI_GameMenus_FlushMedia( void )
+{
+	s_savegame.menu.initialized = qfalse;
+	s_newgame_menu.initialized = qfalse;
+}
+
 void UI_NewGameMenu( void) 
 {
 	

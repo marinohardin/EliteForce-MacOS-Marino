@@ -18,7 +18,16 @@
 #include <stdarg.h>
 #include <android/log.h>
 
-static void ulog(const char* fmt, ...){ va_list a; va_start(a,fmt); __android_log_vprint(ANDROID_LOG_INFO,"ui",fmt,a); va_end(a); }
+// Android: logcat INFO, as before. Desktop (macos/android/log.h): ulog = developer-only, uwarn = always.
+#ifdef __ANDROID__
+#define SPUI_LOG_DEV  ANDROID_LOG_INFO
+#define SPUI_LOG_WARN ANDROID_LOG_INFO
+#else
+#define SPUI_LOG_DEV  ANDROID_LOG_DEBUG
+#define SPUI_LOG_WARN ANDROID_LOG_WARN
+#endif
+static void ulog(const char* fmt, ...){ va_list a; va_start(a,fmt); __android_log_vprint(SPUI_LOG_DEV,"ui",fmt,a); va_end(a); }
+static void uwarn(const char* fmt, ...){ va_list a; va_start(a,fmt); __android_log_vprint(SPUI_LOG_WARN,"ui",fmt,a); va_end(a); }
 
 // Com_Printf/Com_Error/Q_strncpyz are declared C++-linkage by q_shared.h here, so reference
 // them via the C-linkage shim (sp_clink.c) / a local copy instead of the mangled symbols.
@@ -216,12 +225,12 @@ static void SPUI_FillImport(void){
 extern "C" int SPUI_Load(void){
     if(g_uiActive) return 1;
     g_uilib = dlopen(SP_ModulePath("libefui.so"), RTLD_NOW|RTLD_GLOBAL);
-    if(!g_uilib){ ulog("dlopen libefui.so failed: %s", dlerror()); return 0; }
+    if(!g_uilib){ uwarn("dlopen libefui.so failed: %s", dlerror()); return 0; }
     GetUIAPI_t getapi = (GetUIAPI_t)dlsym(g_uilib, "GetUIAPI");
     if(!getapi) getapi = (GetUIAPI_t)dlsym(g_uilib, "_Z8GetUIAPIv");   // C++-mangled fallback
-    if(!getapi){ ulog("GetUIAPI symbol not found: %s", dlerror()); return 0; }
+    if(!getapi){ uwarn("GetUIAPI symbol not found: %s", dlerror()); return 0; }
     g_ux = getapi();
-    if(!g_ux || !g_ux->UI_Init){ ulog("GetUIAPI returned null/!UI_Init"); return 0; }
+    if(!g_ux || !g_ux->UI_Init){ uwarn("GetUIAPI returned null/!UI_Init"); return 0; }
     SPUI_FillImport();
     g_ux->UI_Init(UI_API_VERSION, &g_uii);
     g_uiActive = 1;

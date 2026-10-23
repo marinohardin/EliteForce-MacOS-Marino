@@ -21,9 +21,15 @@
 #ifdef BINK_HOST_TEST
 #include <stdio.h>
 #define BLOG(...) do { printf( "[bink] " __VA_ARGS__ ); printf( "\n" ); } while (0)
+#define BLOG_DEV BLOG
 #else
 #include <android/log.h>
 #define BLOG(...) __android_log_print( ANDROID_LOG_INFO, "bink", __VA_ARGS__ )
+#ifdef __ANDROID__
+#define BLOG_DEV BLOG
+#else
+#define BLOG_DEV(...) __android_log_print( ANDROID_LOG_DEBUG, "bink", __VA_ARGS__ )   // desktop: developer only
+#endif
 #endif
 
 // engine services (resolved at link time in the main .so)
@@ -176,7 +182,7 @@ static qboolean bink_setup( binkHandle_t *b, const char *name ) {
     b->pkt    = av_packet_alloc();
     if ( !b->rgba || !b->sws || !b->vframe || !b->pkt ) { BLOG( "alloc failed" ); return qfalse; }
 
-    BLOG( "open %s  %dx%d -> %dx%d  %.2ffps  audio=%d", name, b->srcW, b->srcH, b->dstW, b->dstH, b->fps, b->astream >= 0 );
+    BLOG_DEV( "open %s  %dx%d -> %dx%d  %.2ffps  audio=%d", name, b->srcW, b->srcH, b->dstW, b->dstH, b->fps, b->astream >= 0 );
     return qtrue;
 }
 

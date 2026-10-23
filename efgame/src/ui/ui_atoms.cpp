@@ -1372,10 +1372,24 @@ static void UI_Shutdown( void ) {
 UI_Init
 =================
 */
+void UI_GameMenus_FlushMedia( void );
+void UI_ControlsMenus_FlushMedia( void );
+void UI_CDKeyMenu_FlushMedia( void );
+
 static void UI_Init( int apiVersion, uiimport_t *uiimport ) {
 	gameinfo_import_t	gameinfo_import;
+	static int			initCount = 0;
 
 	ui = *uiimport;
+
+	// EFSP: retail unloaded the UI DLL on vid_restart, so every cached shader handle started from zero.
+	// The bridge keeps this module loaded, so on a re-init (after a renderer restart) make the menus
+	// that cache media behind an 'initialized' flag register it again.
+	if ( initCount++ > 0 ) {
+		UI_GameMenus_FlushMedia();
+		UI_ControlsMenus_FlushMedia();
+		UI_CDKeyMenu_FlushMedia();
+	}
 
 	if ( apiVersion != UI_API_VERSION ) {
 		ui.Error( ERR_FATAL, "Bad UI_API_VERSION: expected %i, got %i\n", UI_API_VERSION, apiVersion );
@@ -1952,7 +1966,13 @@ void UI_PrecacheMenuGraphics(menugraphics_s *menuGraphics,int maxI)
 
 	for (i=0;i<maxI;++i)
 	{
-		if (menuGraphics[i].type == MG_GRAPHIC)
+		// EFSP: also refresh graphics that are currently switched OFF but were registered before
+		// (graphic != 0). The main menu cycles its galaxy symbols between MG_GRAPHIC and MG_OFF, and
+		// the bridge keeps the UI module loaded across a renderer restart (retail reloaded the DLL),
+		// so after vid_restart the OFF symbols kept handles from the old renderer -> "out of range
+		// hShader" spam and a default-shader box at the bottom-left of the galaxy map.
+		if (menuGraphics[i].type == MG_GRAPHIC ||
+			(menuGraphics[i].type == MG_OFF && menuGraphics[i].graphic && menuGraphics[i].file))
 		{
 			menuGraphics[i].graphic = ui.R_RegisterShaderNoMip(menuGraphics[i].file);
 		}

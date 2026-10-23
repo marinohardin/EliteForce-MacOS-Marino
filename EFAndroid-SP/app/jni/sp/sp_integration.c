@@ -14,6 +14,13 @@
 
 extern refexport_t re;        // the HM renderer (set up by the HM CL_InitRef)
 
+// Routine bridge chatter: Android keeps it in logcat; desktop only shows it with 'developer 1'.
+#ifdef __ANDROID__
+#define SP_DPrintf Com_Printf
+#else
+#define SP_DPrintf Com_DPrintf
+#endif
+
 void SP_DropHM_Activate(void); // Route b: SP path takes ownership of clc.state (defined below, after client.h)
 void SP_AbortToMenu(void);     // recover a failed/stuck SP load back to the main menu (defined after client.h)
 
@@ -26,23 +33,34 @@ static _Unwind_Reason_Code sp_bt_cb(struct _Unwind_Context *ctx, void *arg){
     if(pc){ if(s->cur == s->end) return _URC_END_OF_STACK; *s->cur++ = pc; }
     return _URC_NO_REASON;
 }
+// Desktop: write straight to stderr (signal context -- never through Com_Printf / the console).
+#ifdef __ANDROID__
+#define SP_CRASHLOG(...) __android_log_print(ANDROID_LOG_ERROR, "crash", __VA_ARGS__)
+#else
+#define SP_CRASHLOG(...) do { fputs("[crash] ", stderr); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); } while(0)
+#endif
 // Called from the engine's Sys_SigHandler (sys_main.c) — the handler that actually catches SIGSEGV.
 void SP_LogBacktrace(int sig){
+#ifndef __ANDROID__
+    // Sys_SigHandler also runs for a normal quit by signal (Ctrl-C, kill, closing the terminal);
+    // that is not a crash, so don't print a "*** SIGNAL 15 ***" backtrace for it.
+    if(sig == SIGINT || sig == SIGTERM || sig == SIGHUP) return;
+#endif
     void *buf[40]; struct sp_bt s = { buf, buf+40 };
     _Unwind_Backtrace(sp_bt_cb, &s);
     int n = (int)(s.cur - buf);
-    __android_log_print(ANDROID_LOG_ERROR, "crash", "*** SIGNAL %d  (%d frames) ***", sig, n);
+    SP_CRASHLOG("*** SIGNAL %d  (%d frames) ***", sig, n);
     for(int i=0;i<n;i++){
         Dl_info info;
         if(dladdr(buf[i], &info) && info.dli_sname)
-            __android_log_print(ANDROID_LOG_ERROR, "crash", "  #%02d  %s + 0x%lx  [%s]", i,
+            SP_CRASHLOG("  #%02d  %s + 0x%lx  [%s]", i,
                 info.dli_sname, (unsigned long)((char*)buf[i]-(char*)info.dli_saddr),
                 info.dli_fname?info.dli_fname:"?");
         else if(dladdr(buf[i], &info) && info.dli_fbase)
-            __android_log_print(ANDROID_LOG_ERROR, "crash", "  #%02d  %p  [%s + 0x%lx]", i, buf[i],
+            SP_CRASHLOG("  #%02d  %p  [%s + 0x%lx]", i, buf[i],
                 info.dli_fname?info.dli_fname:"?", (unsigned long)((char*)buf[i]-(char*)info.dli_fbase));
         else
-            __android_log_print(ANDROID_LOG_ERROR, "crash", "  #%02d  %p  ?", i, buf[i]);
+            SP_CRASHLOG("  #%02d  %p  ?", i, buf[i]);
     }
 }
 void SP_InstallCrashHandler(void){ /* engine's Sys_SigHandler calls SP_LogBacktrace directly */ }
@@ -317,7 +335,7 @@ void SP_RegisterCommands(void){
     // intended SP path; 0 = legacy spmap path (HM qagame/cgame run in parallel), kept only as a
     // fallback. Now DEFAULTS to 1 so SP-only is the boot behavior without an on-device autoexec.
     Cvar_Get("sp_dropHM", "1", CVAR_ARCHIVE);
-    Com_Printf("SP: map/transition/use/save/load commands registered\n");
+    SP_DPrintf("SP: map/transition/use/save/load commands registered\n");
 }
 
 // Real surface size from the engine's renderer (so the SP cgame builds a full-screen view,
@@ -377,14 +395,14 @@ void SP_ReinitUI(void){
         extern void CL_InitUI( void );
         cls.uiStarted = qtrue;          // mirror CL_StartHunkUsers' bookkeeping
         CL_InitUI();
-        Com_Printf("EFSP Route-b: re-initialized SP UI after load (SPUI_IsActive=%d)\n", SPUI_IsActive());
+        SP_DPrintf("EFSP Route-b: re-initialized SP UI after load (SPUI_IsActive=%d)\n", SPUI_IsActive());
     }
 }
 
 // cgame is up: mark the client active so SCR_DrawScreenField -> CL_CGameRendering -> SP_DrawFrame runs,
 // and finalize media (frees registration scratch + prewarms Vulkan pipelines).
 void SP_DropHM_Activate(void){
-    Com_Printf("EFSP Route-b: HM spmap/qagame/cgame NOT loaded; SP cgame is sole; clc.state=CA_ACTIVE\n");
+    SP_DPrintf("EFSP Route-b: HM spmap/qagame/cgame NOT loaded; SP cgame is sole; clc.state=CA_ACTIVE\n");
     clc.state = CA_ACTIVE;
     SP_ReinitUI();   // restore the SP UI the engine's load flow tore down (else the render gate freezes — see above)
     // Dismiss the menu so the loaded game is actually visible. The Route-b bridge bypasses CL_MapLoading,
