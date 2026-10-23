@@ -1362,13 +1362,8 @@ void UI_CrewMenu_Cache( void )
 	int i;
 
 	// Precache all menu graphics in array
-	for (i=0;i<CMG_MAX;++i)
-	{
-		if (crewmenu_graphics[i].type == MG_GRAPHIC)
-		{
-			crewmenu_graphics[i].graphic = ui.R_RegisterShaderNoMip(crewmenu_graphics[i].file);
-		}
-	}
+	// EFSP: shared helper also refreshes entries currently switched OFF (stale after a renderer restart)
+	UI_PrecacheMenuGraphics(crewmenu_graphics,CMG_MAX);
 
 	munro_graphic = ui.R_RegisterShaderNoMip(munro_pic);
 	munro_female_graphic = ui.R_RegisterShaderNoMip(munro_female_pic);

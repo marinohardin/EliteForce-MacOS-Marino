@@ -1766,13 +1766,8 @@ void UI_WeaponsMenu_Cache( void )
 	swooshBottom= ui.R_RegisterShaderNoMip("menu/common/swoosh_bottom.tga");
 
 	// Precache all menu graphics in array
-	for (i=0;i<AMG_MAX;++i)
-	{
-		if (attackmenu_graphics[i].type == MG_GRAPHIC)
-		{
-			attackmenu_graphics[i].graphic = ui.R_RegisterShaderNoMip(attackmenu_graphics[i].file);
-		}
-	}
+	// EFSP: shared helper also refreshes entries currently switched OFF (stale after a renderer restart)
+	UI_PrecacheMenuGraphics(attackmenu_graphics,AMG_MAX);
 
 }
 
@@ -2022,6 +2017,13 @@ static void Weapons_MenuInit( void )
 UI_SetupWeaponsMenu
 =================
 */
+// EFSP: see UI_GameMenus_FlushMedia (ui_game.cpp) -- re-init after a renderer restart.
+void UI_ControlsMenus_FlushMedia( void )
+{
+	s_weapons_menu.initialized = qfalse;
+	s_controlslook_menu.initialized = qfalse;
+}
+
 void UI_SetupWeaponsMenu( void )
 {
 	ui.Key_SetCatcher( KEYCATCH_UI );
