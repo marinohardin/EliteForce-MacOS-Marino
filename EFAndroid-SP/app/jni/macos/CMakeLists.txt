@@ -106,7 +106,7 @@ target_include_directories(efsp PRIVATE
   ${SP})
 
 target_compile_definitions(efsp PRIVATE
-  ELITEFORCE BOTLIB
+  ELITEFORCE BOTLIB NDEBUG
   USE_CODEC_MP3 USE_INTERNAL_MP3 FPM_64BIT
   $<$<NOT:$<BOOL:${EF_VM_JIT}>>:NO_VM_COMPILED>
   USE_VULKAN USE_VULKAN_API
