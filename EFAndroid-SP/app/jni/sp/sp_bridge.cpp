@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include <time.h>
 #include <android/log.h>
@@ -762,6 +763,19 @@ static void SP_CgameConsoleCmd(void){
     if(ge && g_spActive) ge->ClientCommand(0);
 }
 
+// CG_ADDCOMMAND: the cgame re-registers its whole command list on every CG_INIT (each map load /
+// savegame load), but the engine commands it created stay registered (they all route through
+// SP_CgameConsoleCmd, so the old registration is still correct). Register each name once, which
+// also stops ~40 "Cmd_AddCommand: X already defined" lines per load. A real clash with an engine
+// command (messagemode2) is still reported, once.
+static void SP_CgameAddCommand(const char *name){
+    static char names[256][32]; static int count = 0;
+    if(!name || !name[0]) return;
+    for(int i = 0; i < count; i++) if(!strcasecmp(names[i], name)) return;
+    if(count < 256 && strlen(name) < sizeof(names[0])){ strcpy(names[count], name); count++; }
+    Cmd_AddCommand(name, SP_CgameConsoleCmd);
+}
+
 // ---------------------------------------------------------------------------
 // AS_* ambient-sound-set system (sound/sound.txt). In retail these are ENGINE
 // traps (AS_ParseFile, S_UpdateAmbientSet, AS_AddLocalSet, AS_GetBModelSound). The SP port
@@ -963,7 +977,7 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     case CG_FS_WRITE:      return FS_Write(P(0),(int)A(1),(fileHandle_t)A(2));
     case CG_FS_FCLOSEFILE: FS_FCloseFile((fileHandle_t)A(0)); return 0;
     case CG_SENDCONSOLECOMMAND: Cbuf_AddText((const char*)P(0)); return 0;
-    case CG_ADDCOMMAND:    Cmd_AddCommand((const char*)P(0), SP_CgameConsoleCmd); return 0;
+    case CG_ADDCOMMAND:    SP_CgameAddCommand((const char*)P(0)); return 0;
     case CG_SENDCLIENTCOMMAND:
         // The cgame sends SERVER-handled commands (give/god/noclip/notarget/setobjective/...) via
         // trap_SendClientCommand. In our loopback bridge there's no netchan: tokenize the command and
