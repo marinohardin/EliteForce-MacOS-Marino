@@ -728,6 +728,13 @@ char *Sys_ParseProtocolUri( const char *uri )
 }
 #endif
 
+#ifdef __APPLE__
+#ifndef MACOS_HOMEPATH_NAME
+// ~/Library/Application Support/<this> holds macOS saves/config (see sys_osx.m)
+#define MACOS_HOMEPATH_NAME "VoyagerSP-macOS"
+#endif
+#endif
+
 #ifndef DEFAULT_BASEDIR
 #	ifdef __ANDROID__
 		/* base data path == the app's own OBB dir (no storage permission needed);
@@ -833,10 +840,14 @@ int main( int argc, char **argv )
 	{
 		extern void Sys_DisablePressAndHold( void );
 		extern qboolean Sys_MacSetupBundleEnv( void );
+		extern qboolean Sys_MacPrepareHomepath( int argc, char **argv );
 
 		Sys_DisablePressAndHold( );
 		// Inside the .app: use the bundled Vulkan loader + MoltenVK ICD.
 		Sys_MacSetupBundleEnv( );
+		// Own homepath (saves/config), migrated once from the Lilium Voyager one.
+		if ( Sys_MacPrepareHomepath( argc, argv ) )
+			Q_strcat( commandLine, sizeof( commandLine ), "+set com_homepath " MACOS_HOMEPATH_NAME " " );
 	}
 #endif
 

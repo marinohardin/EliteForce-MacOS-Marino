@@ -115,7 +115,8 @@ target_compile_definitions(efsp PRIVATE
   PRODUCT_VERSION="1.40"
   ARCH_STRING="arm64"
   USE_LOCAL_HEADERS=1
-  MACOS_X)
+  MACOS_X
+  MACOS_HOMEPATH_NAME="VoyagerSP-macOS")
 
 target_compile_options(efsp PRIVATE
   -fno-strict-aliasing -Werror=implicit-function-declaration -O2 -w
