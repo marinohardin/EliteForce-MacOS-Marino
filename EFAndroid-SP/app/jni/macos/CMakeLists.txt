@@ -64,7 +64,8 @@ set(SDL_SRC ${EF}/sdl/sdl_input.c ${EF}/sdl/sdl_snd.c ${EF}/sdl/sdl_gamma.c ${EF
 # lilium-voyager's macOS sys layer: tty console + Cocoa dialogs (sys_osx.m).
 set(SYS_SRC
   ${EF}/sys/con_log.c ${EF}/sys/con_tty.c ${EF}/sys/sys_autoupdater.c
-  ${EF}/sys/sys_unix.c ${EF}/sys/sys_main.c ${EF}/sys/sys_osx.m)
+  ${EF}/sys/sys_unix.c ${EF}/sys/sys_main.c ${EF}/sys/sys_osx.m
+  ${EF}/sys/sys_osx_data.m)
 
 file(GLOB RENDERCOMMON_SRC ${EF}/renderercommon/*.c)
 file(GLOB RENDERER_SRC ${EF}/renderervk/*.c)

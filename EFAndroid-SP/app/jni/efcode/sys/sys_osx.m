@@ -145,7 +145,7 @@ Returns the path of the enclosing .app bundle, or NULL when the executable is
 not running from inside one (e.g. a dev build in build-macos/).
 =================
 */
-static NSString *Sys_MacAppBundlePath( void )
+NSString *Sys_MacAppBundlePath( void )
 {
 	NSString *path = [[NSBundle mainBundle] bundlePath];
 
