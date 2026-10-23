@@ -28,9 +28,9 @@ Elite Force SP source, built as native modules.
 - **Retina / High-DPI.** `r_highdpi 1` renders at the display's native backing resolution
   (for example 5120×2880 fullscreen on a 5K panel), with menu mouse coordinates mapped
   correctly.
-- **Windowed or fullscreen.** `r_fullscreen`, `r_mode` / `r_customwidth` /
-  `r_customheight` work on desktop.
-  <!-- TODO(video-menu): mention the in-game Video menu once the video-settings branch is merged. -->
+- **Windowed or fullscreen, switchable live.** **Alt+Enter** toggles fullscreen at any time,
+  including mid-mission. The in-game **Video** menu has **Window Size**, **Fullscreen** and
+  **High-DPI** options, and the settings are remembered between launches.
 - **Bink cinematics** (intro, logos, in-game movies) decoded with FFmpeg.
 - **Original PC saves load.** Savegames from the Windows version can be loaded.
 - Mac keyboard and mouse: the macOS press-and-hold accent popup is disabled, so holding
@@ -39,9 +39,8 @@ Elite Force SP source, built as native modules.
 ## Requirements
 
 - **An Apple Silicon Mac** (M1 or later). Intel Macs are not supported.
-- **macOS:** tested on **macOS 27 on an M1 Pro**. Older releases that MoltenVK supports
-  may work but are untested.
-  <!-- TODO(min-macos): set to the LSMinimumSystemVersion that macos/make-app.sh writes. -->
+- **macOS 27 or later** (tested on an M1 Pro). The current builds bundle libraries built for
+  macOS 27; support for older releases needs rebuilding those with an older deployment target.
 - **The retail game.** Copy these files from the `BaseEF` folder of a PC installation:
   - `pak0.pk3` (about 541 MB, the main game data). This one is required.
   - The patch paks, such as `pak1.pk3` and `pak2.pk3` (and `pak3.pk3` if you have it).
@@ -57,26 +56,45 @@ Elite Force SP source, built as native modules.
 
 1. Download `VoyagerSP-macOS.zip` from the
    [Releases page](https://github.com/OWNER/VoyagerSP-macOS/releases). <!-- TODO(release-link): real owner/URL -->
-2. Unzip it and move **VoyagerSP-macOS.app** to `/Applications` (or anywhere you like).
-3. Put your game data where the app looks for it.
-   <!-- TODO(data-location): the app-bundle branch decides where BaseEF goes (likely
-        ~/Library/Application Support/<name>/baseEF/). Replace this step with the exact
-        path and what the in-app "missing data" message says. -->
-   For now, see the message the app shows on first launch when it can't find
-   `pak0.pk3`. It tells you where to put your `BaseEF` folder.
-4. Open the app. Release builds are not notarized, so the first time macOS says it
+2. Unzip it and move **EliteForceSP.app** to `/Applications` (or anywhere you like).
+3. Open the app. On first launch it looks for your game data, and if it can't find it, it
+   asks you to **choose the folder where Elite Force is installed** (the folder that
+   contains `BaseEF`):
+   - By default the app **copies** the game files (`*.pk3`) and any saves from that
+     `BaseEF` into its own data folder, so you can delete or move the original afterwards.
+   - Tick **"Use BaseEF files in place rather than copy"** to read them from where they
+     are instead (no copy, nothing extra on disk). The app remembers that folder.
+   - If the chosen `BaseEF` has no `pak0.pk3` (a minimum CD install), the app says so;
+     copy `pak0.pk3` from the CD and try again.
+
+   It also quietly uses a `baseEF` folder placed next to the app, if there is one.
+4. Release builds are not notarized, so the first time you open the app macOS may say it
    can't verify the developer. Either:
    - right-click (Control-click) the app, choose **Open**, then **Open** again, or
    - on newer macOS, go to **System Settings → Privacy & Security** and click
      **Open Anyway**, or
-   - in Terminal: `xattr -dr com.apple.quarantine /Applications/VoyagerSP-macOS.app`
+   - in Terminal: `xattr -dr com.apple.quarantine /Applications/EliteForceSP.app`
 
 ### Saves and settings
 
-Config files and saves live in `~/Library/Application Support/Lilium Voyager/baseEF/`
-(the engine's home path). To keep playing a Windows save, copy the files from the
-Windows install's `BaseEF/save/` folder into the `save/` folder there.
-<!-- TODO(verify-homepath): confirm the path if the app-bundle branch changes HOMEPATH_NAME. -->
+Config files, saves (and game files the app copied) live in
+`~/Library/Application Support/VoyagerSP-macOS/baseEF/`. You don't need to find that
+folder yourself: the app's menu (**Elite Force SP** in the menu bar) has
+
+- **Show Saves Folder** and **Show Game Folder**: open them in Finder,
+- **Change Game Folder…**: pick a different install (takes effect on the next launch),
+- **Delete Saves & Settings…**: moves the app's data folder to the Trash (it lists what's
+  in it first). A game folder you chose to use in place is never touched.
+
+Saves from the Windows version work: the app copies them when it copies your `BaseEF`, or
+you can drop `.sav` files into the saves folder. If you played an earlier build of this
+port, its saves (from `~/Library/Application Support/Lilium Voyager/`) are copied over
+automatically on first launch.
+
+### Uninstall
+
+Choose **Delete Saves & Settings…** from the app menu (this also removes any game files the
+app copied), then drag the app to the Trash.
 
 ## Building from source
 
@@ -122,10 +140,16 @@ EF_DIR=/path/to/EliteForce ./run-macos.sh +set r_fullscreen 1 +set r_highdpi 1
 
 ### Make the .app
 
-<!-- TODO(verify-make-app): check the usage and output path once the app-bundle branch is merged. -->
 ```sh
-macos/make-app.sh        # bundles efsp, the dylibs, SDL, FFmpeg, the Vulkan loader and MoltenVK
+macos/make-app.sh             # builds both parts, then writes and ad-hoc signs dist/EliteForceSP.app
+NO_BUILD=1 macos/make-app.sh  # re-bundle only
 ```
+
+The script copies `efsp` and the two game modules into `Contents/MacOS`, and SDL3 +
+sdl2-compat, FFmpeg (and its dependencies), the Vulkan loader and MoltenVK into
+`Contents/Frameworks`, rewrites their install names to `@rpath`, and fails if anything still
+points outside the bundle or the system. `APP_NAME`, `DISPLAY_NAME`, `BUNDLE_ID` and `BREW`
+can be overridden.
 
 Build options (engine CMake): `-DEF_BINK=OFF` builds without FFmpeg (no cinematics).
 `-DEF_VM_JIT=ON` enables the experimental aarch64 QVM JIT; it is off by default and not
@@ -150,9 +174,8 @@ Please open an issue on GitHub with:
 - where your game data comes from (GOG, Steam, CD + patch) and which `pak*.pk3` files you have,
 - what happened and how to reproduce it (map name, save file if relevant),
 - the console log. Start from Terminal with
-  `/Applications/VoyagerSP-macOS.app/Contents/MacOS/<executable> 2>&1 | tee ef.log`, or use
-  `qconsole.log` (enable with `+set logfile 2`).
-  <!-- TODO(verify-make-app): fill in the bundle executable name. -->
+  `/Applications/EliteForceSP.app/Contents/MacOS/efsp 2>&1 | tee ef.log`, or use
+  `qconsole.log` (enable with `+set logfile 2`). Add `+set developer 1` for verbose logs.
 
 See also [CONTRIBUTING.md](CONTRIBUTING.md).
 

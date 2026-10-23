@@ -97,8 +97,16 @@ This fork adds a native macOS (Apple Silicon) build. Technical log: [docs/macos-
   console, chat or a menu has key focus, so holding WASD works.
 - **UI.** The Virtual Voyager button shows "EXPANSION ONLY" (greyed out) when the Expansion Pack maps
   are missing, instead of "?" and a load error.
-- **.app bundle**, live video settings and log cleanup. <!-- TODO(credits-merge): describe these once the
-  app-bundle, video-settings and cleanup branches are merged. -->
+- **Self-contained .app.** `macos/make-app.sh` bundles the engine, game modules, SDL, FFmpeg, the Vulkan
+  loader and MoltenVK with `@rpath` install names and ad-hoc signing; the app finds the bundled
+  MoltenVK ICD itself. First launch finds or asks for the game folder (copy or use in place), and the
+  app menu has Show Saves/Game Folder, Change Game Folder and Delete Saves & Settings.
+- **Live video settings.** Alt+Enter and the Video menu switch fullscreen and window size without a
+  relaunch (in-place swapchain resize, window-recreating `vid_restart` when needed), plus a High-DPI
+  option; the SP cgame follows the new size mid-mission.
+- **Log cleanup.** Bridge logs go through the engine console (no more mangled `tty]` lines), stale UI
+  shader handles are refreshed after a renderer restart (no `hShader out of range` spam, no stray
+  box on the galaxy map), and cgame commands are registered once.
 
 ### Bundled in the macOS .app
 
