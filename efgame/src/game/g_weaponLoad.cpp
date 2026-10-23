@@ -227,6 +227,9 @@ void WPN_WeaponType(char **holdBuf)
 		weaponNum = WP_DESPERADO;
 	else if (!Q_stricmp(tokenStr,"WP_PROTON_GUN"))	
 		weaponNum = WP_PROTON_GUN;
+	else if (!Q_stricmp(tokenStr,"WP_BOT_LASER"))
+		weaponNum = 0;	// EFSP: in retail pak0 weapons.dat but not in this source's weapon enum; same
+						// handling as any unknown name (slot 0), just without the warning on every load
 	else
 	{
 		weaponNum = 0;

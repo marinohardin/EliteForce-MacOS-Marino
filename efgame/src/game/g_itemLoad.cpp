@@ -161,6 +161,9 @@ static void IT_Name(char **holdBuf)
 		itemNum = ITM_PALADIN_WEAPON;
 	else if (!Q_stricmp(tokenStr,"ITM_PROTON_GUN_PICKUP"))	
 		itemNum = ITM_PROTON_GUN_PICKUP;
+	else if (!Q_stricmp(tokenStr,"ITM_BOT_LASER_PICKUP"))
+		itemNum = 0;	// EFSP: retail pak0 items.dat entry for WP_BOT_LASER, which this source lacks;
+						// same handling as any unknown name (slot 0), just without the warning
 	else
 	{
 		itemNum = 0;
@@ -322,6 +325,8 @@ static void IT_Tag(char **holdBuf)
 		tag = AMMO_ALIEN;
 	else if (!Q_stricmp(tokenStr,"AMMO_ALIEN"))	
 		tag = AMMO_ALIEN;
+	else if (!Q_stricmp(tokenStr,"WP_BOT_LASER"))
+		tag = WP_IMOD;	// EFSP: see ITM_BOT_LASER_PICKUP above -- unknown here, same default, no warning
 	else
 	{
 		tag = WP_IMOD;
