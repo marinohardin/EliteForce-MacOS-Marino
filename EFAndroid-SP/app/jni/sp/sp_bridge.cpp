@@ -1007,7 +1007,10 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     case CG_R_SCISSOR:        return 0;     // no clip-rect support in re; HUD draws unclipped
     case CG_S_GETSAMPLELENGTH: return SPR_S_GetSampleLength((int)A(0));   // real sound duration ms (subtitle timing)
     // client state (the critical path)
-    case CG_GETGLCONFIG:   *(glconfig_t*)P(0) = g_glconfig; return 0;
+    case CG_GETGLCONFIG: {   // live size: the desktop window can be resized in place (Alt+Enter)
+        int rw=0, rh=0; SPR_GetVidSize(&rw,&rh);
+        if(rw>0 && rh>0){ g_glconfig.vidWidth=rw; g_glconfig.vidHeight=rh; g_glconfig.windowAspect=(float)rw/(float)rh; }
+        *(glconfig_t*)P(0) = g_glconfig; return 0; }
     case CG_GETGAMESTATE:  *(gameState_t*)P(0) = g_gameState; return 0;
     // Retail CL_GetCurrentSnapshotNumber: return the LATEST built snap's number + its serverTime.
     case CG_GETCURRENTSNAPSHOTNUMBER: {

@@ -848,6 +848,12 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 	// update cvars
 	CG_UpdateCvars();
 
+	// the engine can resize the screen in place (desktop Alt+Enter / Video menu):
+	// re-read the size every frame so the 3D view and the HUD follow it
+	cgi_GetGlconfig( &cgs.glconfig );
+	cgs.screenXScale = cgs.glconfig.vidWidth / 640.0;
+	cgs.screenYScale = cgs.glconfig.vidHeight / 480.0;
+
 	// if we are only updating the screen as a loading
 	// pacifier, don't even try to read snapshots
 	if ( cg.infoScreenText[0] != 0 ) {
