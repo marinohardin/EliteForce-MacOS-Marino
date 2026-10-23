@@ -22,7 +22,7 @@ static void ulog(const char* fmt, ...){ va_list a; va_start(a,fmt); __android_lo
 
 // Com_Printf/Com_Error/Q_strncpyz are declared C++-linkage by q_shared.h here, so reference
 // them via the C-linkage shim (sp_clink.c) / a local copy instead of the mangled symbols.
-extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); }
+extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*); }
 static void sp_strncpyz(char* d, const char* s, int n){ if(n<=0)return; int i=0; for(; i<n-1 && s && s[i]; i++) d[i]=s[i]; d[i]=0; }
 
 // ---- lilium engine services (ABI-compatible with the SP boundary types) ----
@@ -215,7 +215,7 @@ static void SPUI_FillImport(void){
 
 extern "C" int SPUI_Load(void){
     if(g_uiActive) return 1;
-    g_uilib = dlopen("libefui.so", RTLD_NOW|RTLD_GLOBAL);
+    g_uilib = dlopen(SP_ModulePath("libefui.so"), RTLD_NOW|RTLD_GLOBAL);
     if(!g_uilib){ ulog("dlopen libefui.so failed: %s", dlerror()); return 0; }
     GetUIAPI_t getapi = (GetUIAPI_t)dlsym(g_uilib, "GetUIAPI");
     if(!getapi) getapi = (GetUIAPI_t)dlsym(g_uilib, "_Z8GetUIAPIv");   // C++-mangled fallback

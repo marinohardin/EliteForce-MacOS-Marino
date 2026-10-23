@@ -24,7 +24,7 @@
 extern char g_spSaveComment[128];
 
 // Com_Printf/Com_Error come via the C shim (SP headers declare them C++-linkage).
-extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); }
+extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*); }
 static void blog( const char *fmt, ... ){ va_list a; va_start(a,fmt); __android_log_vprint(ANDROID_LOG_INFO,"EFSP",fmt,a); va_end(a); }
 
 // ---- lilium engine services (resolved at link against the engine objects) ----
@@ -555,7 +555,7 @@ extern "C" void SP_UnloadGame( void ){
 
 extern "C" qboolean SP_LoadGame( const char *solib ){
     if( g_lib ) SP_UnloadGame();   // drop the stale module first -> every (re)load lands on a fresh, zeroed .so
-    g_lib = dlopen( solib, RTLD_NOW );
+    g_lib = dlopen( SP_ModulePath( solib ), RTLD_NOW );
     if(!g_lib){ blog("SP_LoadGame: dlopen failed: %s\n", dlerror()); return qfalse; }
     GetGameAPI_t GetGameAPI = (GetGameAPI_t)dlsym(g_lib, "_Z10GetGameAPIP13game_import_t");
     if(!GetGameAPI){ blog("SP_LoadGame: GetGameAPI not found\n"); return qfalse; }

@@ -1603,6 +1603,10 @@ static void IN_TouchFinger( SDL_TouchFingerEvent *f, int phase )
 	}
 }
 #endif
+#ifndef __ANDROID__
+// No touch controls (and so no sticky crouch toggle) off Android; sp_integration.c still calls this.
+void IN_ClearCrouchToggle( void ) { }
+#endif
 
 /*
 ===============
