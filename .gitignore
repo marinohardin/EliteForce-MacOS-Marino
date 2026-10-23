@@ -40,3 +40,20 @@ binary_analysis/
 thirdparty/
 *.DLL
 *.EXE
+
+# ---- macOS port (repo-docs) -------------------------------------------------
+# Kept as a separate block to ease merging with other branches' additions.
+# Build trees
+/build-macos/
+/build-macos-*/
+efgame/buildmac/
+# Packaged app / release output (make-app.sh output dir: TODO verify)
+/dist/
+# Finder metadata
+.DS_Store
+# Local retail game data used for testing (never commit; not redistributable)
+/Star Trek Voyager Elite Force/
+/baseEF/
+/BaseEF/
+/*.pk3
+# ------------------------------------------------------------------------------
