@@ -40,3 +40,6 @@ binary_analysis/
 thirdparty/
 *.DLL
 *.EXE
+
+# macOS app bundle output (macos/make-app.sh)
+dist/
