@@ -25,7 +25,18 @@ extern char g_spSaveComment[128];
 
 // Com_Printf/Com_Error come via the C shim (SP headers declare them C++-linkage).
 extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*); }
-static void blog( const char *fmt, ... ){ va_list a; va_start(a,fmt); __android_log_vprint(ANDROID_LOG_INFO,"EFSP",fmt,a); va_end(a); }
+// Bridge logging. Android: everything to logcat at INFO, as before. Desktop (macos/android/log.h):
+// blog = developer-only chatter, binfo = always shown, bwarn = always shown in yellow.
+#ifdef __ANDROID__
+#define SP_LOG_DEV  ANDROID_LOG_INFO
+#define SP_LOG_WARN ANDROID_LOG_INFO
+#else
+#define SP_LOG_DEV  ANDROID_LOG_DEBUG
+#define SP_LOG_WARN ANDROID_LOG_WARN
+#endif
+static void blog( const char *fmt, ... ){ va_list a; va_start(a,fmt); __android_log_vprint(SP_LOG_DEV,"EFSP",fmt,a); va_end(a); }
+static void binfo( const char *fmt, ... ){ va_list a; va_start(a,fmt); __android_log_vprint(ANDROID_LOG_INFO,"EFSP",fmt,a); va_end(a); }
+static void bwarn( const char *fmt, ... ){ va_list a; va_start(a,fmt); __android_log_vprint(SP_LOG_WARN,"EFSP",fmt,a); va_end(a); }
 
 // ---- lilium engine services (resolved at link against the engine objects) ----
 extern "C" {
@@ -472,18 +483,18 @@ static int ReadChunk( unsigned long c, void *addr, int len, void **pp, qboolean 
         // Mandatory mismatch: CONSUME the rest of this chunk (cksum + data + magic) so the stream stays framed
         // and the following chunks still parse, instead of leaving cksum/data/magic unread and desyncing every
         // subsequent chunk (retail Com_Errors here; we log + resync to stay non-fatal).
-        blog("savegame: chunk ID mismatch got %08x want %08lx (consuming %u + resyncing)\n", id, c, storedLen);
+        bwarn("savegame: chunk ID mismatch got %08x want %08lx (consuming %u + resyncing)\n", id, c, storedLen);
         FS_Seek(s_sgFile, (int)(4 + storedLen + 4), FS_SEEK_CUR);
         return 0;
     }
-    if(len != 0 && (unsigned)len != storedLen) blog("savegame: chunk %08x len %u != requested %d\n", id, storedLen, len);
+    if(len != 0 && (unsigned)len != storedLen) bwarn("savegame: chunk %08x len %u != requested %d\n", id, storedLen, len);
     unsigned cks=0; FS_Read(&cks,4,s_sgFile);
     void *buf = addr;
     if(!buf){ buf = malloc(storedLen ? storedLen : 1); if(pp) *pp = buf; }
     if(storedLen>0) FS_Read(buf, (int)storedLen, s_sgFile);
     unsigned trailer=0; FS_Read(&trailer,4,s_sgFile);
-    if((unsigned)Com_BlockChecksum(buf, (int)storedLen) != cks) blog("savegame: checksum FAIL chunk %08x\n", id);
-    if(trailer != SG_MAGIC) blog("savegame: bad magic chunk %08x (%08x)\n", id, trailer);
+    if((unsigned)Com_BlockChecksum(buf, (int)storedLen) != cks) bwarn("savegame: checksum FAIL chunk %08x\n", id);
+    if(trailer != SG_MAGIC) bwarn("savegame: bad magic chunk %08x (%08x)\n", id, trailer);
     if(!addr && !pp) free(buf);
     return (int)storedLen;
 }
@@ -562,9 +573,9 @@ extern "C" void SP_UnloadGame( void ){
 extern "C" qboolean SP_LoadGame( const char *solib ){
     if( g_lib ) SP_UnloadGame();   // drop the stale module first -> every (re)load lands on a fresh, zeroed .so
     g_lib = dlopen( SP_ModulePath( solib ), RTLD_NOW );
-    if(!g_lib){ blog("SP_LoadGame: dlopen failed: %s\n", dlerror()); return qfalse; }
+    if(!g_lib){ bwarn("SP_LoadGame: dlopen failed: %s\n", dlerror()); return qfalse; }
     GetGameAPI_t GetGameAPI = (GetGameAPI_t)dlsym(g_lib, "_Z10GetGameAPIP13game_import_t");
-    if(!GetGameAPI){ blog("SP_LoadGame: GetGameAPI not found\n"); return qfalse; }
+    if(!GetGameAPI){ bwarn("SP_LoadGame: GetGameAPI not found\n"); return qfalse; }
 
     static game_import_t gi; memset(&gi,0,sizeof(gi));
     gi.Printf=SP_ComPrintf(); gi.Error=SP_ComError; gi.Milliseconds=Sys_Milliseconds;
@@ -586,7 +597,7 @@ extern "C" qboolean SP_LoadGame( const char *solib ){
     gi.S_Override=g_sOverride; gi.Malloc=I_Malloc; gi.Free=I_Free;
 
     ge = GetGameAPI(&gi);
-    if(!ge){ blog("SP_LoadGame: GetGameAPI returned NULL\n"); return qfalse; }
+    if(!ge){ bwarn("SP_LoadGame: GetGameAPI returned NULL\n"); return qfalse; }
     // wire the cgame syscall dispatcher (no-op) so server-side FX calls don't hit a null pointer
     dllEntry_t dllEntry = (dllEntry_t)dlsym(g_lib, "_Z8dllEntryPFiizE");
     if(dllEntry) dllEntry(SP_CgameSyscall);
@@ -653,7 +664,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     // Populate CS_SERVERINFO so the cgame builds cgs.mapname = "maps/<map>.bsp" (cg_servercmds.cpp:25)
     // — needed for the renderer world load (Route b) AND the cgame levelshot / mission-info text.
     snprintf(g_configstrings[CS_SERVERINFO], sizeof(g_configstrings[0]), "\\mapname\\%s\\sv_maxclients\\1", mapname);
-    if(!ge){ blog("no game loaded\n"); return qfalse; }
+    if(!ge){ bwarn("no game loaded\n"); return qfalse; }
     ge->Init( mapname, "", checksum, entstring, g_levelTime, Sys_Milliseconds(), Sys_Milliseconds(),
               (SavedGameJustLoaded_e)0, qfalse );
     blog("SP_SpawnServer: ge->Init done. num_entities=%d linked=%d\n", ge->num_entities, g_numLinked);
@@ -840,7 +851,7 @@ static void SP_AS_ParseSets(void){
     void* buf = NULL;
     int len = (int)FS_ReadFile("sound/sound.txt", &buf);
     if(len <= 0 || !buf){
-        blog("AS_ParseSets: ^1Couldn't load ambient sound sets from sound/sound.txt\n");
+        bwarn("AS_ParseSets: ^1Couldn't load ambient sound sets from sound/sound.txt\n");
         return;
     }
     char* p = (char*)buf;
@@ -870,12 +881,12 @@ static void SP_AS_ParseSets(void){
             if(!AS_stricmp(tok,"loopedWave")){
                 char path[256]; snprintf(path,sizeof(path),"sound/%s.wav",AS_Tok(&p,true));
                 s->looped = SPR_S_RegisterSound(path);
-                if(s->looped < 1) blog("AS_ParseSets: ^3Unable to load ambient sound \"%s\"\n", path);
+                if(s->looped < 1) bwarn("AS_ParseSets: ^3Unable to load ambient sound \"%s\"\n", path);
             } else if(!AS_stricmp(tok,"subWaves")){
                 char prefix[128]; AS_strcpy(prefix, AS_Tok(&p,false), sizeof(prefix));
                 const char* wn;
                 while((wn=AS_Tok(&p,false))[0]){
-                    if(s->numSubWaves >= AS_MAX_SUBWAVES){ blog("AS_ParseSets: ^3Too many subwaves on set \"%s\"\n", s->name); break; }
+                    if(s->numSubWaves >= AS_MAX_SUBWAVES){ bwarn("AS_ParseSets: ^3Too many subwaves on set \"%s\"\n", s->name); break; }
                     char path[256]; snprintf(path,sizeof(path),"sound/%s/%s.wav",prefix,wn);
                     s->subWaves[s->numSubWaves++] = SPR_S_RegisterSound(path);
                 }
@@ -888,7 +899,7 @@ static void SP_AS_ParseSets(void){
             } else if(!AS_stricmp(tok,"radius")){
                 s->radius = atoi(AS_Tok(&p,false));
             } else {
-                blog("AS_ParseSets: ^3Unknown ambient set keyword \"%s\"\n", tok);
+                bwarn("AS_ParseSets: ^3Unknown ambient set keyword \"%s\"\n", tok);
             }
         }
     }
@@ -934,7 +945,11 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     for(int i=0;i<16;i++) args[i]=va_arg(ap,intptr_t);
     va_end(ap);
     switch(cmd){
+#ifdef __ANDROID__
     case CG_PRINT:        blog("%s",(const char*)P(0)); return 0;
+#else
+    case CG_PRINT:        SP_ComPrintf()("%s",(const char*)P(0)); return 0;   // cgame text -> engine console as-is
+#endif
     case CG_ERROR:        SP_ComError(0,"%s",(const char*)P(0)); return 0;
     case CG_MILLISECONDS: return Sys_Milliseconds();
     case CG_CVAR_REGISTER: Cvar_Register((vmCvar_t*)P(0),(const char*)P(1),(const char*)P(2),(int)A(3)); return 0;
@@ -1116,7 +1131,7 @@ extern "C" void SP_MapTransition(const char* map, const char* spawn, int isHub){
     // one is already pending, a SECOND destination queued in the same Cbuf drain (e.g. a turbolift `use` plus a
     // script-driven changelevel, or a `load` racing a `maptransition`) would silently overwrite g_transMap and
     // drop the first -> wrong-map desync. Ignore the overlapping request; the first transition still completes.
-    if( g_transMap[0] ){ blog("SP_MapTransition: '%s' already pending -> ignoring overlapping '%s'\n", g_transMap, map); return; }
+    if( g_transMap[0] ){ bwarn("SP_MapTransition: '%s' already pending -> ignoring overlapping '%s'\n", g_transMap, map); return; }
     SP_BeginLoad(map);
     blog("SP_MapTransition: -> %s (spawn '%s' hub %d)\n", map, spawn?spawn:"", isHub);
     if(SG_OpenWrite(TRANS_SAV)){ ge->WriteLevel(qfalse); SG_Close(); }   // snapshot carried state
@@ -1134,7 +1149,7 @@ extern "C" void SP_MapTransition(const char* map, const char* spawn, int isHub){
 // Called by the 'efsptrans' command after spmap has loaded the new world. Tears down the old SP
 // level (reusing the loaded libefgame.so), re-inits on the new map with the carried state.
 extern "C" qboolean SP_FinishTransition(void){
-    if(!g_transMap[0]){ blog("SP_FinishTransition: no pending map (g_transMap empty) -> abort\n"); return qfalse; }
+    if(!g_transMap[0]){ bwarn("SP_FinishTransition: no pending map (g_transMap empty) -> abort\n"); return qfalse; }
     // P1-2: silence in-flight one-shots + background music BEFORE the libefgame reload so they don't bleed
     // across the transition. Looping sounds self-heal on the new cgame's first frame (S_ClearLoopingSounds),
     // but one-shots/music have no such reset; without this a VO line or ambient cue carries into the next map.
@@ -1147,7 +1162,7 @@ extern "C" qboolean SP_FinishTransition(void){
                                         // globals (retail's per-map DLL reload). s_sgFile is a bridge FS handle,
                                         // so the open save survives -> ge->ReadLevel below restores the saved
                                         // state into the fresh module. SP_UnloadGame already did the teardown.
-    if(!ge || !g_vmMain){ blog("SP_FinishTransition: game module failed to load -> abort\n"); return qfalse; }
+    if(!ge || !g_vmMain){ bwarn("SP_FinishTransition: game module failed to load -> abort\n"); return qfalse; }
     blog("SP_FinishTransition: %s spawn=%s\n", g_transMap, g_transSpawn);
     g_spActive = 0;
     memset(g_entClip, 0, sizeof(g_entClip)); g_svCmdSeq = 0; g_snapNum = 1; g_cmdNum = 1;   // bridge statics
@@ -1209,7 +1224,7 @@ extern "C" qboolean SP_FinishTransition(void){
              Sys_Milliseconds(), Sys_Milliseconds(), sg, g_transHub ? qtrue : qfalse);
     BuildGameState();
     char* denied = ge->ClientConnect(0, qfalse, sg);
-    if(denied) blog("SP_FinishTransition: ClientConnect denied: %s\n", denied);
+    if(denied) bwarn("SP_FinishTransition: ClientConnect denied: %s\n", denied);
     // Restore carried state BEFORE ClientBegin (retail order: Init -> ClientConnect -> ReadLevel ->
     // ClientBegin). ReadLevel byte-restores every gentity incl. NPC ps.weapon/torsoAnim and reattaches
     // ICARUS; doing it AFTER ClientBegin let the first frame assert PM_TorsoAnimation's armed default
@@ -1323,7 +1338,7 @@ static int g_pendingAutosave = 0;
 //    On load the level respawns FRESH from the BSP (the spent opening script_runner re-fires -> the cinematic
 //    re-locks the player) and the loadout is restored via Player_RestoreFromPrevLevel from the carry cvars.
 static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
-    if(!ge || !g_spActive || !name || !name[0]){ blog("save: not in a game\n"); return; }
+    if(!ge || !g_spActive || !name || !name[0]){ bwarn("save: not in a game\n"); return; }
     // Cutscene gate (retail SV_CanSave -> GameAllowedToSaveHere == !in_camera). Retail SV_SaveGame only checks
     // it for gameFlag 0: `if ((param_2==0) && !SV_CanSave) return;`. So an eAUTO autosave (bEAUTO) is NEVER
     // gated -- it writes immediately even during the opening cinematic, which is SAFE now that it is eAUTO:
@@ -1338,12 +1353,12 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
             blog("save: eFULL autosave checkpoint DEFERRED (in cutscene) -> will write when in_camera clears\n");
         } else {
             SP_ComPrintf()("^1Cannot save during a cutscene.\n");   // engine console (Com_Printf is C-linkage; route via the shim)
-            blog("save: manual save blocked during cutscene -- matches retail SV_CanSave\n");
+            bwarn("save: manual save blocked during cutscene -- matches retail SV_CanSave\n");
         }
         return;
     }
     if( isAuto ) g_pendingAutosave = 0;   // writing an autosave now satisfies any pending deferral
-    if(!SG_OpenWrite("saves/current.sav")){ blog("save: open failed\n"); return; }
+    if(!SG_OpenWrite("saves/current.sav")){ bwarn("save: open failed\n"); return; }
     static unsigned char shot[256*256*4];      // SHOT thumbnail: 256x256 RGBA, bottom-up (retail 0x40000-byte chunk)
     char comm[128], mpcm[1024]; int zero=0, tnow=g_levelTime;
     memset(comm,0,sizeof(comm)); memset(mpcm,0,sizeof(mpcm));
@@ -1433,7 +1448,7 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
     SG_Close();
     char to[96]; snprintf(to,sizeof(to),"saves/%s.sav", name);
     FS_Rename("saves/current.sav", to);
-    blog("save: wrote %s (map %s, t=%d, %s)\n", to, g_curMap, tnow, bEAUTO ? "eAUTO" : "eFULL");
+    binfo("save: wrote %s (map %s, t=%d, %s)\n", to, g_curMap, tnow, bEAUTO ? "eAUTO" : "eFULL");
 }
 
 // Public save entry (the `save` console command, deferred-autosave writer, quick-save): always eFULL, exactly
@@ -1463,9 +1478,9 @@ extern "C" void SP_LoadGameFile(const char* name){
     if(!name || !name[0]) return;
     // P1-1: don't clobber an already-pending load/transition (consume-once g_transMap). A load requested while
     // another is mid-flight would overwrite the pending map + reuse __trans.sav -> wrong-map desync.
-    if( g_transMap[0] ){ blog("SP_LoadGameFile: '%s' already pending -> ignoring overlapping load '%s'\n", g_transMap, name); return; }
+    if( g_transMap[0] ){ bwarn("SP_LoadGameFile: '%s' already pending -> ignoring overlapping load '%s'\n", g_transMap, name); return; }
     char path[96]; snprintf(path,sizeof(path),"saves/%s.sav", name);
-    if(!SG_OpenRead(path)){ blog("load: open failed %s\n", path); return; }
+    if(!SG_OpenRead(path)){ bwarn("load: open failed %s\n", path); return; }
     static unsigned char shot[256*256*4];
     char comm[128], mpcm[1024]; int ncvc=0, game=0, tnow=0, timr=0, cscn=0;
     // EFSP 4:3: cg_forceAspect is a DISPLAY preference (the video-menu Aspect toggle), not gameplay state. The
@@ -1583,7 +1598,7 @@ static void SP_FillGlConfig(void){
 }
 
 extern "C" qboolean SP_StartClient(void){
-    if(!ge||!g_vmMain){ blog("SP_StartClient: no game/cgame\n"); return qfalse; }
+    if(!ge||!g_vmMain){ bwarn("SP_StartClient: no game/cgame\n"); return qfalse; }
     // New Game is a FRESH start with NO carried-in loadout. Clear the cross-level carry cvars
     // (playersave/playerammo%d/borgadapt%d) that a prior same-session playthrough's forward transitions left set
     // (they are non-archived, so a cold app launch already has them empty -- this covers play->menu->New Game).
@@ -1598,7 +1613,7 @@ extern "C" qboolean SP_StartClient(void){
     BuildGameState();
     // connect + spawn the single player
     char* denied = ge->ClientConnect(0, qtrue, (SavedGameJustLoaded_e)0);
-    if(denied){ blog("SP_StartClient: ClientConnect denied: %s\n", denied); return qfalse; }
+    if(denied){ bwarn("SP_StartClient: ClientConnect denied: %s\n", denied); return qfalse; }
     memset(&g_lastcmd,0,sizeof(g_lastcmd)); g_lastcmd.serverTime=g_levelTime;
     ge->ClientBegin(0, &g_lastcmd, (SavedGameJustLoaded_e)0);
     blog("SP_StartClient: client connected+begun\n");
