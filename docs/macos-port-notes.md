@@ -1,4 +1,16 @@
-# VoyagerSP → macOS arm64: feasibility spike report (2026-10-23)
+# macOS port notes: original feasibility and porting log
+
+> **Historical document.** This is the original feasibility spike report written on
+> 2026-10-23, when the macOS port was started, kept as a record of what was changed and why.
+> It is not kept up to date. For current build and install instructions see the
+> [README](../README.md); for attribution see [CREDITS.md](../CREDITS.md). Paths such as
+> `~/gitdir/VoyagerSP-macos` refer to the author's machine at the time. Later work (Retina
+> rendering, input fixes, the Expansion-only menu entry, the `.app` bundle) is in the git
+> history (`git log 0d8942e..`).
+
+---
+
+## Original report header
 
 Repo: `~/gitdir/VoyagerSP-macos`, a full clone of
 https://github.com/imjustadudegamer/VoyagerSP-Android. Work is on the local branch `macos-port`,
