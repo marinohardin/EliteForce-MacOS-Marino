@@ -3275,6 +3275,21 @@ void MainMenu_Init( void )
 	s_tourmode.textcolor				= CT_BLACK;
 	s_tourmode.textcolor2				= CT_WHITE;
 
+	// Virtual Voyager (tour mode) needs the Expansion Pack's maps/tour/*. The
+	// original game's button text has no label for it either, so it showed "?"
+	// and failed to load. Grey it out with an explanatory label instead.
+	if ( ui.FS_ReadFile( "maps/tour/deck02.bsp", NULL ) <= 0 )
+	{
+		s_tourmode.generic.flags		|= QMF_GRAYED;
+		s_tourmode.color				= CT_DKGREY;
+		menu_button_text[MBT_VIRTUALVOYAGER][0] = "EXPANSION ONLY";
+		menu_button_text[MBT_VIRTUALVOYAGER][1] = "REQUIRES THE ELITE FORCE EXPANSION PACK";
+	}
+	else if ( !menu_button_text[MBT_VIRTUALVOYAGER][0] || !strcmp( menu_button_text[MBT_VIRTUALVOYAGER][0], "?" ) )
+	{
+		menu_button_text[MBT_VIRTUALVOYAGER][0] = "VIRTUAL VOYAGER";
+	}
+
 	s_mods.generic.type				= MTYPE_BITMAP;      
 	s_mods.generic.flags			= QMF_HIGHLIGHT_IF_FOCUS;
 	s_mods.generic.x				= mm_buttons[7][0];
