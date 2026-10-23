@@ -1,8 +1,19 @@
 # Credits & Acknowledgements
 
-This Android single-player port stands on a large body of prior work. Every component below is
-gratefully credited to its authors. Nothing here is claimed as original except the Android port
-glue, the JNI/engine bridge, and the handheld-specific fixes noted at the bottom.
+**This macOS port is a fork of [VoyagerSP-Android](https://github.com/imjustadudegamer/VoyagerSP-Android)
+by imjustadudegamer**, the native Android port of the Elite Force single-player campaign, which in turn
+was inspired by and built on faithvoid's VoyagerNX. Nearly everything that makes the single-player game
+run on a modern idTech 3 engine (the SP game/engine bridge, the Vulkan renderer port to the Elite Force
+engine, the savegame work, cutscene and audio fixes) comes from that project. The macOS-specific
+additions are listed in [macOS port](#macos-port) at the bottom.
+
+Every component below is gratefully credited to its authors. Nothing here is claimed as original except
+the port work explicitly listed under "This port" (Android) and "macOS port".
+
+## Direct upstream
+
+- **VoyagerSP-Android** — imjustadudegamer — the Android single-player port this repository is forked
+  from. <https://github.com/imjustadudegamer/VoyagerSP-Android>
 
 ## The game
 
@@ -54,12 +65,55 @@ idTech3 lineage, all **GPLv2**:
 - **Retail Elite Force game data** (`*.pk3`, retail `*.exe`/`*.dll`) — not redistributed; you must
   provide your own legally-owned copies.
 
-## This port
+## This port (Android, upstream)
 
 - The Android single-player port and handheld integration — JNI engine bridge, Vulkan renderer fixes,
   touch and gamepad controls, 4:3/16:9 aspect handling, save-menu thumbnails, the ILP32↔LP64
   (armv7/arm64) savegame transcoder, and assorted bridge/cutscene/audio fixes — were contributed by the
-  project's authors and contributors.
+  VoyagerSP-Android authors and contributors (imjustadudegamer et al.).
+
+## macOS port
+
+This fork adds a native macOS (Apple Silicon) build. Technical log: [docs/macos-port-notes.md](docs/macos-port-notes.md).
+
+- **Build system.** A separate CMake build for the engine executable
+  (`EFAndroid-SP/app/jni/macos/CMakeLists.txt`) using lilium-voyager's macOS sys layer (`sys_osx.m`,
+  `con_tty.c`) and Homebrew SDL2/FFmpeg. `efgame/CMakeLists.txt` builds `libefgame.dylib` and `libefui.dylib`
+  with ld64 exported-symbols lists. An `android/log.h` stderr shim. `run-macos.sh` launcher. Release
+  (NDEBUG) build.
+- **dylib game modules.** Raven's 2000-era Mac OS X Server block in `q_shared.h` forced
+  GAME/CGAME/UI_HARD_LINKED on any `__APPLE__` build, so the modules could not load. It is now guarded
+  by `EF_DYLIB_MODULES`. Module paths resolve to `<exe dir>/*.dylib`.
+- **Graphics and windowing.** Vulkan through MoltenVK, loaded at runtime via SDL (sdl2-compat on SDL3).
+  Desktop builds honour `r_fullscreen` and `r_customwidth`/`r_customheight`. `r_highdpi` gives native
+  Retina rendering, and menu mouse coordinates are mapped from points to pixels.
+- **Apple arm64 ABI fix.** The cgame's `vmMain` is now called through its real fixed-argument type. On
+  Apple arm64, variadic arguments go on the stack (unlike Linux/Android AAPCS64), which broke
+  `CG_DRAW_ACTIVE_FRAME` ("Undefined stereoView").
+- **items.dat hole fix.** `bg_itemlist` holes with no retail `items.dat` entry (`ITM_CHAOS_PICKUP`)
+  get a placeholder classname, so item lookups no longer stop early ("Couldn't find item for weapon
+  weapon_melee"). Not macOS-specific.
+- **Input.** The press-and-hold accent picker is disabled, and SDL text input is only active while the
+  console, chat or a menu has key focus, so holding WASD works.
+- **UI.** The Virtual Voyager button shows "EXPANSION ONLY" (greyed out) when the Expansion Pack maps
+  are missing, instead of "?" and a load error.
+- **.app bundle**, live video settings and log cleanup. <!-- TODO(credits-merge): describe these once the
+  app-bundle, video-settings and cleanup branches are merged. -->
+
+### Bundled in the macOS .app
+
+The macOS release bundles these libraries as shared libraries. See
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details and license texts.
+
+- **MoltenVK** — The Brenwill Workshop / Khronos Group (Apache-2.0) — Vulkan on Metal.
+  <https://github.com/KhronosGroup/MoltenVK>
+- **Vulkan-Loader** — The Khronos Group, LunarG, Valve (Apache-2.0).
+  <https://github.com/KhronosGroup/Vulkan-Loader>
+- **SDL** — sdl2-compat and SDL3 (zlib license). <https://libsdl.org>
+- **FFmpeg** — the FFmpeg developers. The bundled build comes from Homebrew, which configures FFmpeg
+  with `--enable-gpl --enable-version3`, so **the bundled FFmpeg is licensed under the GPL version 3 or
+  later** (not LGPL). It also pulls in its own GPL dependencies (x264, x265). Source:
+  <https://ffmpeg.org/download.html>.
 
 ---
 
