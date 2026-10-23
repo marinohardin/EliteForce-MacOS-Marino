@@ -728,6 +728,13 @@ char *Sys_ParseProtocolUri( const char *uri )
 }
 #endif
 
+#ifdef __APPLE__
+#ifndef MACOS_HOMEPATH_NAME
+// ~/Library/Application Support/<this> holds macOS saves/config (see sys_osx.m)
+#define MACOS_HOMEPATH_NAME "VoyagerSP-macOS"
+#endif
+#endif
+
 #ifndef DEFAULT_BASEDIR
 #	ifdef __ANDROID__
 		/* base data path == the app's own OBB dir (no storage permission needed);
@@ -832,7 +839,22 @@ int main( int argc, char **argv )
 
 	{
 		extern void Sys_DisablePressAndHold( void );
+		extern qboolean Sys_MacSetupBundleEnv( void );
+		extern qboolean Sys_MacPrepareHomepath( int argc, char **argv );
+
 		Sys_DisablePressAndHold( );
+		// Inside the .app: use the bundled Vulkan loader + MoltenVK ICD.
+		Sys_MacSetupBundleEnv( );
+		// Own homepath (saves/config), migrated once from the Lilium Voyager one.
+		if ( Sys_MacPrepareHomepath( argc, argv ) )
+			Q_strcat( commandLine, sizeof( commandLine ), "+set com_homepath " MACOS_HOMEPATH_NAME " " );
+		// Inside the .app: find the game data, or ask for it (sys_osx_data.m).
+		{
+			extern const char *Sys_MacResolveGameData( int argc, char **argv );
+			const char *basepath = Sys_MacResolveGameData( argc, argv );
+			if ( basepath )
+				Q_strcat( commandLine, sizeof( commandLine ), va( "+set fs_basepath \"%s\" ", basepath ) );
+		}
 	}
 #endif
 
@@ -881,6 +903,14 @@ int main( int argc, char **argv )
 
 	CON_Init( );
 	Com_Init( commandLine );
+#ifdef __APPLE__
+	{
+		extern void Sys_MacPrintStartupInfo( void );
+		extern void Sys_MacDataPostInit( void );
+		Sys_MacPrintStartupInfo( );
+		Sys_MacDataPostInit( );
+	}
+#endif
 	NET_Init( );
 
 	signal( SIGILL, Sys_SigHandler );
@@ -895,6 +925,12 @@ int main( int argc, char **argv )
 	while( 1 )
 	{
 		Com_Frame( );
+#ifdef __APPLE__
+		{
+			extern void Sys_MacFrame( void );
+			Sys_MacFrame( );	// adds the app menu items once SDL made the menu bar
+		}
+#endif
 	}
 #endif
 

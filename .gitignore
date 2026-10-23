@@ -47,7 +47,7 @@ thirdparty/
 /build-macos/
 /build-macos-*/
 efgame/buildmac/
-# Packaged app / release output (make-app.sh output dir: TODO verify)
+# Packaged app / release output (macos/make-app.sh writes dist/EliteForceSP.app)
 /dist/
 # Finder metadata
 .DS_Store
