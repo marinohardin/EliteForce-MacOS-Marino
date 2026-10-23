@@ -2073,6 +2073,17 @@ void IN_Frame( void )
 			SDL_StopTextInput( );
 		}
 	}
+#else
+	{
+		/* Only accept text input while something wants characters (console,
+		   chat, menus). Left on during play, holding a movement key pops up
+		   the macOS press-and-hold accent picker. */
+		qboolean want = ( Key_GetCatcher( ) & ( KEYCATCH_CONSOLE | KEYCATCH_UI | KEYCATCH_MESSAGE ) ) != 0;
+		if ( want && !SDL_IsTextInputActive( ) )
+			SDL_StartTextInput( );
+		else if ( !want && SDL_IsTextInputActive( ) )
+			SDL_StopTextInput( );
+	}
 #endif
 
 	IN_JoyMove( );
