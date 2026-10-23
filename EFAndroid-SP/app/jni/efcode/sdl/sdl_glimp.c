@@ -1312,10 +1312,16 @@ void VKimp_Init( glconfig_t *config )
 #else
 	// Desktop: honor r_fullscreen (borderless desktop-size fullscreen) and, for a
 	// window, r_customwidth/r_customheight when r_mode is -1 (else 1280x720).
+	// r_highdpi 1 renders at the display's backing resolution (Retina: 2x) instead
+	// of letting the OS upscale; windowed sizes are then in pixels, not points.
 	{
+		cvar_t *r_highdpi = ri.Cvar_Get( "r_highdpi", "0", CVAR_ARCHIVE | CVAR_LATCH );
 		qboolean fullscreen = ri.Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
 		int w = 1280, h = 720;
 		Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN;
+
+		if ( r_highdpi->integer )
+			flags |= SDL_WINDOW_ALLOW_HIGHDPI;
 
 		if ( fullscreen ) {
 			w = dm.w; h = dm.h;
@@ -1327,6 +1333,19 @@ void VKimp_Init( glconfig_t *config )
 		}
 		SDL_window = SDL_CreateWindow( CLIENT_WINDOW_TITLE,
 			SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags );
+
+		// The scale factor is only known once a window exists: shrink a high-DPI
+		// window so its pixel size, not its point size, matches the request.
+		if ( SDL_window && r_highdpi->integer && !fullscreen ) {
+			int pw = 0, ph = 0, ww = 0, wh = 0;
+			SDL_Vulkan_GetDrawableSize( SDL_window, &pw, &ph );
+			SDL_GetWindowSize( SDL_window, &ww, &wh );
+			if ( ww > 0 && pw > ww ) {
+				int scale = pw / ww;
+				SDL_SetWindowSize( SDL_window, w / scale, h / scale );
+				SDL_SetWindowPosition( SDL_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED );
+			}
+		}
 	}
 #endif
 	if ( !SDL_window )
@@ -1334,6 +1353,11 @@ void VKimp_Init( glconfig_t *config )
 
 	SDL_Vulkan_GetDrawableSize( SDL_window, &dw, &dh );
 	if ( dw <= 0 || dh <= 0 ) SDL_GetWindowSize( SDL_window, &dw, &dh );
+	{
+		int ww = 0, wh = 0;
+		SDL_GetWindowSize( SDL_window, &ww, &wh );
+		ri.Printf( PRINT_ALL, "...window %dx%d points, drawable %dx%d pixels\n", ww, wh, dw, dh );
+	}
 
 	config->vidWidth = dw;
 	config->vidHeight = dh;
