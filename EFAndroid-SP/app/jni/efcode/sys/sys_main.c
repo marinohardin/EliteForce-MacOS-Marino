@@ -832,7 +832,11 @@ int main( int argc, char **argv )
 
 	{
 		extern void Sys_DisablePressAndHold( void );
+		extern qboolean Sys_MacSetupBundleEnv( void );
+
 		Sys_DisablePressAndHold( );
+		// Inside the .app: use the bundled Vulkan loader + MoltenVK ICD.
+		Sys_MacSetupBundleEnv( );
 	}
 #endif
 
@@ -881,6 +885,12 @@ int main( int argc, char **argv )
 
 	CON_Init( );
 	Com_Init( commandLine );
+#ifdef __APPLE__
+	{
+		extern void Sys_MacPrintStartupInfo( void );
+		Sys_MacPrintStartupInfo( );
+	}
+#endif
 	NET_Init( );
 
 	signal( SIGILL, Sys_SigHandler );

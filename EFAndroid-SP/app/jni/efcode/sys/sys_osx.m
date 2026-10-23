@@ -131,3 +131,85 @@ char *Sys_StripAppBundle( char *dir )
 	Q_strncpyz(cwd, Sys_Dirname(cwd), sizeof(cwd));
 	return cwd;
 }
+
+/*
+=================
+Sys_MacAppBundlePath
+
+Returns the path of the enclosing .app bundle, or NULL when the executable is
+not running from inside one (e.g. a dev build in build-macos/).
+=================
+*/
+static NSString *Sys_MacAppBundlePath( void )
+{
+	NSString *path = [[NSBundle mainBundle] bundlePath];
+
+	if( path && [[path pathExtension] caseInsensitiveCompare: @"app"] == NSOrderedSame )
+		return path;
+	return nil;
+}
+
+static const char *bundleVulkanLibrary;
+static const char *bundleVulkanICD;
+
+/*
+=================
+Sys_MacSetupBundleEnv
+
+When running from the .app, point SDL and the Vulkan loader at the copies of
+libvulkan / MoltenVK shipped in Contents/Frameworks, so no Homebrew install is
+needed. Must run before SDL loads Vulkan. Variables already set in the
+environment win, so they can still be overridden for debugging.
+Returns qtrue when running from an app bundle.
+=================
+*/
+qboolean Sys_MacSetupBundleEnv( void )
+{
+	@autoreleasepool {
+		NSString *bundle = Sys_MacAppBundlePath();
+		NSFileManager *fm = [NSFileManager defaultManager];
+		NSString *lib, *icd;
+
+		if( !bundle )
+			return qfalse;
+
+		lib = [[[NSBundle mainBundle] privateFrameworksPath] stringByAppendingPathComponent: @"libvulkan.1.dylib"];
+		icd = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent: @"vulkan/icd.d/MoltenVK_icd.json"];
+
+		if( [fm fileExistsAtPath: lib] )
+		{
+			setenv( "SDL_VULKAN_LIBRARY", [lib fileSystemRepresentation], 0 );
+			bundleVulkanLibrary = strdup( getenv( "SDL_VULKAN_LIBRARY" ) );
+		}
+		if( [fm fileExistsAtPath: icd] )
+		{
+			// VK_DRIVER_FILES is the current name, VK_ICD_FILENAMES the legacy one
+			setenv( "VK_DRIVER_FILES", [icd fileSystemRepresentation], 0 );
+			setenv( "VK_ICD_FILENAMES", [icd fileSystemRepresentation], 0 );
+			bundleVulkanICD = strdup( getenv( "VK_DRIVER_FILES" ) );
+		}
+		return qtrue;
+	}
+}
+
+/*
+=================
+Sys_MacPrintStartupInfo
+
+Log what Sys_MacSetupBundleEnv did (called once the
+console is up).
+=================
+*/
+void Sys_MacPrintStartupInfo( void )
+{
+	@autoreleasepool {
+		NSString *bundle = Sys_MacAppBundlePath();
+
+		if( !bundle )
+			return;
+		Com_Printf( "macOS app bundle: %s\n", [bundle fileSystemRepresentation] );
+		Com_Printf( "  SDL_VULKAN_LIBRARY = %s\n", bundleVulkanLibrary ? bundleVulkanLibrary : "(not bundled)" );
+		Com_Printf( "  VK_DRIVER_FILES    = %s\n", bundleVulkanICD ? bundleVulkanICD : "(not bundled)" );
+	}
+}
+
