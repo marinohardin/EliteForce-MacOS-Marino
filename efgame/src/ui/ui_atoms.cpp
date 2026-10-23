@@ -1622,6 +1622,11 @@ UI_Refresh
 	// left the menu with a STALE aspect when cg_forceAspect settled after UI_Init (config-exec timing) or
 	// changed elsewhere -> "main menu 16:9 but the 3D game 4:3". Per-frame recalc keeps the menu, the 3D/HUD,
 	// and the engine input mapping (CL_GetUIScreenPlacement, also live) all in lock-step. Cheap (a few mults).
+#ifndef __ANDROID__
+	// desktop: the drawable size can change live (Alt+Enter / Video menu fullscreen toggle,
+	// window size); the engine's glconfig is current, so re-read it before scaling
+	ui.GetGlconfig( &uis.glconfig );
+#endif
 	UI_RecalcAspect();
 
 	if ( uis.activemenu )

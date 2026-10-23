@@ -1244,6 +1244,9 @@ typedef enum{
 	// video menu's 4:3/16:9 aspect toggle. Inserting mid-list would shift every later MNT_ value.
 	MNT_ASPECT_4_3,
 	MNT_ASPECT_16_9,
+	// Append-only, desktop video menu "WINDOW SIZE" values (text assigned in C, ui_video.cpp).
+	MNT_VIDRES_FIRST,
+	MNT_VIDRES_LAST = MNT_VIDRES_FIRST + 15,
 	MNT_MAX
 
 } menuNormalTextType_t;
@@ -1542,6 +1545,9 @@ typedef enum{
 	// "?" and their labels are assigned in C (UI_ControlsMouse menu init). Adding them mid-list would
 	// shift every later enum and misalign the positionally-parsed button-text data.
 	MBT_GAMEPADLOOK,
+	// desktop video menu rows (labels assigned in C, ui_video.cpp)
+	MBT_VIDEOHIGHDPI,
+	MBT_VIDEORESOLUTION,
 	MBT_MAX
 } menuButtonTextType_t;
 

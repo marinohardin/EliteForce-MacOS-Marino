@@ -1,5 +1,11 @@
 #include "ui_local.h"
 
+// Desktop builds (macOS) get Fullscreen / High-DPI / Window-size rows in the Video menu and
+// an Apply that doesn't force the Android presets (always-fullscreen, r_mode 11/6).
+#ifndef __ANDROID__
+#define UI_DESKTOP_VIDEO
+#endif
+
 
 int s_enable_Names[] =
 {
@@ -149,6 +155,25 @@ static menubitmap_s			s_video_drivers;
 static menubitmap_s			s_video_data;
 static menubitmap_s			s_video_data2;
 static menuaction_s			s_video_apply_action2;
+
+#ifdef UI_DESKTOP_VIDEO
+static menulist_s			s_video_highdpi_list;		// r_highdpi
+static menulist_s			s_video_resolution_list;	// windowed size: r_mode -1 + r_customwidth/height
+
+typedef struct { int w, h; } videoRes_t;
+static const videoRes_t s_videoRes[] =
+{
+	{ 1280,  720 }, { 1366,  768 }, { 1600,  900 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 },	// 16:9
+	{ 1280,  800 }, { 1440,  900 }, { 1680, 1050 }, { 1920, 1200 }, { 2560, 1600 },					// 16:10
+};
+#define NUM_VIDEO_RES	( sizeof( s_videoRes ) / sizeof( s_videoRes[0] ) )
+
+static char			s_videoResText[NUM_VIDEO_RES + 1][16];
+static int			s_videoResNames[NUM_VIDEO_RES + 2];	// sizes, current custom size, MNT_NONE
+static videoRes_t	s_videoResCustom;					// the r_customwidth/height not in the table
+static int			s_ivo_highdpi;
+static int			s_ivo_resolution;
+#endif
 
 void UI_VideoDriverMenu( void );
 void Video_SideButtons(menuframework_s *menu,int menuType);
@@ -350,6 +375,10 @@ static void GetInitialVideoVars( void )
 	s_ivo.texturebits = s_video_tq_bits_list.curvalue;
 	s_ivo.simpleshaders = s_video_simpleshaders_list.curvalue;
 	s_ivo.compresstextures = s_video_compresstextures.curvalue;
+#ifdef UI_DESKTOP_VIDEO
+	s_ivo_highdpi = s_video_highdpi_list.curvalue;
+	s_ivo_resolution = s_video_resolution_list.curvalue;
+#endif
 
 }
 
@@ -371,8 +400,10 @@ static void CheckConfigVsTemplates( void )
 			continue;
 		if ( s_ivo_templates[i].mode != s_video_mode_list.curvalue )
 			continue;
+#ifndef UI_DESKTOP_VIDEO	// desktop: window mode is independent of the quality presets
 		if ( s_ivo_templates[i].fullscreen != s_video_fullscreen_list.curvalue )
 			continue;
+#endif
 		if ( s_ivo_templates[i].tq != s_video_texture_quality_list.curvalue )
 			continue;
 //		if ( s_ivo_templates[i].lighting != s_video_lighting_list.curvalue )
@@ -434,8 +465,44 @@ static void UpdateMenuItemValues( void )
 		}
 	}
 
+#ifdef UI_DESKTOP_VIDEO
+	// follow an Alt+Enter toggle made while this menu is open (unless the row was changed here)
+	{
+		int fs = ui.Cvar_VariableValue( "r_fullscreen" ) ? 1 : 0;
+		if ( fs != s_ivo.fullscreen && s_video_fullscreen_list.curvalue == s_ivo.fullscreen )
+		{
+			s_ivo.fullscreen = fs;
+			s_video_fullscreen_list.curvalue = fs;
+		}
+	}
+
+	// the window size only applies to windowed mode; fullscreen uses the desktop resolution
+	if ( s_video_fullscreen_list.curvalue )
+		s_video_resolution_list.generic.flags |= QMF_GRAYED;
+	else
+		s_video_resolution_list.generic.flags &= ~QMF_GRAYED;
+#endif
+
 	s_video_apply_action.generic.flags |= QMF_GRAYED;
 	s_video_apply_action.generic.flags &= ~QMF_BLINK;
+
+#ifdef UI_DESKTOP_VIDEO
+	s_video_highdpi_list.updated = 0;
+	if ( s_ivo_highdpi != s_video_highdpi_list.curvalue )
+	{
+		s_video_highdpi_list.updated = 1;
+		s_video_apply_action.generic.flags &= ~QMF_GRAYED;
+		s_video_apply_action.generic.flags |= QMF_BLINK;
+	}
+
+	s_video_resolution_list.updated = 0;
+	if ( s_ivo_resolution != s_video_resolution_list.curvalue )
+	{
+		s_video_resolution_list.updated = 1;
+		s_video_apply_action.generic.flags &= ~QMF_GRAYED;
+		s_video_apply_action.generic.flags |= QMF_BLINK;
+	}
+#endif
 
 
 	// FIXME : this could be handled much better
@@ -551,7 +618,13 @@ static void GetVideoMenuItemValues( void )
 	// Aspect toggle: cg_forceAspect=1 means 4:3 pillarbox (curvalue 0); else 16:9/native (curvalue 1).
 	s_video_mode_list.curvalue = ui.Cvar_VariableValue( "cg_forceAspect" ) ? 0 : 1;
 
+#ifdef UI_DESKTOP_VIDEO
+	s_video_fullscreen_list.curvalue = ui.Cvar_VariableValue( "r_fullscreen" ) ? 1 : 0;
+	s_video_highdpi_list.curvalue = ui.Cvar_VariableValue( "r_highdpi" ) ? 1 : 0;
+	// s_video_resolution_list.curvalue is set by Video_BuildResolutionList (menu init)
+#else
 	s_video_fullscreen_list.curvalue = 1;	// Android: always fullscreen (toggle removed from menu)
+#endif
 	s_video_extension_enable_list.curvalue = ui.Cvar_VariableValue("r_allowExtensions");
 	s_video_simpleshaders_list.curvalue = ui.Cvar_VariableValue("r_lowEndVideo");
 	s_video_compresstextures.curvalue = ui.Cvar_VariableValue("r_ext_compress_textures");
@@ -802,7 +875,21 @@ static void ApplyChanges( void *unused, int notification )
 
 	// Adding 2 because we don't show 320x200 and MNT_400X300
 	// Video Resolution Setting
+#ifdef UI_DESKTOP_VIDEO
+	// Desktop: the window size is r_mode -1 + r_customwidth/height (pixels with r_highdpi);
+	// fullscreen is borderless at the desktop resolution. The aspect row only sets cg_forceAspect.
+	{
+		videoRes_t res = s_videoResCustom;
+		if ( s_video_resolution_list.curvalue >= 0 && s_video_resolution_list.curvalue < (int)NUM_VIDEO_RES )
+			res = s_videoRes[s_video_resolution_list.curvalue];
+		ui.Cvar_SetValue( "r_mode", -1 );
+		ui.Cvar_SetValue( "r_customwidth", res.w );
+		ui.Cvar_SetValue( "r_customheight", res.h );
+	}
+	ui.Cvar_SetValue( "r_highdpi", s_video_highdpi_list.curvalue );
+#else
 	ui.Cvar_SetValue( "r_mode", s_video_mode_list.curvalue ? 11 : 6 );	// 16:9 -> 856x480 (mode 11), 4:3 -> 1024x768 (mode 6)
+#endif
 	ui.Cvar_SetValue( "cg_forceAspect", s_video_mode_list.curvalue ? 0 : 1 );	// 4:3 (curvalue 0) -> pillarbox the 3D view to 4:3; 16:9 -> native
 
 	// Fullscreen Setting
@@ -1078,6 +1165,58 @@ sfxHandle_t VideoData_MenuKey (int key)
 Video_MenuInit
 =================
 */
+#ifdef UI_DESKTOP_VIDEO
+/*
+=================
+Video_BuildResolutionList
+
+Window-size choices: the common 16:9 / 16:10 sizes, plus the current
+r_customwidth x r_customheight when it isn't one of them. Selects the current size.
+=================
+*/
+static void Video_BuildResolutionList( void )
+{
+	char	buf[32];
+	int		i, n, w = 1280, h = 720, cur = -1;	// VKimp_Init's size when r_mode isn't -1
+
+	if ( (int)ui.Cvar_VariableValue( "r_mode" ) == -1 )
+	{
+		ui.Cvar_VariableStringBuffer( "r_customwidth", buf, sizeof( buf ) );
+		w = atoi( buf );
+		ui.Cvar_VariableStringBuffer( "r_customheight", buf, sizeof( buf ) );
+		h = atoi( buf );
+		if ( w <= 0 || h <= 0 )
+		{
+			w = 1280;
+			h = 720;
+		}
+	}
+
+	for ( i = 0; i < (int)NUM_VIDEO_RES; i++ )
+	{
+		Com_sprintf( s_videoResText[i], sizeof( s_videoResText[i] ), "%dx%d", s_videoRes[i].w, s_videoRes[i].h );
+		menu_normal_text[MNT_VIDRES_FIRST + i] = s_videoResText[i];
+		s_videoResNames[i] = MNT_VIDRES_FIRST + i;
+		if ( s_videoRes[i].w == w && s_videoRes[i].h == h )
+			cur = i;
+	}
+	n = NUM_VIDEO_RES;
+
+	s_videoResCustom.w = w;
+	s_videoResCustom.h = h;
+	if ( cur < 0 )
+	{
+		Com_sprintf( s_videoResText[n], sizeof( s_videoResText[n] ), "%dx%d", w, h );
+		menu_normal_text[MNT_VIDRES_FIRST + n] = s_videoResText[n];
+		s_videoResNames[n] = MNT_VIDRES_FIRST + n;
+		cur = n++;
+	}
+	s_videoResNames[n] = MNT_NONE;
+
+	s_video_resolution_list.curvalue = cur;
+}
+#endif
+
 static void VideoData_MenuInit( void )
 {
 	int x,y,width,inc;
@@ -1233,7 +1372,60 @@ static void VideoData_MenuInit( void )
 	s_video_mode_list.listnames						= s_aspect_names;
 	s_video_mode_list.width							= width;
 
+#ifdef UI_DESKTOP_VIDEO
+	// Desktop rows: WINDOW SIZE above ASPECT RATIO, then FULLSCREEN and HIGH-DPI below it;
+	// COLOR DEPTH (inert on Vulkan) is dropped to keep the column inside the bracket.
+	Video_BuildResolutionList();
+	s_video_resolution_list.generic.type			= MTYPE_SPINCONTROL;
+	s_video_resolution_list.generic.flags			= QMF_HIGHLIGHT_IF_FOCUS;
+	s_video_resolution_list.generic.x				= x;
+	s_video_resolution_list.generic.y				= s_video_mode_list.generic.y;
+	s_video_resolution_list.textEnum				= MBT_VIDEORESOLUTION;
+	s_video_resolution_list.textcolor				= CT_BLACK;
+	s_video_resolution_list.textcolor2				= CT_WHITE;
+	s_video_resolution_list.color					= CT_DKPURPLE1;
+	s_video_resolution_list.color2					= CT_LTPURPLE1;
+	s_video_resolution_list.textX					= 5;
+	s_video_resolution_list.textY					= 2;
+	s_video_resolution_list.listnames				= s_videoResNames;
+	s_video_resolution_list.width					= width;
+
 	y += inc;
+	s_video_mode_list.generic.y						= y;
+
+	y += inc;
+	s_video_fullscreen_list.generic.type			= MTYPE_SPINCONTROL;
+	s_video_fullscreen_list.generic.flags			= QMF_HIGHLIGHT_IF_FOCUS;
+	s_video_fullscreen_list.generic.x				= x;
+	s_video_fullscreen_list.generic.y				= y;
+	s_video_fullscreen_list.generic.callback		= FullscreenCallback;
+	s_video_fullscreen_list.textEnum				= MBT_VIDEOFULLSCREEN;
+	s_video_fullscreen_list.textcolor				= CT_BLACK;
+	s_video_fullscreen_list.textcolor2				= CT_WHITE;
+	s_video_fullscreen_list.color					= CT_DKPURPLE1;
+	s_video_fullscreen_list.color2					= CT_LTPURPLE1;
+	s_video_fullscreen_list.textX					= 5;
+	s_video_fullscreen_list.textY					= 2;
+	s_video_fullscreen_list.listnames				= s_enable_Names;
+	s_video_fullscreen_list.width					= width;
+
+	y += inc;
+	s_video_highdpi_list.generic.type				= MTYPE_SPINCONTROL;
+	s_video_highdpi_list.generic.flags				= QMF_HIGHLIGHT_IF_FOCUS;
+	s_video_highdpi_list.generic.x					= x;
+	s_video_highdpi_list.generic.y					= y;
+	s_video_highdpi_list.textEnum					= MBT_VIDEOHIGHDPI;
+	s_video_highdpi_list.textcolor					= CT_BLACK;
+	s_video_highdpi_list.textcolor2					= CT_WHITE;
+	s_video_highdpi_list.color						= CT_DKPURPLE1;
+	s_video_highdpi_list.color2						= CT_LTPURPLE1;
+	s_video_highdpi_list.textX						= 5;
+	s_video_highdpi_list.textY						= 2;
+	s_video_highdpi_list.listnames					= s_enable_Names;
+	s_video_highdpi_list.width						= width;
+#else
+	y += inc;
+#endif
 	s_video_colordepth_list.generic.type			= MTYPE_SPINCONTROL;
 	s_video_colordepth_list.generic.flags			= QMF_HIGHLIGHT_IF_FOCUS;
 	s_video_colordepth_list.generic.x				= x;
@@ -1390,13 +1582,28 @@ static void VideoData_MenuInit( void )
 	menu_normal_text[MNT_ASPECT_16_9] = "16:9";
 	menu_button_text[MBT_VIDEOMODE][0] = "ASPECT RATIO";
 	menu_button_text[MBT_VIDEOMODE][1] = "ASPECT RATIO";
+#ifdef UI_DESKTOP_VIDEO
+	menu_button_text[MBT_VIDEORESOLUTION][0] = "WINDOW SIZE";
+	menu_button_text[MBT_VIDEORESOLUTION][1] = "WINDOW SIZE WHEN NOT FULLSCREEN";
+	menu_button_text[MBT_VIDEOFULLSCREEN][0] = "FULLSCREEN";
+	menu_button_text[MBT_VIDEOFULLSCREEN][1] = "BORDERLESS FULLSCREEN AT DESKTOP RESOLUTION";
+	menu_button_text[MBT_VIDEOHIGHDPI][0] = "HIGH-DPI";
+	menu_button_text[MBT_VIDEOHIGHDPI][1] = "RENDER AT NATIVE RETINA RESOLUTION";
+#endif
 
 	Menu_AddItem( &s_video_menu, ( void * )&s_video_mode_option_list);
 //	Menu_AddItem( &s_video_menu, ( void * )&s_video_driver_list);
 //	Menu_AddItem( &s_video_menu, ( void * )&s_video_extension_enable_list);
+#ifdef UI_DESKTOP_VIDEO
+	Menu_AddItem( &s_video_menu, ( void * )&s_video_resolution_list);
+	Menu_AddItem( &s_video_menu, ( void * )&s_video_mode_list);
+	Menu_AddItem( &s_video_menu, ( void * )&s_video_fullscreen_list);
+	Menu_AddItem( &s_video_menu, ( void * )&s_video_highdpi_list);
+#else
 	Menu_AddItem( &s_video_menu, ( void * )&s_video_mode_list);
 	Menu_AddItem( &s_video_menu, ( void * )&s_video_colordepth_list);
 //	Menu_AddItem( &s_video_menu, ( void * )&s_video_fullscreen_list);
+#endif
 //	Menu_AddItem( &s_video_menu, ( void * )&s_video_lighting_list);
 	Menu_AddItem( &s_video_menu, ( void * )&s_video_geometry_list);
 	Menu_AddItem( &s_video_menu, ( void * )&s_video_texture_quality_list);
