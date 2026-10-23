@@ -36,6 +36,22 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 /*
 ==============
+Sys_DisablePressAndHold
+
+Holding a key (e.g. WASD) while SDL has text input enabled pops up the macOS
+accent picker. SDL2 used to register this default itself; sdl2-compat (SDL3)
+does not, so do it here before the window is created.
+==============
+*/
+void Sys_DisablePressAndHold( void )
+{
+	@autoreleasepool {
+		[[NSUserDefaults standardUserDefaults] registerDefaults:@{ @"ApplePressAndHoldEnabled": @NO }];
+	}
+}
+
+/*
+==============
 Sys_Dialog
 
 Display an OS X dialog box
