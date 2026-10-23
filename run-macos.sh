@@ -9,5 +9,6 @@ cd "$(dirname "$0")"
 EF_DIR="${EF_DIR:-$PWD/Star Trek Voyager Elite Force}"
 cp efgame/buildmac/libefgame.dylib efgame/buildmac/libefui.dylib build-macos/ || exit 1
 export SDL_VULKAN_LIBRARY="${SDL_VULKAN_LIBRARY:-/opt/homebrew/lib/libvulkan.1.dylib}"
-exec build-macos/efsp +set fs_basepath "$EF_DIR" \
-	+set r_fullscreen 0 +set r_mode -1 +set r_customwidth 1280 +set r_customheight 720 "$@"
+# Window mode/size come from the saved config (Video menu, Alt+Enter); pass
+# e.g. +set r_fullscreen 0 to override for one launch.
+exec build-macos/efsp +set fs_basepath "$EF_DIR" "$@"
