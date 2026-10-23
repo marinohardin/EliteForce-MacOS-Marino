@@ -1,114 +1,193 @@
-# Voyager Elite Force: Single Player for Android
+# VoyagerSP-macOS
 
-A native Android port of *Star Trek: Voyager — Elite Force* — the **single-player
-campaign** (2000). It is the single-player companion to the Holomatch (multiplayer)
-port, and shares its engine base. Inspired by and building on
-[VoyagerNX](https://github.com/faithvoid/VoyagerNX), faithvoid's Nintendo Switch port.
-The engine base is [lilium-voyager](https://github.com/clover-moe/lilium-voyager) with
-the Vulkan renderer from [Quake3e](https://github.com/ec-/Quake3e); the single-player
-game logic (Raven's officially-released Elite Force SP source) runs as a native module.
-Touch controls, full gamepad support.
+A native macOS (Apple Silicon) port of *Star Trek: Voyager — Elite Force*: the
+**single-player campaign** (Raven Software, 2000).
 
-No game data is included. You need your own copy of the retail game
-(GOG release, original CD + patches, or an existing PC install).
+It runs the original game's single-player campaign natively on arm64 Macs. The engine is an
+idTech 3 derivative (lilium-voyager, an ioquake3 fork) with the Quake3e Vulkan renderer,
+which runs on Metal through MoltenVK. Game logic comes from Raven's officially released
+Elite Force SP source, built as native modules.
+
+**No game data is included.** You need your own copy of the retail game.
+
+> Status: **alpha.** The campaign is playable, but it has not been played through end to
+> end on macOS yet. Please [report issues](#reporting-issues).
+
+## Screenshots
+
+<!-- TODO(screenshots): add 2-3 screenshots (main menu, first mission, Retina fullscreen).
+     Use your own captures. Don't use official promo art or Star Trek logos. -->
+
+*Screenshots coming soon.*
 
 ## Features
 
-- Vulkan renderer (Quake3e renderervk, adapted to the Elite Force engine) — this is the
-  only renderer; the old OpenGL ES path has been removed.
-- Native single-player game module (`libefgame` / `libefui`) built from Raven's Elite
-  Force SP source for both `armeabi-v7a` and `arm64-v8a`. A width-explicit savegame
-  transcoder keeps saves compatible across the 32-bit and 64-bit builds.
-- Touch controls: virtual stick, look area, and an LCARS-styled button overlay that
-  auto-hides while a gamepad is in use and during scripted cinematics.
-- Gamepad: SDL GameController mapping, dual-analog defaults, with look-sensitivity and
-  deadzone options.
-- Aspect handling: 4:3 pillarbox or 16:9, applied to the 3D view, HUD, and 2D menus,
-  with black side bars.
-- Retail LCARS level-loading screens (animated load bar, levelshot, and your saved
-  screenshot when loading a save) on every load path.
-- Save menu thumbnails (real framebuffer capture) and autosave labelling.
-- In-app game-data import: if the game data is missing at launch, the app lets you pick
-  your `pak*.pk3` files and a retail `efgamex86.dll` with the system file picker and
-  copies them into place. No storage permission needed at any target SDK.
-- 16 KB memory page-size compatible (Android 15+); all native libraries are 16 KB-aligned.
-
-## Screenshot from the first mission
-
-<img width="1920" height="1080" alt="ScreenRecordofVoyagerSP - Trim - frame at 1m5s" src="https://github.com/user-attachments/assets/ca33430e-20ca-42ed-8d29-32836066d375" />
+- **Native arm64.** Built for Apple Silicon, with no Rosetta. The single-player game and UI
+  modules are native `.dylib`s, not QVM bytecode.
+- **Vulkan via MoltenVK.** The Quake3e `renderervk` renderer, running on Metal.
+- **Retina / High-DPI.** `r_highdpi 1` renders at the display's native backing resolution
+  (for example 5120×2880 fullscreen on a 5K panel), with menu mouse coordinates mapped
+  correctly.
+- **Windowed or fullscreen.** `r_fullscreen`, `r_mode` / `r_customwidth` /
+  `r_customheight` work on desktop.
+  <!-- TODO(video-menu): mention the in-game Video menu once the video-settings branch is merged. -->
+- **Bink cinematics** (intro, logos, in-game movies) decoded with FFmpeg.
+- **Original PC saves load.** Savegames from the Windows version can be loaded.
+- Mac keyboard and mouse: the macOS press-and-hold accent popup is disabled, so holding
+  movement keys works, and text input is only active in the console, chat and menus.
 
 ## Requirements
 
-- Android 7.0+ (API 24) with Vulkan support — the APK declares Vulkan as a required
-  feature.
-- An ARM device. The APK is universal (`armeabi-v7a` + `arm64-v8a`).
-- Retail Elite Force data: `pak0.pk3` (~541 MB) plus the patch paks `pak1.pk3`–`pak3.pk3`
-  from `BaseEF/` of a PC installation, **and** a genuine `efgamex86.dll` from the game's
-  install folder. The DLL is not loaded or executed by this port — it is required only as
-  confirmation that you own a real copy of the game.
+- **An Apple Silicon Mac** (M1 or later). Intel Macs are not supported.
+- **macOS:** tested on **macOS 27 on an M1 Pro**. Older releases that MoltenVK supports
+  may work but are untested.
+  <!-- TODO(min-macos): set to the LSMinimumSystemVersion that macos/make-app.sh writes. -->
+- **The retail game.** Copy these files from the `BaseEF` folder of a PC installation:
+  - `pak0.pk3` (about 541 MB, the main game data). This one is required.
+  - The patch paks, such as `pak1.pk3` and `pak2.pk3` (and `pak3.pk3` if you have it).
+    Recommended: they carry the 1.1/1.2 patch content.
 
-## Install
+  GOG and Steam copies work. A full install from the original CD works too. A
+  **minimum install from the CD does not copy `pak0.pk3` to disk**: it stays on the CD, at
+  `BaseEF/pak0.pk3`. Copy it from the CD yourself.
 
-1. Copy your four `pak*.pk3` files and `efgamex86.dll` onto the phone (anywhere —
-   Downloads is fine).
-2. Install the APK and launch it.
-3. When asked, pick the files. They are copied into the game's data directory and the
-   game starts. That's the whole setup; next launches go straight into the game.
+  The Expansion Pack is optional; see [Known issues](#known-issues).
 
-The manual push target (e.g. over adb) is
-`/sdcard/Android/obb/com.voyager.efsp/baseEF/`.
+## Install (players)
+
+1. Download `VoyagerSP-macOS.zip` from the
+   [Releases page](https://github.com/OWNER/VoyagerSP-macOS/releases). <!-- TODO(release-link): real owner/URL -->
+2. Unzip it and move **VoyagerSP-macOS.app** to `/Applications` (or anywhere you like).
+3. Put your game data where the app looks for it.
+   <!-- TODO(data-location): the app-bundle branch decides where BaseEF goes (likely
+        ~/Library/Application Support/<name>/baseEF/). Replace this step with the exact
+        path and what the in-app "missing data" message says. -->
+   For now, see the message the app shows on first launch when it can't find
+   `pak0.pk3`. It tells you where to put your `BaseEF` folder.
+4. Open the app. Release builds are not notarized, so the first time macOS says it
+   can't verify the developer. Either:
+   - right-click (Control-click) the app, choose **Open**, then **Open** again, or
+   - on newer macOS, go to **System Settings → Privacy & Security** and click
+     **Open Anyway**, or
+   - in Terminal: `xattr -dr com.apple.quarantine /Applications/VoyagerSP-macOS.app`
+
+### Saves and settings
+
+Config files and saves live in `~/Library/Application Support/Lilium Voyager/baseEF/`
+(the engine's home path). To keep playing a Windows save, copy the files from the
+Windows install's `BaseEF/save/` folder into the `save/` folder there.
+<!-- TODO(verify-homepath): confirm the path if the app-bundle branch changes HOMEPATH_NAME. -->
+
+## Building from source
+
+Everything needed to build is in the repository. Game data is only needed to run.
+
+### Prerequisites
+
+- Xcode Command Line Tools: `xcode-select --install`
+- [Homebrew](https://brew.sh) packages:
+
+  ```sh
+  brew install cmake pkg-config sdl2 ffmpeg molten-vk vulkan-loader
+  ```
+
+  (`sdl2` is provided by `sdl2-compat` on top of SDL3 in current Homebrew. That's fine.)
+
+### Build
+
+The game modules and the engine are two separate CMake projects:
+
+```sh
+# 1. Single-player game + UI modules -> efgame/buildmac/libefgame.dylib, libefui.dylib
+cmake -S efgame -B efgame/buildmac -DCMAKE_OSX_ARCHITECTURES=arm64
+cmake --build efgame/buildmac -j
+
+# 2. Engine executable -> build-macos/efsp
+cmake -S EFAndroid-SP/app/jni/macos -B build-macos
+cmake --build build-macos -j
+```
+
+### Run from the build tree
+
+`run-macos.sh` copies the dylibs next to the executable, points SDL at Homebrew's Vulkan
+loader, and starts a 1280×720 window:
+
+```sh
+./run-macos.sh                                   # data in ./Star Trek Voyager Elite Force/BaseEF
+EF_DIR=/path/to/EliteForce ./run-macos.sh        # a folder that contains BaseEF/
+EF_DIR=/path/to/EliteForce ./run-macos.sh +set r_fullscreen 1 +set r_highdpi 1
+```
+
+`EF_DIR` is the folder that *contains* `BaseEF` (the `fs_basepath`), not `BaseEF` itself.
+
+### Make the .app
+
+<!-- TODO(verify-make-app): check the usage and output path once the app-bundle branch is merged. -->
+```sh
+macos/make-app.sh        # bundles efsp, the dylibs, SDL, FFmpeg, the Vulkan loader and MoltenVK
+```
+
+Build options (engine CMake): `-DEF_BINK=OFF` builds without FFmpeg (no cinematics).
+`-DEF_VM_JIT=ON` enables the experimental aarch64 QVM JIT; it is off by default and not
+needed, because the SP game runs natively.
+
+Technical background on the port is in
+[docs/macos-port-notes.md](docs/macos-port-notes.md).
 
 ## Known issues
 
-This port is over 90% complete, but has yet to be fully play tested. Known issues:
+- **Virtual Voyager (Expansion Pack) is not supported** without the Expansion Pack's data.
+  If its maps are missing, the main-menu button shows **EXPANSION ONLY** and is greyed out.
+- **Alpha quality.** Expect occasional rendering, audio or animation glitches inherited from
+  the Android port. Back up your saves.
+- Apple Silicon only, and the app is not notarized (see Install step 4).
 
-- **Save corruption is technically possible and retail PC elite force saves or not compatible - but might be in the future** — back up your saves; loads may occasionally fail
-  or restore an inconsistent state. Most save specific isssues have been resolved, however latent bugs might still present themselves.
-- **Minor graphical and audio glitches** are still present.
-- **Character animations are not 100% accurate** yet.
-- **Anti-aliasing (MSAA) is disabled on Mali and PowerVR GPUs** as a precaution against a
-  graphics-device-lost crash seen on some of those devices. This is a best-effort
-  workaround and may not cover every affected device — please report any issues.
-- **REPORT YOUR ISSUES PLEASE!**
+## Reporting issues
 
-## Build
+Please open an issue on GitHub with:
 
-Everything needed to build is in this repository (engine, SDL2, the single-player game
-source, and the prebuilt SPIR-V). No game data is required to build — only to run.
+- your Mac model and macOS version,
+- where your game data comes from (GOG, Steam, CD + patch) and which `pak*.pk3` files you have,
+- what happened and how to reproduce it (map name, save file if relevant),
+- the console log. Start from Terminal with
+  `/Applications/VoyagerSP-macOS.app/Contents/MacOS/<executable> 2>&1 | tee ef.log`, or use
+  `qconsole.log` (enable with `+set logfile 2`).
+  <!-- TODO(verify-make-app): fill in the bundle executable name. -->
 
-Prerequisites:
+See also [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- Android SDK
-- NDK `25.1.8937393`
-- CMake `3.31.5`
-- JDK 21
+## Origins
 
-Point Gradle at your SDK with a `local.properties` file:
+This is a fork of [VoyagerSP-Android](https://github.com/imjustadudegamer/VoyagerSP-Android)
+by imjustadudegamer, the Android port of Elite Force single-player. That port was inspired by
+[VoyagerNX](https://github.com/faithvoid/VoyagerNX), faithvoid's Nintendo Switch port. It is
+built on [lilium-voyager](https://github.com/clover-moe/lilium-voyager) (Zack Middleton),
+[ioquake3](https://github.com/ioquake/ioq3) and id Software's Quake III Arena, with the
+Vulkan renderer from [Quake3e](https://github.com/ec-/Quake3e) (Eugene C.). The Android
+sources (`EFAndroid-SP/app/src`, Gradle files) are still in the tree, untouched. The macOS
+build only uses the shared engine and game code. Full attribution:
+[CREDITS.md](CREDITS.md).
 
-```sh
-echo "sdk.dir=/path/to/Android/sdk" > EFAndroid-SP/local.properties
-```
+## License
 
-Build the native game/UI module, copy it into the app, then build the APK:
+This repository contains code under **two different licenses**, plus a trademark you should
+know about:
 
-```sh
-cmake --build efgame/build64 --target efgame efui      # arm64  (efgame/build for armv7)
-cp efgame/build64/lib*.so EFAndroid-SP/app/libs/arm64-v8a/
+- **Engine and port code: GNU GPL version 2 or later** ([LICENSE](LICENSE)). This covers
+  everything under `EFAndroid-SP/` (the idTech 3 engine from id Software → ioquake3 →
+  lilium-voyager, the Quake3e Vulkan renderer) and the macOS port changes. You may use,
+  modify and redistribute it under the GPL, including providing source with any binaries.
+- **Single-player game module (`efgame/`): Raven Software's "Limited Use Software License
+  Agreement"** (`efgame/STEF Game Source License.doc`). **Not GPL, not open source.** In plain
+  words, it allows you to modify the code and distribute it **free of charge, for
+  non-commercial purposes only**, with a copy of that license, and **only for use with the
+  full retail version of Elite Force**. Selling it or using it commercially in any way is not
+  allowed.
+- **No game assets are included.** Maps, models, textures, sounds, music and videos belong to
+  their owners and come from your own retail copy.
+- **Star Trek** and related marks are trademarks of **Paramount** (CBS Studios). *Elite Force*
+  was developed by Raven Software and published by Activision. This is an unofficial,
+  non-commercial fan project. It is not affiliated with or endorsed by any of them.
 
-cd EFAndroid-SP
-./gradlew :app:assembleDebug    # output: app/build/outputs/apk/debug/app-debug.apk
-```
-
-The APK is universal (`armeabi-v7a` + `arm64-v8a`). Engine sources compiled into the APK
-live in `EFAndroid-SP/app/jni/efcode/` (lilium-voyager plus the Android/Vulkan port
-layer); the single-player game/UI module lives in `efgame/`.
-
-## License & credits
-
-This project is multi-licensed. The engine and port code are **GPLv2**
-([LICENSE](LICENSE)) — from id Software's Quake III via ioquake3, lilium-voyager, and
-Quake3e. The single-player game module (`efgame/`) is based on Raven Software's officially
-released Elite Force SP source and is under Raven's **STEF Game Source License**
-(`efgame/STEF Game Source License.doc`). *Star Trek* and related marks belong to
-Paramount/CBS; this is a non-commercial fan port and includes no game assets. Full
-attribution in [CREDITS.md](CREDITS.md).
+Release builds also bundle third-party libraries (SDL, FFmpeg, the Vulkan loader, MoltenVK)
+under their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
