@@ -18,8 +18,9 @@ BaseEF folder). By default the .pk3 files (and old saves) are copied into (b);
 the "Use BaseEF files in place rather than copy" checkbox instead remembers
 the chosen folder and uses it as fs_basepath.
 
-Sys_MacFrame adds Show Saves Folder / Show Game Folder / Change Game Folder /
-Delete Saves & Settings to the application menu once SDL has created it.
+Sys_MacFrame adds a File menu (Show Saves Folder, Show Game Folder, Change
+Game Folder…, Delete Saves & Settings…) after the application menu once SDL
+has created the menu bar.
 The same actions are console commands (macos_showsaves, macos_showgamefolder,
 macos_changegamefolder, macos_deletesettings).
 
@@ -67,7 +68,6 @@ Test hooks (environment variables, for automated tests without clicking):
 extern NSString *Sys_MacAppBundlePath( void );
 
 static NSMutableString *earlyLog;	// messages from before Com_Init, replayed into the console
-static qboolean menusAdded;
 static qboolean pendingDelete;
 
 /* ------------------------------------------------------------------------ */
@@ -856,54 +856,79 @@ void Sys_MacDataPostInit( void )
 	}
 }
 
+// Top-level File menu with the game folder actions.
+static NSMenuItem *BuildFileMenu( id target )
+{
+	NSMenu *menu = [[[NSMenu alloc] initWithTitle: @"File"] autorelease];
+	NSMenuItem *top = [[[NSMenuItem alloc] initWithTitle: @"File" action: nil keyEquivalent: @""] autorelease];
+	struct { NSString *title; SEL sel; } items[] = {
+		{ @"Show Saves Folder", @selector(showSaves:) },
+		{ @"Show Game Folder", @selector(showGame:) },
+		{ nil, NULL },
+		{ @"Change Game Folder…", @selector(changeGame:) },
+		{ nil, NULL },
+		{ @"Delete Saves & Settings…", @selector(deleteSettings:) },
+	};
+	size_t i;
+
+	for( i = 0; i < ARRAY_LEN( items ); i++ )
+	{
+		NSMenuItem *item;
+
+		if( !items[i].title )
+		{
+			[menu addItem: [NSMenuItem separatorItem]];
+			continue;
+		}
+		item = [[[NSMenuItem alloc] initWithTitle: items[i].title action: items[i].sel keyEquivalent: @""] autorelease];
+		[item setTarget: target];
+		[menu addItem: item];
+	}
+	[top setSubmenu: menu];
+	return top;
+}
+
 /*
 =================
 Sys_MacFrame
 
-Called every frame; once SDL has built the menu bar, add our items to the
-application menu (bundle only).
+Called every frame. Every 16th frame, check that the menu bar SDL built has
+our File menu (right after the application menu) and add it if not: once at
+startup, and again should SDL ever rebuild the menu bar (bundle only).
 =================
 */
 void Sys_MacFrame( void )
 {
 	static VSPMenuTarget *target;
+	static NSMenuItem *fileItem;
+	static qboolean notBundle, logged;
 	static int checks;
 
-	if( menusAdded || ( ++checks & 15 ) )
+	if( notBundle || ( ++checks & 15 ) )
 		return;
 
 	@autoreleasepool {
-		NSMenu *appMenu;
-		NSInteger at;
-		NSMenuItem *item;
-		struct { NSString *title; SEL sel; } items[] = {
-			{ @"Show Saves Folder", @selector(showSaves:) },
-			{ @"Show Game Folder", @selector(showGame:) },
-			{ @"Change Game Folder…", @selector(changeGame:) },
-			{ @"Delete Saves & Settings…", @selector(deleteSettings:) },
-		};
-		int i;
+		NSMenu *bar;
 
 		if( !Sys_MacAppBundlePath() )
 		{
-			menusAdded = qtrue;
+			notBundle = qtrue;
 			return;
 		}
-		if( !NSApp || ![NSApp mainMenu] || [[NSApp mainMenu] numberOfItems] < 1 ||
-			!( appMenu = [[[NSApp mainMenu] itemAtIndex: 0] submenu] ) )
-			return;
+		if( !NSApp || !( bar = [NSApp mainMenu] ) || [bar numberOfItems] < 1 || ![[bar itemAtIndex: 0] submenu] )
+			return;		// SDL has not built the menu bar yet
+		if( fileItem && [bar indexOfItem: fileItem] >= 0 )
+			return;		// already there
 
-		target = [[VSPMenuTarget alloc] init];
-		// after "About …" and its separator, if present
-		at = [appMenu numberOfItems] >= 2 && [[appMenu itemAtIndex: 1] isSeparatorItem] ? 2 : 0;
-		for( i = 0; i < 4; i++ )
-		{
-			item = [[[NSMenuItem alloc] initWithTitle: items[i].title action: items[i].sel keyEquivalent: @""] autorelease];
-			[item setTarget: target];
-			[appMenu insertItem: item atIndex: at + i];
-		}
-		[appMenu insertItem: [NSMenuItem separatorItem] atIndex: at + 4];
-		menusAdded = qtrue;
-		Com_Printf( "macOS: added game folder items to the application menu\n" );
+		if( !target )
+			target = [[VSPMenuTarget alloc] init];
+		if( !fileItem )
+			fileItem = [BuildFileMenu( target ) retain];
+		if( [fileItem menu] )
+			[[fileItem menu] removeItem: fileItem];		// attached to an old menu bar
+		[bar insertItem: fileItem atIndex: 1];
+		Com_Printf( "macOS: %s the File menu (%s)\n", logged ? "re-added" : "added",
+			[[[[bar itemArray] valueForKey: @"title"] componentsJoinedByString: @" | "] UTF8String] );
+		logged = qtrue;
 	}
 }
