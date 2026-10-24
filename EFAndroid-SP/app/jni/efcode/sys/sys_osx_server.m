@@ -54,6 +54,9 @@ Test hooks (environment variables, see also sys_osx_launcher.m):
   VOYAGERSP_TEST_SERVER_STOP_AFTER=<s>    press Stop Server
   VOYAGERSP_TEST_SERVER_COMMAND=<cmd>     send it once the server is ready
   VOYAGERSP_TEST_SERVER_PLAY_AFTER=<s>    press Play on This Mac
+  VOYAGERSP_TEST_SERVER_INTERNET=1        an internet server opening its port
+  VOYAGERSP_TEST_SERVER_NOMASTER=1        ... without listing it on the masters
+  VOYAGERSP_TEST_NAT=<ipv4>|fail          fake the router's answer
 With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 "[server] ..." and each status poll is logged as "[test] status: ...".
 ===========================================================================
@@ -73,6 +76,7 @@ With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <dns_sd.h>
 
 #include "sys_osx_launcher.h"
 
@@ -141,6 +145,7 @@ static NSArray *Modifiers( void )
 	_botSkill = 3;
 	_allowDownload = YES;
 	_pure = YES;
+	_openPort = YES;
 	_port = DEFAULT_PORT;
 	_rotation = @[ @"hm_voy1", @"hm_borg1", @"hm_kln1", @"hm_dn1", @"hm_for1", @"hm_cam" ];
 	return self;
@@ -157,7 +162,7 @@ static NSArray *Modifiers( void )
 {
 	return @[ @"hostname", @"password", @"gametype", @"assimilation", @"disintegration", @"actionHero",
 		@"specialties", @"elimination", @"fraglimit", @"capturelimit", @"timelimit", @"maxPlayers", @"bots",
-		@"botSkill", @"friendlyFire", @"internet", @"allowDownload", @"pure", @"port", @"rotation" ];
+		@"botSkill", @"friendlyFire", @"internet", @"openPort", @"allowDownload", @"pure", @"port", @"rotation" ];
 }
 
 - (NSDictionary *)dictionary
@@ -960,7 +965,7 @@ static NSView *Boxed( NSView *v )
 	NSTextField *gametypeHint;
 	NSMutableDictionary<NSString *, NSButton *> *modButtons;
 	VSPNumberField *frag, *capture, *timeLimit, *maxPlayers, *bots, *port;
-	NSButton *friendly, *lanButton, *internetButton, *downloads, *pure;
+	NSButton *friendly, *lanButton, *internetButton, *openPort, *downloads, *pure;
 	NSTextField *hostname, *password, *networkHint, *botsHint;
 }
 
@@ -1498,6 +1503,7 @@ static NSView *Boxed( NSView *v )
 	if( b == friendly )			edit.friendlyFire = on;
 	else if( b == downloads )	edit.allowDownload = on;
 	else if( b == pure )		edit.pure = on;
+	else if( b == openPort )	edit.openPort = on;
 	else if( b == lanButton || b == internetButton )
 	{
 		edit.internet = b == internetButton;
@@ -1560,6 +1566,8 @@ static NSView *Boxed( NSView *v )
 	maxPlayers = [[VSPNumberField alloc] initWithKey: @"maxPlayers" settings: edit min: 2 max: 32 unit: @"including bots" width: 50];
 	lanButton = [NSButton radioButtonWithTitle: @"Local network only" target: self action: @selector(checkChanged:)];
 	internetButton = [NSButton radioButtonWithTitle: @"Internet: also list it on the master server" target: self action: @selector(checkChanged:)];
+	openPort = [NSButton checkboxWithTitle: @"Open the port on my router automatically" target: self action: @selector(checkChanged:)];
+	[openPort setToolTip: @"Asks your router (NAT-PMP / UPnP) to forward the port while the server runs, so you don't have to set up port forwarding."];
 	networkHint = Hint( @"", 400 );
 	port = [[VSPNumberField alloc] initWithKey: @"port" settings: edit min: 1024 max: 65535 unit: nil width: 64];
 	[port.stepper setHidden: YES];
@@ -1577,6 +1585,7 @@ static NSView *Boxed( NSView *v )
 		@[ VSP_Label( @"Max players:", Body(), nil ), maxPlayers.view ],
 		@[ VSP_Label( @"Network:", Body(), nil ), lanButton ],
 		@[ [NSGridCell emptyContentView], internetButton ],
+		@[ [NSGridCell emptyContentView], openPort ],
 		@[ VSP_Label( @"Port:", Body(), nil ), HStack( @[ port.view, VSP_Label( @"UDP · 27960–27963 show up in the Join menu", Small(), [NSColor secondaryLabelColor] ) ], 8 ) ],
 		@[ [NSGridCell emptyContentView], networkHint ],
 		@[ VSP_Label( @"Downloads:", Body(), nil ), downloads ],
@@ -1585,7 +1594,10 @@ static NSView *Boxed( NSView *v )
 	], 112 );
 	[[grid rowAtIndex: 3] setTopPadding: 6];
 	[[grid rowAtIndex: 4] setTopPadding: 6];
-	[[grid rowAtIndex: 8] setTopPadding: 6];
+	[[grid rowAtIndex: 9] setTopPadding: 6];
+	[[grid cellForView: openPort] setXPlacement: NSGridCellPlacementLeading];
+	[[[grid cellForView: openPort] row] setTopPadding: 0];
+	[openPort setContentHuggingPriority: NSLayoutPriorityDefaultHigh forOrientation: NSLayoutConstraintOrientationHorizontal];
 	[grid setTranslatesAutoresizingMaskIntoConstraints: NO];
 	[v addSubview: grid];
 	[NSLayoutConstraint activateConstraints: @[
@@ -1600,12 +1612,16 @@ static NSView *Boxed( NSView *v )
 {
 	[lanButton setState: edit.internet ? NSControlStateValueOff : NSControlStateValueOn];
 	[internetButton setState: edit.internet ? NSControlStateValueOn : NSControlStateValueOff];
+	[openPort setState: edit.openPort ? NSControlStateValueOn : NSControlStateValueOff];
+	[openPort setEnabled: edit.internet];
 	if( !LANDiscoverable( edit.port ) )
 		[networkHint setStringValue: @"Outside 27960–27963, Holomatch's Join menu won't find the server on your network: "
 			@"players have to connect by address."];
 	else
 		[networkHint setStringValue: edit.internet ?
-			[NSString stringWithFormat: @"Players outside your network need UDP port %ld forwarded to this Mac on your router.", (long)edit.port] :
+			( edit.openPort ? [NSString stringWithFormat: @"The server window shows your public address once the router has opened UDP port %ld. "
+				@"If it can't, forward that port to this Mac by hand.", (long)edit.port] :
+			[NSString stringWithFormat: @"Players outside your network need UDP port %ld forwarded to this Mac on your router.", (long)edit.port] ) :
 			@"Players on your network find it in Holomatch's Join menu."];
 	[networkHint setTextColor: LANDiscoverable( edit.port ) ? [NSColor secondaryLabelColor] : [NSColor systemOrangeColor]];
 }
@@ -1819,6 +1835,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 
 @interface VSPServerWindowController : NSObject <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @property (nonatomic, readonly) NSWindow *window;
+- (void)natResult: (DNSServiceErrorType)err address: (uint32_t)externalAddress port: (uint16_t)externalPort;
 @end
 
 @implementation VSPServerWindowController
@@ -1840,12 +1857,20 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	NSArray<NSDictionary *> *players;
 	NSString *currentMap, *lanAddress;
 	NSInteger port;
+	// the router port mapping (internet servers with openPort)
+	DNSServiceRef natRef;
+	NSTimer *natTimer;
+	NSString *publicAddress, *natProblem;
+	NSInteger publicPort;
+	BOOL natOpening;
 	BOOL echo, readyLogged;
 	NSDate *lastPoll;
 
 	NSImageView *dot;
 	NSTextField *title, *stateText, *address, *addressHint, *mapValue, *gameValue, *playersValue;
-	NSButton *copyButton, *playButton, *stopButton, *sendButton;
+	NSTextField *internetValue, *internetHint;
+	NSImageView *internetIcon;
+	NSButton *copyButton, *copyInternetButton, *playButton, *stopButton, *sendButton;
 	NSTableView *playerTable;
 	NSTextView *logView;
 	NSTextField *command;
@@ -1861,6 +1886,11 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	dataFolder = df;
 	clientArgs = ca;
 	maps = VSP_MapCatalog( df );
+	if( TestEnvSet( "VOYAGERSP_TEST_SERVER_INTERNET" ) )
+	{
+		s.internet = YES;
+		s.openPort = YES;
+	}
 	port = s.port;
 	lanAddress = VSP_LANAddress();
 	pending = [NSMutableData data];
@@ -1920,6 +1950,14 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[copyButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
 	addressRow = HStack( @[ address, copyButton ], 10 );
 	addressHint = Hint( @"", 480 );
+	internetIcon = [[NSImageView alloc] init];
+	internetValue = VSP_Label( @"", [NSFont monospacedDigitSystemFontOfSize: 15 weight: NSFontWeightSemibold], nil );
+	[internetValue setSelectable: YES];
+	copyInternetButton = [NSButton buttonWithTitle: @"Copy" target: self action: @selector(copyPublicAddress:)];
+	[copyInternetButton setControlSize: NSControlSizeSmall];
+	[copyInternetButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+	internetHint = Hint( @"", 480 );
+	[internetHint setLineBreakMode: NSLineBreakByWordWrapping];
 	mapValue = VSP_Label( @"", f, nil );
 	gameValue = VSP_Label( @"", f, nil );
 	playersValue = VSP_Label( @"", f, nil );
@@ -1931,6 +1969,8 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	info = FormGrid( @[
 		@[ VSP_Label( @"Address:", f, nil ), addressRow ],
 		@[ [NSGridCell emptyContentView], addressHint ],
+		@[ VSP_Label( @"Internet:", f, nil ), HStack( @[ internetIcon, internetValue, copyInternetButton ], 8 ) ],
+		@[ [NSGridCell emptyContentView], internetHint ],
 		@[ VSP_Label( @"Map:", f, nil ), mapValue ],
 		@[ VSP_Label( @"Game:", f, nil ), gameValue ],
 		@[ VSP_Label( @"Players:", f, nil ), playersValue ],
@@ -1938,6 +1978,11 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[info setRowSpacing: 6];
 	[[info rowAtIndex: 1] setTopPadding: -2];
 	[[info rowAtIndex: 2] setTopPadding: 6];
+	[[info rowAtIndex: 3] setTopPadding: -2];
+	[[info rowAtIndex: 4] setTopPadding: 6];
+	// only for internet servers
+	[[info rowAtIndex: 2] setHidden: !settings.internet];
+	[[info rowAtIndex: 3] setHidden: !settings.internet];
 	infoGroup = VSP_Group( @"Server", info );
 
 	// players and the console log
@@ -2076,12 +2121,12 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 			@"won't list it on your network: players connect to this address.%@", (long)port,
 			settings.internet ? @" From the internet: your public address, with the port forwarded." : @""]];
 	else if( settings.internet )
-		[addressHint setStringValue: [NSString stringWithFormat: @"On your network, players find it in Holomatch's Join menu. "
-			@"From the internet they connect to your public address, with UDP port %ld forwarded to this Mac.", (long)port]];
+		[addressHint setStringValue: @"On your network, players find it in Holomatch's Join menu, or connect to this address."];
 	else
 		[addressHint setStringValue: @"Players on your network find it in Holomatch's Join menu, or connect to this address."];
 	[addressHint setTextColor: LANDiscoverable( port ) || !lanAddress ? [NSColor secondaryLabelColor] : [NSColor systemOrangeColor]];
 	[addressHint setToolTip: [addressHint stringValue]];
+	[self showInternet];
 
 	if( m )
 		[mapValue setStringValue: [m.displayName isEqualToString: m.name] ? m.name :
@@ -2145,6 +2190,9 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		@"+set", @"net_port", [NSString stringWithFormat: @"%ld", (long)settings.port] ]];
 	if( basepath )
 		[args addObjectsFromArray: @[ @"+set", @"fs_basepath", basepath ]];
+	if( TestEnvSet( "VOYAGERSP_TEST_SERVER_NOMASTER" ) )
+		for( int i = 1; i <= 5; i++ )
+			[args addObjectsFromArray: @[ @"+set", [NSString stringWithFormat: @"sv_master%d", i], @"" ]];
 	[args addObjectsFromArray: @[ @"+exec", SERVER_CFG ]];
 
 	task = [[NSTask alloc] init];
@@ -2226,12 +2274,191 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[pending replaceBytesInRange: NSMakeRange( 0, start ) withBytes: NULL length: 0];
 }
 
+// --- the router port mapping (NAT-PMP / PCP / UPnP through mDNSResponder) ---
+
+static void NATCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifIndex, DNSServiceErrorType err,
+	uint32_t externalAddress, DNSServiceProtocol protocol, uint16_t internalPort, uint16_t externalPort,
+	uint32_t ttl, void *context )
+{
+	[(__bridge VSPServerWindowController *)context natResult: err address: externalAddress port: ntohs( externalPort )];
+}
+
+// 10/8, 172.16/12, 192.168/16, 100.64/10 (carrier-grade NAT): not reachable from the internet
+static BOOL PrivateIPv4( uint32_t a )
+{
+	return ( a >> 24 ) == 10 || ( a >> 20 ) == ( ( 172 << 4 ) | 1 ) || ( a >> 16 ) == ( ( 192 << 8 ) | 168 ) ||
+		( a >> 22 ) == ( ( 100 << 2 ) | 1 );
+}
+
+- (void)openRouterPort
+{
+	DNSServiceErrorType err;
+
+	if( natRef || natOpening )
+		return;
+	natOpening = YES;
+	natProblem = nil;
+	publicAddress = nil;
+	LLog( @"Server: asking the router to forward UDP %ld", (long)port );
+	if( getenv( "VOYAGERSP_TEST_NAT" ) )
+	{
+		NSString *fake = @( getenv( "VOYAGERSP_TEST_NAT" ) );
+		dispatch_after( dispatch_time( DISPATCH_TIME_NOW, NSEC_PER_SEC ), dispatch_get_main_queue(), ^{
+			struct in_addr in;
+			if( [fake isEqualToString: @"fail"] )
+				[self natResult: kDNSServiceErr_NATPortMappingUnsupported address: 0 port: 0];
+			else if( inet_pton( AF_INET, [fake UTF8String], &in ) == 1 )
+				[self natResult: kDNSServiceErr_NoError address: in.s_addr port: (uint16_t)self->port];
+		} );
+		[self showInternet];
+		return;
+	}
+	// ttl 0: the default lease, renewed by mDNSResponder until deallocated
+	err = DNSServiceNATPortMappingCreate( &natRef, 0, 0, kDNSServiceProtocol_UDP, htons( (uint16_t)port ),
+		htons( (uint16_t)port ), 0, NATCallback, (__bridge void *)self );
+	if( err == kDNSServiceErr_NoError )
+		err = DNSServiceSetDispatchQueue( natRef, dispatch_get_main_queue() );
+	if( err != kDNSServiceErr_NoError )
+	{
+		[self natResult: err address: 0 port: 0];
+		return;
+	}
+	natTimer = [NSTimer timerWithTimeInterval: 15 repeats: NO block: ^( NSTimer *t ) {
+		if( self->natOpening )
+			[self natFailed: @"Your router didn't answer the request to open the port: it may not support automatic "
+				@"port opening (NAT-PMP / UPnP), or has it turned off."];
+	}];
+	[[NSRunLoop currentRunLoop] addTimer: natTimer forMode: NSRunLoopCommonModes];
+	[self showInternet];
+}
+
+- (void)closeRouterPort
+{
+	[natTimer invalidate];
+	natTimer = nil;
+	natOpening = NO;
+	if( natRef )
+	{
+		DNSServiceRefDeallocate( natRef );		// removes the mapping
+		natRef = NULL;
+		LLog( @"Server: router port mapping removed" );
+	}
+	publicAddress = nil;
+	[self showInternet];
+}
+
+- (void)natFailed: (NSString *)why
+{
+	natOpening = NO;
+	[natTimer invalidate];
+	natTimer = nil;
+	natProblem = why;
+	publicAddress = nil;
+	LLog( @"Server: port not opened: %@", why );
+	[self appendLog: [@"Router: " stringByAppendingString: why] color: [NSColor systemOrangeColor]];
+	[self showInternet];
+}
+
+- (void)natResult: (DNSServiceErrorType)err address: (uint32_t)externalAddress port: (uint16_t)externalPort
+{
+	uint32_t a = ntohl( externalAddress );
+	char buf[INET_ADDRSTRLEN];
+
+	if( err == kDNSServiceErr_NATPortMappingUnsupported )
+		[self natFailed: @"Your router doesn't support automatic port opening (NAT-PMP / UPnP), or has it turned off."];
+	else if( err == kDNSServiceErr_NATPortMappingDisabled )
+		[self natFailed: @"Automatic port opening (NAT-PMP / UPnP) is turned off in your router's settings."];
+	else if( err == kDNSServiceErr_DoubleNAT )
+		[self natFailed: @"Your network has two routers in a row (double NAT), so the outer one still blocks the port."];
+	else if( err != kDNSServiceErr_NoError )
+		[self natFailed: [NSString stringWithFormat: @"The router didn't open the port (error %d).", (int)err]];
+	else if( !a )
+		return;		// no answer yet (mDNSResponder reports again); the timer gives up
+	else if( PrivateIPv4( a ) )
+		[self natFailed: [NSString stringWithFormat: @"Your router opened the port, but its own internet address (%s) is private: "
+			@"your provider or another router puts it behind a second NAT, which nobody outside can get through.",
+			inet_ntop( AF_INET, &externalAddress, buf, sizeof( buf ) )]];
+	else
+	{
+		natOpening = NO;
+		[natTimer invalidate];
+		natTimer = nil;
+		natProblem = nil;
+		publicAddress = @( inet_ntop( AF_INET, &externalAddress, buf, sizeof( buf ) ) );
+		publicPort = externalPort ? externalPort : port;
+		LLog( @"Server: the router forwards %@:%ld to this Mac", publicAddress, (long)publicPort );
+		[self appendLog: [NSString stringWithFormat: @"Router: port opened, players on the internet connect to %@:%ld",
+			publicAddress, (long)publicPort] color: [NSColor systemGreenColor]];
+		[self showInternet];
+	}
+}
+
+- (void)showInternet
+{
+	NSString *manual = [NSString stringWithFormat: @"Forward UDP port %ld to this Mac (%@) in your router's settings, "
+		@"or use Tailscale (see the README).", (long)port, lanAddress ? lanAddress : @"this Mac's address"];
+	NSFont *addressFont = [NSFont monospacedDigitSystemFontOfSize: 15 weight: NSFontWeightSemibold];
+	NSString *symbol = nil, *value, *hint;
+	NSColor *tint = [NSColor secondaryLabelColor];
+
+	if( !internetValue || !settings.internet )
+		return;
+	if( publicAddress )
+	{
+		value = [NSString stringWithFormat: @"%@:%ld", publicAddress, (long)publicPort];
+		hint = @"Your router forwards this address to the server while it runs. Friends on the internet connect to it, "
+			@"or find the server in Holomatch's internet list.";
+		symbol = @"checkmark.circle.fill";
+		tint = [NSColor systemGreenColor];
+	}
+	else if( natOpening )
+	{
+		value = @"Opening the port on your router…";
+		hint = @"";
+		symbol = @"arrow.triangle.2.circlepath";
+	}
+	else if( natProblem )
+	{
+		value = @"Port not opened";
+		hint = [NSString stringWithFormat: @"%@ %@", natProblem, manual];
+		symbol = @"exclamationmark.triangle.fill";
+		tint = [NSColor systemOrangeColor];
+	}
+	else if( !settings.openPort )
+	{
+		value = @"Your public address";
+		hint = [NSString stringWithFormat: @"Automatic port opening is off. %@", manual];
+	}
+	else
+	{
+		value = task ? @"Waiting for the server…" : @"—";
+		hint = @"";
+	}
+	[internetValue setFont: publicAddress ? addressFont : [NSFont systemFontOfSize: 13]];
+	[internetValue setStringValue: value];
+	[internetIcon setImage: symbol ? [NSImage imageWithSystemSymbolName: symbol accessibilityDescription: nil] : nil];
+	[internetIcon setHidden: !symbol];
+	[internetIcon setContentTintColor: tint];
+	[copyInternetButton setHidden: !publicAddress];
+	[internetHint setStringValue: hint];
+	[internetHint setHidden: ![hint length]];
+	[internetHint setTextColor: natProblem ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor]];
+}
+
+- (void)dealloc
+{
+	if( natRef )
+		DNSServiceRefDeallocate( natRef );
+}
+
 - (void)becameReady
 {
 	if( readyLogged )
 		return;
 	readyLogged = YES;
 	LLog( @"Server: ready on %@ (map %@)", [self addressString], currentMap );
+	if( settings.internet && settings.openPort )
+		[self openRouterPort];
 	if( getenv( "VOYAGERSP_TEST_SERVER_COMMAND" ) )
 	{
 		NSString *c = @( getenv( "VOYAGERSP_TEST_SERVER_COMMAND" ) );
@@ -2360,6 +2587,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	LLog( @"Server: exited (%s %d)", signaled ? "signal" : "code", code );
 	serverPid = 0;
 	task = nil;
+	[self closeRouterPort];
 	[pollTimer invalidate];
 	[killTimer invalidate];
 	pollTimer = killTimer = nil;
@@ -2435,6 +2663,15 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 {
 	[self stopThen: NSModalResponseStop];
 	return NO;
+}
+
+- (void)copyPublicAddress: (id)sender
+{
+	if( !publicAddress )
+		return;
+	[[NSPasteboard generalPasteboard] clearContents];
+	[[NSPasteboard generalPasteboard] setString: [NSString stringWithFormat: @"%@:%ld", publicAddress, (long)publicPort]
+		forType: NSPasteboardTypeString];
 }
 
 - (void)copyAddress: (id)sender

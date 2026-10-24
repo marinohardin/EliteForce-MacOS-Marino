@@ -872,7 +872,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[srvPlayers setStringValue: players];
 
 	[srvNetwork setStringValue: [NSString stringWithFormat: @"%@ · port %ld%@%@",
-		server.internet ? @"Internet" : @"Local network only", (long)server.port,
+		server.internet ? ( server.openPort ? @"Internet, port opened on the router" : @"Internet" ) : @"Local network only", (long)server.port,
 		server.port < 27960 || server.port > 27963 ? @" (not listed in the Join menu)" : @"",
 		[server.password length] ? @" · password" : @""]];
 	[srvNetwork setTextColor: server.port < 27960 || server.port > 27963 ? [NSColor systemOrangeColor] : [NSColor labelColor]];

@@ -146,10 +146,35 @@ Notes:
   network** (and, with the firewall on, **accept incoming connections** on the host): allow
   it, or LAN games won't show up. Both can be changed later in **System Settings → Privacy
   & Security → Local Network** and **Network → Firewall**.
-- The game uses **UDP port 27960** (the next players on the same Mac 27961, …). Internet
-  games through a router need that port forwarded to the host.
+- The game uses **UDP port 27960** (the next players on the same Mac 27961, …). The Join
+  menu's LAN search only looks at ports 27960–27963.
 - Holomatch's game logic runs as bytecode (QVM) in the engine's interpreter. It's fast
   enough on Apple Silicon: a match with four bots costs well under a millisecond per frame.
+
+### Hosting a server
+
+Instead of hosting from inside the game, pick **Host a Server** in the launcher. **Config…**
+sets the map rotation, game type, Holomatch modifiers, limits, bots, name, password and network.
+**Start Server** runs a standalone server (no game window) and shows its address, the players
+and its console; **Play on This Mac** joins it from the same Mac. It also runs from Terminal:
+`"/Applications/Elite Force.app/Contents/MacOS/Elite Force" +set dedicated 1 +map hm_voy1`
+(`dedicated 2` for the internet), with console commands typed into Terminal.
+
+### Playing over the internet
+
+Players outside your home network can only reach your server if your router lets their
+connection through to your Mac:
+
+- **Automatic (recommended):** in **Config… → Server**, choose **Internet** and leave **Open the
+  port on my router automatically** on. While the server runs, the app asks your router
+  (NAT-PMP / UPnP, which most home routers support) to forward the port, and the server window
+  shows your public address to give friends. The port closes again when the server stops.
+- **If the router refuses** (the feature is off or unsupported, or your provider puts you
+  behind a second NAT), the server window says why. Then either forward **UDP 27960** (or your
+  chosen port) to your Mac by hand in the router's settings, or use a private network like
+  [Tailscale](https://tailscale.com): everyone installs it and joins your tailnet, then connects
+  to your Mac's Tailscale address (`connect 100.x.y.z`). The Join menu won't list it there;
+  connect by address.
 
 ### Uninstall
 

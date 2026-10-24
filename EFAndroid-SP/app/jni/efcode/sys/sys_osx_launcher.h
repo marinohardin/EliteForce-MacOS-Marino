@@ -50,6 +50,7 @@ enum { VSP_GT_FFA = 0, VSP_GT_TOURNAMENT = 1, VSP_GT_TEAM = 3, VSP_GT_CTF = 4 };
 @property (nonatomic) NSInteger fraglimit, capturelimit, timelimit;	// 0: none; minutes
 @property (nonatomic) NSInteger maxPlayers, bots, botSkill;			// bots: bot_minplayers; skill 1-5
 @property (nonatomic) BOOL friendlyFire, internet, allowDownload, pure;
+@property (nonatomic) BOOL openPort;		// internet: ask the router to forward the port (NAT-PMP / UPnP)
 @property (nonatomic) NSInteger port;
 @property (nonatomic, copy) NSArray<NSString *> *rotation;			// map names, in order
 + (instancetype)load;
