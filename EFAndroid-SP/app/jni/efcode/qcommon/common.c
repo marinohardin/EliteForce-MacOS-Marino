@@ -504,6 +504,21 @@ qboolean Com_Holomatch( void ) {
 	return ( com_holomatch && com_holomatch->integer ) ? qtrue : qfalse;
 }
 
+/*
+===================
+Com_DedicatedServer
+
+qtrue when running as a dedicated server (+set dedicated 1|2). Also valid
+early in Com_Init, before com_dedicated is registered (the command line
+value is set by then).
+===================
+*/
+qboolean Com_DedicatedServer( void ) {
+	if ( com_dedicated )
+		return com_dedicated->integer ? qtrue : qfalse;
+	return Cvar_VariableIntegerValue( "dedicated" ) ? qtrue : qfalse;
+}
+
 
 /*
 ===============
@@ -2882,7 +2897,9 @@ void Com_Init( char *commandLine ) {
 	Cvar_CheckRange( com_dedicated, 1, 2, qtrue );
 #else
 	com_dedicated = Cvar_Get ("dedicated", "0", CVAR_LATCH);
-	Cvar_CheckRange( com_dedicated, 0, 2, qtrue );
+	// started as a dedicated server: no client was set up (see CL_Init
+	// below), so it can switch between 1 and 2 but not become a client
+	Cvar_CheckRange( com_dedicated, com_dedicated->integer ? 1 : 0, 2, qtrue );
 #endif
 	// allocate the stack based hunk allocator
 	Com_InitHunkMemory();
@@ -2983,7 +3000,11 @@ void Com_Init( char *commandLine ) {
 
 	com_dedicated->modified = qfalse;
 #ifndef DEDICATED
-	CL_Init();
+	// A dedicated server started from the game binary is headless: no client,
+	// so no window, renderer, sound or input, and no local connection.
+	// cl_running stays 0, which every client entry point checks.
+	if ( !com_dedicated->integer )
+		CL_Init();
 #endif
 
 	// set com_frameTime so that if a map is started on the
@@ -3126,7 +3147,7 @@ void Com_WriteConfiguration( void ) {
 
 	// not needed for dedicated or standalone
 #if !defined(DEDICATED) && !defined(STANDALONE)
-	if(!com_standalone->integer)
+	if(!com_standalone->integer && !com_dedicated->integer)
 	{
 		const char *gamedir;
 		gamedir = Cvar_VariableString( "fs_game" );
@@ -3327,7 +3348,10 @@ void Com_Frame( void ) {
 			NET_Sleep(timeVal - 1);
 	} while(Com_TimeVal(minMsec));
 	
-	IN_Frame();
+#ifndef DEDICATED
+	if ( com_cl_running->integer )
+		IN_Frame();
+#endif
 
 	lastTime = com_frameTime;
 	com_frameTime = Com_EventLoop();

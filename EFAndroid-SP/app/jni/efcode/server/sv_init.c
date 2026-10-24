@@ -605,15 +605,24 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 
 	Hunk_SetMark();
 
-#ifndef DEDICATED
-	if ( com_dedicated->integer ) {
-		// restart renderer in order to show console for dedicated servers
-		// launched through the regular binary
-		CL_StartHunkUsers( qtrue );
-	}
-#endif
+	// (lilium restarted the renderer here to show a console window for a
+	// dedicated server run from the game binary; this one is headless)
 
 	Com_Printf ("-----------------------------------\n");
+
+	if ( com_dedicated->integer ) {
+		// one machine-readable line per map load, for an app driving the
+		// server (docs/macos-port-notes.md). net_port is the port actually
+		// bound (NET_OpenIP moves up when the asked one is taken); the
+		// hostname is last since it may hold spaces.
+		char hostname[MAX_INFO_VALUE];
+
+		Q_strncpyz( hostname, sv_hostname->string, sizeof( hostname ) );
+		Q_CleanStr( hostname );
+		Com_Printf( "Server ready: map %s port %d gametype %d maxclients %d dedicated %d hostname %s\n",
+			server, Cvar_VariableIntegerValue( "net_port" ), sv_gametype->integer,
+			sv_maxclients->integer, com_dedicated->integer, hostname );
+	}
 }
 
 /*
