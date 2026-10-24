@@ -128,6 +128,8 @@ right after VKimp_ApplyWindowSettings changes the window.
 ===============
 */
 void VKimp_CheckWindow( void );	// sdl_glimp.c
+qboolean VKimp_NewWindowDue( void );	// sdl_glimp.c
+void CL_ReplaceWindow( void );		// cl_main.c
 
 void IN_SyncWindowSize( void )
 {
@@ -135,6 +137,11 @@ void IN_SyncWindowSize( void )
 
 	// fullscreen transitions (incl. the green button) and user resizes
 	VKimp_CheckWindow( );
+
+	// an r_highdpi change waiting for a fullscreen transition to end: new window now
+	// (IN_Init for the new window resets SDL_window and the drawable size noted here)
+	if ( cls.rendererStarted && VKimp_NewWindowDue( ) )
+		CL_ReplaceWindow( );
 
 	if ( !SDL_window || ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_MINIMIZED ) )
 		return;

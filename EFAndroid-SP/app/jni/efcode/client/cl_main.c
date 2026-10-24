@@ -2004,6 +2004,61 @@ doesn't know what graphics to reload
 #if defined( USE_VULKAN ) && !defined( __ANDROID__ )
 qboolean VKimp_WindowSettingsChanged( void );
 qboolean VKimp_ApplyWindowSettings( void );
+void VKimp_RequestNewWindow( void );
+qboolean VKimp_NewWindowDue( void );
+void VKimp_DrawableSize( int *width, int *height );
+qboolean VKimp_ReplaceWindow( glconfig_t *config );
+
+// next vid_restart recreates the window with the renderer (live replacement refused)
+static qboolean cl_vidRestartNewWindow = qfalse;
+
+/*
+=================
+CL_RendererLatchPending
+
+A latched renderer cvar (r_picmip, r_subdivisions, ...) is waiting for a renderer
+restart. Without one, a vid_restart that only changes the window needs none.
+=================
+*/
+static qboolean CL_RendererLatchPending( void ) {
+	extern cvar_t *cvar_vars;
+	cvar_t *var;
+
+	for ( var = cvar_vars; var; var = var->next ) {
+		if ( var->name && ( var->flags & CVAR_LATCH ) && var->latchedString
+			&& !Q_stricmpn( var->name, "r_", 2 ) ) {
+			Com_DPrintf( "renderer restart needed for %s\n", var->name );
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+/*
+=================
+CL_ReplaceWindow
+
+Desktop r_highdpi change (Video > Apply, or r_highdpi + vid_restart): swap in a window
+of the other pixel density without restarting the renderer, so it also works while
+an SP game runs (its renderer handles stay valid). If the renderer can't (r_renderScale
+/ r_ext_supersample), fall back to a window-recreating vid_restart.
+=================
+*/
+void CL_ReplaceWindow( void ) {
+	int width = 0, height = 0;
+
+	if ( re.ReplaceWindow && re.ReplaceWindow() ) {
+		VKimp_DrawableSize( &width, &height );
+		if ( width > 0 && height > 0 )
+			CL_WindowResized( width, height );
+		Com_Printf( "...High-DPI %s, renderer at %dx%d\n",
+			Cvar_VariableIntegerValue( "r_highdpi" ) ? "on" : "off", width, height );
+		return;
+	}
+
+	cl_vidRestartNewWindow = qtrue;
+	Cbuf_AddText( "vid_restart\n" );
+}
 #endif
 static void CL_ShutdownRefCode( int code );
 void Key_ToggleFullscreen_f( void );	// cl_keys.c
@@ -2013,10 +2068,23 @@ void CL_Vid_Restart_f( void ) {
 
 #if defined( USE_VULKAN ) && !defined( __ANDROID__ )
 	// Desktop: fullscreen and the windowed size apply to the live window (the
-	// renderer resizes in place); only an r_highdpi change recreates the window.
+	// renderer resizes in place). An r_highdpi change gets a new window from the
+	// renderer in place (CL_ReplaceWindow), in a game too; a full restart is only
+	// needed if other renderer settings changed as well.
 	VKimp_ApplyWindowSettings();
-	if ( VKimp_WindowSettingsChanged() )
-		refShutdownCode = 2;	// REF_DESTROY_WINDOW
+	if ( VKimp_WindowSettingsChanged() ) {
+		if ( cl_vidRestartNewWindow || !re.ReplaceWindow || !cls.rendererStarted ) {
+			cl_vidRestartNewWindow = qfalse;
+			refShutdownCode = 2;	// REF_DESTROY_WINDOW
+		} else {
+			VKimp_RequestNewWindow();
+			if ( VKimp_NewWindowDue() )
+				CL_ReplaceWindow();
+			// else IN_SyncWindowSize swaps it in after the fullscreen transition
+			if ( !CL_RendererLatchPending() )
+				return;		// nothing else needs a renderer restart
+		}
+	}
 #endif
 
 	// EF1 SP (Route-b): the SP cgame is the dlopen'd libefgame.so, NOT the engine cgvm, so the renderer
@@ -2030,8 +2098,8 @@ void CL_Vid_Restart_f( void ) {
 	  if ( SP_IsActive() && Cvar_VariableIntegerValue("sp_dropHM") && clc.state != CA_DISCONNECTED ) {
 		Com_Printf("vid_restart deferred: settings saved, applied on next map load (SP game active)\n");
 #if defined( USE_VULKAN ) && !defined( __ANDROID__ )
-		// the window can't be recreated under a running SP game (fullscreen and
-		// the windowed size were applied live above)
+		// the window can't be recreated with the renderer under a running SP game (only
+		// left when the live replacement was refused: r_renderScale / r_ext_supersample)
 		if ( refShutdownCode == 2 )
 			Com_Printf("High-DPI can only be changed from the main menu (Video > Apply) or on the next launch\n");
 #endif
@@ -3729,6 +3797,9 @@ void CL_InitRef( void ) {
 	ri.VKimp_Shutdown = VKimp_Shutdown;
 	ri.VK_GetInstanceProcAddr = VK_GetInstanceProcAddr;
 	ri.VK_CreateSurface = VK_CreateSurface;
+#ifndef __ANDROID__
+	ri.VKimp_ReplaceWindow = VKimp_ReplaceWindow;
+#endif
 #endif
 
 	// SMP / render-thread support (r_smp)
@@ -3747,7 +3818,7 @@ void CL_InitRef( void ) {
 		ret = GetRefAPI( 8, &ri );
 		if ( ret ) {
 			memset( &re, 0, sizeof( re ) );
-			memcpy( &re, ret, sizeof( *ret ) - sizeof( void * ) );
+			memcpy( &re, ret, offsetof( refexport_t, ResizeWindow ) );
 		}
 	}
 #endif
