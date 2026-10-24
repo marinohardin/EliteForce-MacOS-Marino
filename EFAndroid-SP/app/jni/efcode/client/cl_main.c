@@ -2012,8 +2012,9 @@ void CL_Vid_Restart_f( void ) {
 	int refShutdownCode = qtrue;	// REF_KEEP_WINDOW
 
 #if defined( USE_VULKAN ) && !defined( __ANDROID__ )
-	// Desktop: recreate the window when r_fullscreen, the windowed size or
-	// r_highdpi changed; otherwise keep it (fast path).
+	// Desktop: fullscreen and the windowed size apply to the live window (the
+	// renderer resizes in place); only an r_highdpi change recreates the window.
+	VKimp_ApplyWindowSettings();
 	if ( VKimp_WindowSettingsChanged() )
 		refShutdownCode = 2;	// REF_DESTROY_WINDOW
 #endif
@@ -2027,9 +2028,9 @@ void CL_Vid_Restart_f( void ) {
 	  if ( SP_IsActive() && Cvar_VariableIntegerValue("sp_dropHM") ) {
 		Com_Printf("vid_restart deferred: settings saved, applied on next map load (SP game active)\n");
 #if defined( USE_VULKAN ) && !defined( __ANDROID__ )
-		// the window can't be recreated under a running SP game, but fullscreen
-		// and the windowed size apply live (the renderer resizes in place)
-		if ( refShutdownCode == 2 && VKimp_ApplyWindowSettings() )
+		// the window can't be recreated under a running SP game (fullscreen and
+		// the windowed size were applied live above)
+		if ( refShutdownCode == 2 )
 			Com_Printf("r_highdpi applies after a vid_restart from the main menu or a relaunch\n");
 #endif
 		return;
@@ -4223,6 +4224,13 @@ void CL_Init( void ) {
 	Cmd_AddCommand ("snd_restart", CL_Snd_Restart_f);
 	Cmd_AddCommand ("vid_restart", CL_Vid_Restart_f);
 	Cmd_AddCommand ("toggle_fullscreen", Key_ToggleFullscreen_f);
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+	{
+		// same as the green title-bar button / Ctrl+Cmd+F (test hook for that path)
+		void VKimp_ToggleNativeFullscreen_f( void );
+		Cmd_AddCommand ("vid_toggleNativeFullscreen", VKimp_ToggleNativeFullscreen_f);
+	}
+#endif
 	Cmd_AddCommand ("disconnect", CL_Disconnect_f);
 	Cmd_AddCommand ("record", CL_Record_f);
 	Cmd_AddCommand ("demo", CL_PlayDemo_f);
@@ -4313,6 +4321,9 @@ void CL_Shutdown(char *finalmsg, qboolean disconnect, qboolean quit)
 	Cmd_RemoveCommand ("snd_restart");
 	Cmd_RemoveCommand ("vid_restart");
 	Cmd_RemoveCommand ("toggle_fullscreen");
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+	Cmd_RemoveCommand ("vid_toggleNativeFullscreen");
+#endif
 	Cmd_RemoveCommand ("disconnect");
 	Cmd_RemoveCommand ("record");
 	Cmd_RemoveCommand ("demo");
