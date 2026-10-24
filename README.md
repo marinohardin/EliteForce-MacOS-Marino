@@ -81,7 +81,7 @@ Elite Force SP source, built as native modules.
 ### Saves and settings
 
 Config files, saves (and game files the app copied) live in
-`~/Library/Application Support/VoyagerSP-MacOS/baseEF/`. You don't need to find that
+`~/Library/Application Support/EliteForce-MacOS/baseEF/`. You don't need to find that
 folder yourself: the app's **File** menu has
 
 - **Show Saves Folder** and **Show Game Folder**: open them in Finder,
@@ -91,7 +91,8 @@ folder yourself: the app's **File** menu has
 
 Saves from the Windows version work: the app copies them when it copies your `BaseEF`, or
 you can drop `.sav` files into the saves folder. If you played an earlier build of this
-port, its saves (from `~/Library/Application Support/Lilium Voyager/`) are copied over
+port, its saves (from `~/Library/Application Support/Lilium Voyager/` or
+`VoyagerSP-MacOS/`) are carried over
 automatically on first launch.
 
 ### Uninstall

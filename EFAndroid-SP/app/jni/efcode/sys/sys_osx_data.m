@@ -60,7 +60,7 @@ Test hooks (environment variables, for automated tests without clicking):
 #endif
 
 #ifndef MACOS_HOMEPATH_NAME
-#define MACOS_HOMEPATH_NAME "VoyagerSP-MacOS"
+#define MACOS_HOMEPATH_NAME "EliteForce-MacOS"
 #endif
 
 #define KEY_GAMEFOLDER	@"GameFolder"

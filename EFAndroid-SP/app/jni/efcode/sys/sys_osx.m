@@ -38,8 +38,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #ifndef MACOS_HOMEPATH_NAME
 // ~/Library/Application Support/<this> holds macOS saves/config (see sys_osx.m)
-#define MACOS_HOMEPATH_NAME "VoyagerSP-MacOS"
+#define MACOS_HOMEPATH_NAME "EliteForce-MacOS"
 #endif
+// homepath folder name of earlier builds, renamed on first start
+#define MACOS_LEGACY_HOMEPATH_NAME "VoyagerSP-MacOS"
 
 /*
 ==============
@@ -263,17 +265,22 @@ qboolean Sys_MacPrepareHomepath( int argc, char **argv )
 		NSError *err = nil;
 		BOOL isDir = NO;
 
-		// An existing folder whose name differs only in case (created as
-		// "VoyagerSP-macOS" by earlier builds) is this app's folder: give it
-		// the current spelling with a case-only rename via a temporary name,
-		// so Finder shows the new name. If that fails, keep using it as is.
+		// An existing folder whose name differs only in case, or that has a
+		// name earlier builds used ("VoyagerSP-MacOS"), is this app's folder:
+		// rename it to the current name (via a temporary name, so case-only
+		// renames work and Finder shows the new name). A folder with the
+		// current name wins over a legacy one. If renaming fails, keep using
+		// it as is.
 		for( NSString *e in [fm contentsOfDirectoryAtPath: support error: NULL] )
 		{
-			if( [e caseInsensitiveCompare: @MACOS_HOMEPATH_NAME] != NSOrderedSame )
-				continue;
-			existing = e;
-			if( [e isEqualToString: @MACOS_HOMEPATH_NAME] )
-				break;
+			if( [e caseInsensitiveCompare: @MACOS_HOMEPATH_NAME] == NSOrderedSame )
+			{
+				existing = e;
+				if( [e isEqualToString: @MACOS_HOMEPATH_NAME] )
+					break;
+			}
+			else if( !existing && [e caseInsensitiveCompare: @MACOS_LEGACY_HOMEPATH_NAME] == NSOrderedSame )
+				existing = e;
 		}
 		if( existing && ![existing isEqualToString: @MACOS_HOMEPATH_NAME] )
 		{
