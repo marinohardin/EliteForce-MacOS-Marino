@@ -3660,8 +3660,12 @@ static void CL_Stub_InitGamma( glconfig_t *config ) { (void)config; }
 static void CL_Stub_FreeAll( void ) { }
 static void CL_Stub_SetScaling( float factor, int cw, int ch ) { (void)factor;(void)cw;(void)ch; }
 static void CL_Stub_SetClipboardBitmap( const byte *bitmap, int size ) { (void)bitmap;(void)size; }
-static void CL_Stub_SaveJPG( const char *filename, int q, int w, int h, byte *buf, int pad ) { (void)filename;(void)q;(void)w;(void)h;(void)buf;(void)pad; }
-static size_t CL_Stub_SaveJPGToBuffer( byte *b, size_t bs, int q, int w, int h, byte *ib, int pad ) { (void)b;(void)bs;(void)q;(void)w;(void)h;(void)ib;(void)pad; return 0; }
+// screenshotJPEG / video JPEG: the JPEG writer from renderercommon/tr_image_jpg.c
+// (linked into the same binary). These used to be stubs, so screenshotJPEG
+// printed "Wrote ..." without writing anything.
+void RE_SaveJPG( char *filename, int quality, int image_width, int image_height, byte *image_buffer, int padding );
+size_t RE_SaveJPGToBuffer( byte *buffer, size_t bufSize, int quality, int image_width, int image_height, byte *image_buffer, int padding );
+static void CL_SaveJPG( const char *filename, int q, int w, int h, byte *buf, int pad ) { RE_SaveJPG( (char *)filename, q, w, h, buf, pad ); }
 #ifdef USE_VULKAN
 // translate Quake3e's string-range Cvar_CheckRange to lilium's float-range one
 static void CL_VK_CvarCheckRange( cvar_t *cv, const char *minVal, const char *maxVal, int type ) {
@@ -3790,8 +3794,8 @@ void CL_InitRef( void ) {
 	ri.GLimp_InitGamma = CL_Stub_InitGamma;
 	ri.CL_SetScaling = CL_Stub_SetScaling;
 	ri.Sys_SetClipboardBitmap = CL_Stub_SetClipboardBitmap;
-	ri.CL_SaveJPG = CL_Stub_SaveJPG;
-	ri.CL_SaveJPGToBuffer = CL_Stub_SaveJPGToBuffer;
+	ri.CL_SaveJPG = CL_SaveJPG;
+	ri.CL_SaveJPGToBuffer = RE_SaveJPGToBuffer;
 #ifdef USE_VULKAN
 	ri.VKimp_Init = VKimp_Init;
 	ri.VKimp_Shutdown = VKimp_Shutdown;
