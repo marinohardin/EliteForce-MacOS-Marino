@@ -50,7 +50,7 @@ if [ -z "${NO_BUILD:-}" ]; then
 	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET"
 	cmake --build "$GAME_BUILD" -j"$(sysctl -n hw.ncpu)"
 	cmake -S "$ROOT/EFAndroid-SP/app/jni/macos" -B "$ENGINE_BUILD" -DEF_FFMPEG_PREFIX="$FFMPEG" \
-		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET"
+		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_APP_VERSION="$VERSION"
 	cmake --build "$ENGINE_BUILD" -j"$(sysctl -n hw.ncpu)"
 fi
 

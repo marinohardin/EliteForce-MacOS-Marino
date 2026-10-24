@@ -2820,7 +2820,11 @@ void Com_Init( char *commandLine ) {
 	char	*s;
 	int	qport;
 
+#ifdef EF_APP_VERSION
+	Com_Printf( "%s %s %s (engine: lilium-voyager %s)\n", Q3_VERSION, PLATFORM_STRING, PRODUCT_DATE, PRODUCT_VERSION );
+#else
 	Com_Printf( "%s %s %s\n", Q3_VERSION, PLATFORM_STRING, PRODUCT_DATE );
+#endif
 
 	if ( setjmp (abortframe) ) {
 		Sys_Error ("Error during initialization");
@@ -2969,8 +2973,12 @@ void Com_Init( char *commandLine ) {
 
 	Cvar_Get( "com_novmcompat", "1", CVAR_ROM); // set to 1 to indicate VMs are run by the new engine.
 
+#ifdef EF_APP_VERSION
+	s = va("%s %s %s", Q3_VERSION, PLATFORM_STRING, PRODUCT_DATE );
+#else
 	// Holomatch reports itself like lilium-voyager ("Lilium Voyager HM"), not as SP
 	s = va("%s %s %s", Com_Holomatch() ? "Lilium Voyager HM " PRODUCT_VERSION : Q3_VERSION, PLATFORM_STRING, PRODUCT_DATE );
+#endif
 	com_version = Cvar_Get ("version", s, CVAR_ROM | CVAR_SERVERINFO );
 	com_gamename = Cvar_Get("com_gamename", GAMENAME_FOR_MASTER, CVAR_SERVERINFO | CVAR_INIT);
 	com_protocol = Cvar_Get("com_protocol", va("%i", PROTOCOL_VERSION), CVAR_SERVERINFO | CVAR_INIT);

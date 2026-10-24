@@ -12,6 +12,8 @@ project(efsp_macos C CXX OBJC)
 #   -> build-macos/efsp  (put libefgame.dylib / libefui.dylib next to it)
 # ---------------------------------------------------------------------------
 
+# the app's version (make-app.sh passes its VERSION), shown as "Elite Force for Mac <version>"
+set(EF_APP_VERSION "1.1.0" CACHE STRING "App version shown in the console and to server browsers")
 option(EF_BINK "Bink cinematics via Homebrew FFmpeg (OFF = stub, no movies)" ON)
 option(EF_VM_JIT "aarch64 QVM JIT (needs MAP_JIT work on macOS)" OFF)
 
@@ -148,6 +150,7 @@ target_compile_definitions(efsp PRIVATE
   USE_FLEXIBLE_DISPLAY=1
   USE_OPENAL USE_OPENAL_DLOPEN
   PRODUCT_VERSION="1.40"
+  EF_APP_VERSION="${EF_APP_VERSION}"
   ARCH_STRING="arm64"
   USE_LOCAL_HEADERS=1
   MACOS_X

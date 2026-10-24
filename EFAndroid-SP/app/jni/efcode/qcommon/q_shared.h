@@ -135,7 +135,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #  define PRODUCT_DATE __DATE__
 #endif
 
+#if defined( ELITEFORCE ) && defined( __APPLE__ ) && defined( EF_APP_VERSION )
+// the version players and server browsers see; PRODUCT_NAME stays as it was
+// because it also names files (the PID file)
+#define Q3_VERSION "Elite Force for Mac " EF_APP_VERSION
+#else
 #define Q3_VERSION PRODUCT_NAME " " PRODUCT_VERSION
+#endif
 
 #define MAX_TEAMNAME		32
 #define MAX_MASTER_SERVERS      5	// number of supported master servers
