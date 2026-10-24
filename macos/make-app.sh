@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the macOS engine (single player + Holomatch) + SP game modules and assemble a self-contained,
-# ad-hoc signed app bundle:  dist/EliteForce.app
+# ad-hoc signed app bundle:  "dist/Elite Force.app"
 #
 #   macos/make-app.sh               build (incremental) + bundle
 #   NO_BUILD=1 macos/make-app.sh    bundle the existing build outputs only
@@ -13,17 +13,19 @@
 # The game data is NOT bundled (see Sys_MacCheckGameData in efcode/sys/sys_osx.m).
 set -eu
 
-APP_NAME="${APP_NAME:-EliteForce}"
+APP_NAME="${APP_NAME:-Elite Force}"
 DISPLAY_NAME="${DISPLAY_NAME:-Elite Force}"
 BUNDLE_ID="${BUNDLE_ID:-org.voyagersp.macos}"
-case "$APP_NAME" in *" "*) echo "APP_NAME must not contain spaces (use DISPLAY_NAME)" >&2; exit 1 ;; esac
 BREW="${BREW:-$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENGINE_BUILD="$ROOT/build-macos"
 GAME_BUILD="$ROOT/efgame/buildmac"
 DIST="$ROOT/dist"
-APP="$DIST/$APP_NAME.app"
+# assembled under a name without spaces (the relink queue below splits on
+# them), then renamed to "$APP_NAME.app"
+FINAL="$DIST/$APP_NAME.app"
+APP="$DIST/.assembling-$$.app"
 # the macOS port's own version (not the Android app's versionName)
 VERSION="${VERSION:-1.1.0}"
 BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
@@ -39,7 +41,7 @@ if [ -z "${NO_BUILD:-}" ]; then
 fi
 
 # ---- 2. layout --------------------------------------------------------------
-echo "Assembling $APP"
+echo "Assembling $FINAL"
 rm -rf "$APP"
 MACOS="$APP/Contents/MacOS"
 FW="$APP/Contents/Frameworks"
@@ -155,4 +157,7 @@ codesign --force -s - "$FW"/*.dylib "$MACOS"/*.dylib 2>&1 | grep -v "replacing e
 codesign --force -s - --identifier "$BUNDLE_ID" "$APP" 2>&1 | grep -v "replacing existing signature" || true
 codesign --verify --strict --deep "$APP"
 
+rm -rf "$FINAL"
+mv "$APP" "$FINAL"
+APP="$FINAL"
 echo "Built $APP (version $VERSION ($BUILD), macOS >= $MIN_MACOS, $(du -sh "$APP" | cut -f1))"

@@ -1,4 +1,4 @@
-# Contributing to VoyagerSP-MacOS
+# Contributing to EliteForce-MacOS
 
 Thanks for helping. This is a small, non-commercial fan project. Bug reports from real
 playthroughs are the most useful contribution right now.

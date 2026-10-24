@@ -1,5 +1,5 @@
-# VoyagerSP-MacOS
-<img width="256" height="256" alt="VoyagerSP-MacOS Single Player Non-Starfleet App Icon" src="https://github.com/user-attachments/assets/28507cf3-8a2c-4235-b226-77997731af62" />
+# EliteForce-MacOS
+<img width="256" height="256" alt="EliteForce-MacOS Non-Starfleet App Icon" src="macos/icon/AppIcon-1024.png" />
 
 A native macOS (Apple Silicon) port of *Star Trek: Voyager — Elite Force* (Raven Software,
 2000): the **single-player campaign** and **Holomatch** multiplayer, in one app.
@@ -70,9 +70,9 @@ code from your `pak*.pk3` files, like lilium-voyager does.
 
 ## Install (players)
 
-1. Download `VoyagerSP-MacOS.zip` from the
-   [Releases page](https://github.com/marinohardin/VoyagerSP-MacOS/releases).
-2. Unzip it and move **EliteForce.app** to `/Applications` (or anywhere you like).
+1. Download `EliteForce-MacOS.zip` from the
+   [Releases page](https://github.com/marinohardin/EliteForce-MacOS/releases).
+2. Unzip it and move **Elite Force.app** to `/Applications` (or anywhere you like).
 3. Open the app. The launcher opens. It looks for your game data, and if it can't find it,
    click **Choose…** under **Game Files** and pick **the folder where Elite Force is
    installed** (the folder that contains `BaseEF`):
@@ -91,7 +91,7 @@ code from your `pak*.pk3` files, like lilium-voyager does.
    - right-click (Control-click) the app, choose **Open**, then **Open** again, or
    - on newer macOS, go to **System Settings → Privacy & Security** and click
      **Open Anyway**, or
-   - in Terminal: `xattr -dr com.apple.quarantine /Applications/EliteForce.app`
+   - in Terminal: `xattr -dr com.apple.quarantine "/Applications/Elite Force.app"`
 
 ### Saves and settings
 
@@ -191,7 +191,7 @@ EF_DIR=/path/to/EliteForce ./run-macos.sh +set r_fullscreen 1 +set r_highdpi 1
 ### Make the .app
 
 ```sh
-macos/make-app.sh             # builds both parts, then writes and ad-hoc signs dist/EliteForce.app
+macos/make-app.sh             # builds both parts, then writes and ad-hoc signs "dist/Elite Force.app"
 NO_BUILD=1 macos/make-app.sh  # re-bundle only
 ```
 
@@ -209,7 +209,7 @@ needed: the SP game runs natively, and the interpreter is fast enough for Holoma
 The engine runs single player by default; `+set com_holomatch 1` starts Holomatch (the
 launcher passes it; it is command-line only). From the `.app`, naming the mode on the
 command line also skips the launcher:
-`EliteForce.app/Contents/MacOS/efsp +set com_holomatch 1`.
+`"Elite Force.app/Contents/MacOS/efsp" +set com_holomatch 1`.
 
 Technical background on the port is in
 [docs/macos-port-notes.md](docs/macos-port-notes.md).
@@ -233,7 +233,7 @@ Please open an issue on GitHub with:
 - where your game data comes from (GOG, Steam, CD + patch) and which `pak*.pk3` files you have,
 - what happened and how to reproduce it (map name, save file if relevant),
 - the console log. Start from Terminal with
-  `/Applications/EliteForce.app/Contents/MacOS/efsp 2>&1 | tee ef.log`, or use
+  `"/Applications/Elite Force.app/Contents/MacOS/efsp" 2>&1 | tee ef.log`, or use
   `qconsole.log` (enable with `+set logfile 2`). Add `+set developer 1` for verbose logs.
 
 See also [CONTRIBUTING.md](CONTRIBUTING.md).

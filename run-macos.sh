@@ -4,7 +4,7 @@
 #   EF_DIR=/path/to/install ./run-macos.sh +map borg1
 # Extra arguments are passed to the engine (e.g. +set r_fullscreen 1).
 # This runs the dev build (Homebrew libs). For a self-contained, double-clickable
-# app use macos/make-app.sh, which writes dist/EliteForce.app.
+# app use macos/make-app.sh, which writes "dist/Elite Force.app".
 cd "$(dirname "$0")"
 EF_DIR="${EF_DIR:-$PWD/Star Trek Voyager Elite Force}"
 cp efgame/buildmac/libefgame.dylib efgame/buildmac/libefui.dylib build-macos/ || exit 1

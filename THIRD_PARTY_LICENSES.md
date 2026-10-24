@@ -8,7 +8,7 @@ of the [README](README.md).
 
 The versions below are the ones used for the first macOS builds (Homebrew, October 2026). Update them
 when the release toolchain changes.
-Checked against `dist/EliteForce.app/Contents/Frameworks` as produced by `macos/make-app.sh`
+Checked against `dist/Elite Force.app/Contents/Frameworks` as produced by `macos/make-app.sh`
 (8 dylibs: SDL3, sdl2-compat, Vulkan loader, MoltenVK and 4 FFmpeg libraries).
 Re-check with `ls` / `otool -L` whenever the toolchain changes.
 

@@ -3,32 +3,18 @@
 Internal notes for turning this fork into its own public repository and shipping the first
 `.app` release. Not user-facing.
 
-## 0. Pick the name, then replace the placeholder
+## 0. Name
 
-The docs use **`VoyagerSP-MacOS`** everywhere as a placeholder. Once the name is final:
-
-```sh
-git grep -l 'VoyagerSP-MacOS' | xargs sed -i '' 's/VoyagerSP-MacOS/NEWNAME/g'
-git grep -n 'OWNER/'          # release link placeholder in README.md
-git grep -n 'TODO('           # every open doc TODO (see the list at the end)
-```
-
-(`VoyagerSP-macos` in lowercase also shows up in historical paths in `docs/macos-port-notes.md`.
-Leave those alone.)
-
-Suggested names:
-
-1. **`VoyagerSP-MacOS`**: mirrors the upstream `VoyagerSP-Android` and makes the lineage obvious.
-   (Recommended.)
-2. **`EliteForceSP-macOS`**: easier to find by people searching for "Elite Force", and avoids
-   leaning on "Voyager". Still descriptive, not a logo or trademark.
-3. **`lilium-voyager-sp-mac`**: emphasizes the engine lineage. Less discoverable.
+The repository is **`EliteForce-MacOS`** (renamed from `VoyagerSP-MacOS` once Holomatch joined
+single player); the app is **Elite Force.app**. The old name still appears on purpose as the
+legacy data folder name (`MACOS_LEGACY_HOMEPATH_NAME`) and in historical paths in
+`docs/macos-port-notes.md`.
 
 Avoid "Star Trek" in the repo name, app name and icon (Paramount trademark). "Elite Force" and
 "Voyager" as descriptive references are the norm for fan ports (VoyagerNX, VoyagerSP-Android).
 
 **GitHub description:** "Native macOS (Apple Silicon) port of Star Trek: Voyager – Elite Force
-single-player. Vulkan via MoltenVK, Retina support. Requires the retail game data."
+single-player and Holomatch multiplayer. Vulkan via MoltenVK, Retina support. Requires the retail game data."
 
 **Topics:** `elite-force`, `star-trek-voyager`, `idtech3`, `ioquake3`, `quake3`, `macos`,
 `apple-silicon`, `arm64`, `vulkan`, `moltenvk`, `source-port`, `game-port`.
@@ -105,16 +91,16 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
    `otool -L` on every Mach-O in the bundle should show no `/opt/homebrew` paths. Test on a
    second Mac or user account without Homebrew if possible.
 4. Sign:
-   - **Ad-hoc** (free): `codesign --force --deep --sign - VoyagerSP-MacOS.app`. Users must
-     right-click → Open, or run `xattr -dr com.apple.quarantine VoyagerSP-MacOS.app`.
+   - **Ad-hoc** (free): `codesign --force --deep --sign - "Elite Force.app"`. Users must
+     right-click → Open, or run `xattr -dr com.apple.quarantine "Elite Force.app"`.
    - **Developer ID + notarization** (paid Apple Developer account): sign with hardened runtime,
      then `xcrun notarytool submit ... --wait` and `xcrun stapler staple`. Gatekeeper then opens
      it without warnings. Consider this before a wide announcement.
-5. Zip with `ditto -c -k --keepParent VoyagerSP-MacOS.app VoyagerSP-MacOS-vX.Y.Z-arm64.zip`
+5. Zip with `ditto -c -k --keepParent "Elite Force.app" EliteForce-MacOS-vX.Y.Z-arm64.zip`
    (`ditto` keeps symlinks and signatures; plain `zip` can break them). Add `LICENSE`,
    `THIRD_PARTY_LICENSES.md`, the Raven license document and a short `README.txt` (where to put
    `BaseEF`, Gatekeeper note, source link).
-6. Tag: `git tag -a vX.Y.Z -m "VoyagerSP-MacOS vX.Y.Z"` and `git push origin vX.Y.Z`.
+6. Tag: `git tag -a vX.Y.Z -m "EliteForce-MacOS vX.Y.Z"` and `git push origin vX.Y.Z`.
 7. Create the GitHub release from the tag. Attach the zip and its SHA-256
    (`shasum -a 256 *.zip`). In the notes include: requirements (Apple Silicon, retail data,
    `pak0.pk3` from the CD for minimum installs), the Gatekeeper workaround, known issues, a
