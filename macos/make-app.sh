@@ -1,6 +1,6 @@
 #!/bin/sh
-# Build the macOS engine + SP game modules and assemble a self-contained,
-# ad-hoc signed app bundle:  dist/EliteForceSP.app
+# Build the macOS engine (single player + Holomatch) + SP game modules and assemble a self-contained,
+# ad-hoc signed app bundle:  dist/EliteForce.app
 #
 #   macos/make-app.sh               build (incremental) + bundle
 #   NO_BUILD=1 macos/make-app.sh    bundle the existing build outputs only
@@ -13,8 +13,8 @@
 # The game data is NOT bundled (see Sys_MacCheckGameData in efcode/sys/sys_osx.m).
 set -eu
 
-APP_NAME="${APP_NAME:-EliteForceSP}"
-DISPLAY_NAME="${DISPLAY_NAME:-Elite Force SP}"
+APP_NAME="${APP_NAME:-EliteForce}"
+DISPLAY_NAME="${DISPLAY_NAME:-Elite Force}"
 BUNDLE_ID="${BUNDLE_ID:-org.voyagersp.macos}"
 case "$APP_NAME" in *" "*) echo "APP_NAME must not contain spaces (use DISPLAY_NAME)" >&2; exit 1 ;; esac
 BREW="${BREW:-$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
@@ -25,7 +25,7 @@ GAME_BUILD="$ROOT/efgame/buildmac"
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
 # the macOS port's own version (not the Android app's versionName)
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.1.0}"
 BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 # ---- 1. build ---------------------------------------------------------------

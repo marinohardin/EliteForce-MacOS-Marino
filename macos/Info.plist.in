@@ -32,6 +32,8 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Holomatch finds and joins multiplayer games on your local network.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Engine: GPLv2 (ioquake3 / lilium-voyager / Quake3e). Game code: Raven Software Limited Use Software License. Game data not included.</string>
 </dict>

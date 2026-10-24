@@ -123,3 +123,28 @@ SDL_VULKAN_LIBRARY=/opt/homebrew/lib/libvulkan.1.dylib build-macos/efsp +set fs_
 
 License note: `efgame/` is under Raven's STEF Game Source License (not GPL). It's fine for
 personal builds, but distributing a combined .app is a separate decision.
+
+## Later: Holomatch in the same app (2026-10-23)
+
+The SP engine never stopped being the Holomatch engine: VoyagerSP-Android grafted the SP game
+onto lilium-voyager and kept the Holomatch paths behind `sp_ui` / `sp_dropHM`, and the
+network code (`msg.c`, `net_chan.c`, `sv_client.c`, `sv_snapshot.c`, `cl_parse.c`) is
+byte-identical to lilium-voyager's. So multiplayer is a launch-time mode of the same binary,
+not a second engine:
+
+- `com_holomatch` (CVAR_INIT | CVAR_PROTECTED, command line only; `Com_Holomatch()`) selects
+  the mode for the whole run.
+- In Holomatch mode: the config is `hmconfig.cfg` (`Q3CONFIG_CFG`); the native SP UI is not
+  loaded (retail `vm/ui.qvm` instead); `SP_RegisterCommands` is skipped, so the stock
+  `map`/`save`/`load` commands stay; `sp_dropHM` is forced 0 (ROM); the SP player-model
+  userinfo cvars are not registered; the SP boot logo (`CINEMATICS_LOGO`) is not played;
+  networking is on (`net_enabled 3`, as lilium). Single player keeps the SP port's
+  `net_enabled 0` (ROM): no sockets at all.
+- The window title names the mode (`sdl_glimp.c`).
+- `sys_osx_launcher.m` (ARC) picks the mode, graphics, player name and game folder before
+  `Com_Init` and appends `+set` arguments; `sys_osx_data.m` provides the data lookup,
+  chooser and the File-menu relaunch (`open -n` from an `atexit` handler).
+- Holomatch's QVMs run interpreted (`NO_VM_COMPILED`): with four bots on `hm_voy1` the
+  server frame is ~0.6 ms and the whole frame ~2.6 ms on an M1 Pro, so the JIT isn't needed.
+- Tested: Mac-to-Mac on one machine over the LAN address (broadcast discovery via
+  `localservers`, connect, play). Not yet tested against PC Elite Force 1.2 or lilium-voyager.

@@ -1,13 +1,15 @@
 # VoyagerSP-MacOS
 <img width="256" height="256" alt="VoyagerSP-MacOS Single Player Non-Starfleet App Icon" src="https://github.com/user-attachments/assets/28507cf3-8a2c-4235-b226-77997731af62" />
 
-A native macOS (Apple Silicon) port of *Star Trek: Voyager — Elite Force*: the
-**single-player campaign** (Raven Software, 2000).
+A native macOS (Apple Silicon) port of *Star Trek: Voyager — Elite Force* (Raven Software,
+2000): the **single-player campaign** and **Holomatch** multiplayer, in one app.
 
-It runs the original game's single-player campaign natively on arm64 Macs. The engine is an
-idTech 3 derivative (lilium-voyager, an ioquake3 fork) with the Quake3e Vulkan renderer,
-which runs on Metal through MoltenVK. Game logic comes from Raven's officially released
-Elite Force SP source, built as native modules.
+A launcher lets you pick **Single Player** or **Holomatch**, set up the graphics and choose
+where your game files are, then starts the game. The engine is an idTech 3 derivative
+(lilium-voyager, an ioquake3 fork) with the Quake3e Vulkan renderer, which runs on Metal
+through MoltenVK. Single-player game logic comes from Raven's officially released Elite
+Force SP source, built as native modules; Holomatch runs the retail game's own multiplayer
+code from your `pak*.pk3` files, like lilium-voyager does.
 
 **No game data is included.** You need your own copy of the retail game. (Even the icon is intentionally not using copyrighted symbols.)
 
@@ -22,6 +24,16 @@ Elite Force SP source, built as native modules.
 
 ## Features
 
+- **Launcher.** Choose Single Player or Holomatch; a graphics **Quality** preset
+  (Performance, Balanced, Best) or the individual settings: window or full screen, window
+  size, full Retina resolution, anti-aliasing, texture detail and V-Sync; your Holomatch
+  player name; and where the game files are. The launcher shows what the game last used,
+  including changes made in the game's own Video menu.
+- **Holomatch (multiplayer).** Host or join games on your local network (LAN party, see
+  [Holomatch and LAN parties](#holomatch-and-lan-parties)) or by IP address, with bots.
+  It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
+  Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
+  single player never opens a network connection.
 - **Native arm64.** Built for Apple Silicon, with no Rosetta. The single-player game and UI
   modules are native `.dylib`s, not QVM bytecode.
 - **Vulkan via MoltenVK.** The Quake3e `renderervk` renderer, running on Metal.
@@ -60,10 +72,10 @@ Elite Force SP source, built as native modules.
 
 1. Download `VoyagerSP-MacOS.zip` from the
    [Releases page](https://github.com/marinohardin/VoyagerSP-MacOS/releases).
-2. Unzip it and move **EliteForceSP.app** to `/Applications` (or anywhere you like).
-3. Open the app. On first launch it looks for your game data, and if it can't find it, it
-   asks you to **choose the folder where Elite Force is installed** (the folder that
-   contains `BaseEF`):
+2. Unzip it and move **EliteForce.app** to `/Applications` (or anywhere you like).
+3. Open the app. The launcher opens. It looks for your game data, and if it can't find it,
+   click **Choose…** under **Game Files** and pick **the folder where Elite Force is
+   installed** (the folder that contains `BaseEF`):
    - By default the app **copies** the game files (`*.pk3`) and any saves from that
      `BaseEF` into its own data folder, so you can delete or move the original afterwards.
    - Tick **"Use BaseEF files in place rather than copy"** to read them from where they
@@ -72,12 +84,14 @@ Elite Force SP source, built as native modules.
      copy `pak0.pk3` from the CD and try again.
 
    It also quietly uses a `baseEF` folder placed next to the app, if there is one.
+   Then pick **Single Player** or **Holomatch**, adjust the graphics if you like, and
+   click **Play**.
 4. Release builds are not notarized, so the first time you open the app macOS may say it
    can't verify the developer. Either:
    - right-click (Control-click) the app, choose **Open**, then **Open** again, or
    - on newer macOS, go to **System Settings → Privacy & Security** and click
      **Open Anyway**, or
-   - in Terminal: `xattr -dr com.apple.quarantine /Applications/EliteForceSP.app`
+   - in Terminal: `xattr -dr com.apple.quarantine /Applications/EliteForce.app`
 
 ### Saves and settings
 
@@ -85,8 +99,10 @@ Config files, saves (and game files the app copied) live in
 `~/Library/Application Support/EliteForce-MacOS/baseEF/`. You don't need to find that
 folder yourself: the app's **File** menu has
 
+- **Return to Launcher…** and **Switch to Holomatch** / **Switch to Single Player**:
+  restart the app at the launcher, or straight in the other mode,
 - **Show Saves Folder** and **Show Game Folder**: open them in Finder,
-- **Change Game Folder…**: pick a different install (takes effect on the next launch),
+- **Change Game Folder…**: pick a different install (the app restarts to use it),
 - **Delete Saves & Settings…**: moves the app's data folder to the Trash (it lists what's
   in it first). A game folder you chose to use in place is never touched.
 
@@ -95,6 +111,31 @@ you can drop `.sav` files into the saves folder. If you played an earlier build 
 port, its saves (from `~/Library/Application Support/Lilium Voyager/` or
 `VoyagerSP-MacOS/`) are carried over
 automatically on first launch.
+
+## Holomatch and LAN parties
+
+Everyone needs their own copy of the game and the app (or Elite Force 1.2 on a PC; the
+protocol is the original one). Holomatch uses `pak0.pk3`–`pak2.pk3` from the retail game, so
+copy all of them; extra map paks (`*.pk3` in `BaseEF`) must match between host and players
+for the maps they use.
+
+1. Everyone opens the app, picks **Holomatch**, sets a **player name** and clicks **Play**.
+2. The host opens **Servers → Create Server**, picks a map and game type (and bots, if you
+   like) and starts it.
+3. The others open **Servers**, set the source to **Local**, pick the host's game and click
+   **Engage**, or connect by address from the console (`connect 192.168.1.20`, the
+   host's IP address).
+
+Notes:
+
+- The first time, macOS may ask whether Elite Force may **find devices on your local
+  network** (and, with the firewall on, **accept incoming connections** on the host): allow
+  it, or LAN games won't show up. Both can be changed later in **System Settings → Privacy
+  & Security → Local Network** and **Network → Firewall**.
+- The game uses **UDP port 27960** (the next players on the same Mac 27961, …). Internet
+  games through a router need that port forwarded to the host.
+- Holomatch's game logic runs as bytecode (QVM) in the engine's interpreter. It's fast
+  enough on Apple Silicon: a match with four bots costs well under a millisecond per frame.
 
 ### Uninstall
 
@@ -150,7 +191,7 @@ EF_DIR=/path/to/EliteForce ./run-macos.sh +set r_fullscreen 1 +set r_highdpi 1
 ### Make the .app
 
 ```sh
-macos/make-app.sh             # builds both parts, then writes and ad-hoc signs dist/EliteForceSP.app
+macos/make-app.sh             # builds both parts, then writes and ad-hoc signs dist/EliteForce.app
 NO_BUILD=1 macos/make-app.sh  # re-bundle only
 ```
 
@@ -163,7 +204,12 @@ can be overridden.
 Build options (engine CMake): `-DEF_BINK=OFF` builds without FFmpeg (no cinematics);
 `-DEF_FFMPEG_PREFIX=/path` uses another FFmpeg install (empty: pkg-config's default).
 `-DEF_VM_JIT=ON` enables the experimental aarch64 QVM JIT; it is off by default and not
-needed, because the SP game runs natively.
+needed: the SP game runs natively, and the interpreter is fast enough for Holomatch.
+
+The engine runs single player by default; `+set com_holomatch 1` starts Holomatch (the
+launcher passes it; it is command-line only). From the `.app`, naming the mode on the
+command line also skips the launcher:
+`EliteForce.app/Contents/MacOS/efsp +set com_holomatch 1`.
 
 Technical background on the port is in
 [docs/macos-port-notes.md](docs/macos-port-notes.md).
@@ -175,6 +221,9 @@ Technical background on the port is in
 - **Alpha quality.** Expect occasional rendering, audio or animation glitches inherited from
   the Android port. Back up your saves.
 - Apple Silicon only, and the app is not notarized (see Install step 4).
+- **Holomatch is new.** Mac-to-Mac LAN games are tested; games with PC players (Elite Force
+  1.2 or lilium-voyager) use the same protocol but haven't been tried yet. The internet
+  server browser depends on community master servers being online.
 
 ## Reporting issues
 
@@ -184,7 +233,7 @@ Please open an issue on GitHub with:
 - where your game data comes from (GOG, Steam, CD + patch) and which `pak*.pk3` files you have,
 - what happened and how to reproduce it (map name, save file if relevant),
 - the console log. Start from Terminal with
-  `/Applications/EliteForceSP.app/Contents/MacOS/efsp 2>&1 | tee ef.log`, or use
+  `/Applications/EliteForce.app/Contents/MacOS/efsp 2>&1 | tee ef.log`, or use
   `qconsole.log` (enable with `+set logfile 2`). Add `+set developer 1` for verbose logs.
 
 See also [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -39,7 +39,7 @@ thirdparty/
 /build-macos-*/
 /build-ffmpeg/
 efgame/buildmac/
-# Packaged app / release output (macos/make-app.sh writes dist/EliteForceSP.app)
+# Packaged app / release output (macos/make-app.sh writes dist/EliteForce.app)
 /dist/
 # macos/icon/make-icns.sh default output (make-app.sh builds the .icns itself)
 /macos/icon/AppIcon.icns
