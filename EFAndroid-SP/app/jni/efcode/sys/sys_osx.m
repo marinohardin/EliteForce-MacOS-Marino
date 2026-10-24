@@ -33,10 +33,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #import <Carbon/Carbon.h>
 #import <Cocoa/Cocoa.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #ifndef MACOS_HOMEPATH_NAME
 // ~/Library/Application Support/<this> holds macOS saves/config (see sys_osx.m)
-#define MACOS_HOMEPATH_NAME "VoyagerSP-macOS"
+#define MACOS_HOMEPATH_NAME "VoyagerSP-MacOS"
 #endif
 
 /*
@@ -257,8 +259,50 @@ qboolean Sys_MacPrepareHomepath( int argc, char **argv )
 		NSString *oldBase = [[support stringByAppendingPathComponent: @HOMEPATH_NAME] stringByAppendingPathComponent: @BASEGAME];
 		NSString *newRoot = [support stringByAppendingPathComponent: @MACOS_HOMEPATH_NAME];
 		NSString *newBase = [newRoot stringByAppendingPathComponent: @BASEGAME];
+		NSString *existing = nil;
 		NSError *err = nil;
 		BOOL isDir = NO;
+
+		// An existing folder whose name differs only in case (created as
+		// "VoyagerSP-macOS" by earlier builds) is this app's folder: give it
+		// the current spelling with a case-only rename via a temporary name,
+		// so Finder shows the new name. If that fails, keep using it as is.
+		for( NSString *e in [fm contentsOfDirectoryAtPath: support error: NULL] )
+		{
+			if( [e caseInsensitiveCompare: @MACOS_HOMEPATH_NAME] != NSOrderedSame )
+				continue;
+			existing = e;
+			if( [e isEqualToString: @MACOS_HOMEPATH_NAME] )
+				break;
+		}
+		if( existing && ![existing isEqualToString: @MACOS_HOMEPATH_NAME] )
+		{
+			NSString *oldRoot = [support stringByAppendingPathComponent: existing];
+			NSString *tmp = [support stringByAppendingPathComponent:
+				[NSString stringWithFormat: @"%s.rename-%d", MACOS_HOMEPATH_NAME, (int)getpid()]];
+			struct stat st;
+
+			if( !lstat( [oldRoot fileSystemRepresentation], &st ) && S_ISDIR( st.st_mode ) &&
+				!rename( [oldRoot fileSystemRepresentation], [tmp fileSystemRepresentation] ) )
+			{
+				if( !rename( [tmp fileSystemRepresentation], [newRoot fileSystemRepresentation] ) )
+				{
+					Com_sprintf( homepathMigrationMsg, sizeof( homepathMigrationMsg ),
+						"Renamed \"%s\" to \"%s\"", [oldRoot fileSystemRepresentation], [newRoot fileSystemRepresentation] );
+					oldRoot = newRoot;
+				}
+				else
+					rename( [tmp fileSystemRepresentation], [oldRoot fileSystemRepresentation] );	// put it back
+			}
+			if( oldRoot != newRoot )
+				Com_sprintf( homepathMigrationMsg, sizeof( homepathMigrationMsg ),
+					"Using \"%s\" (could not rename it to %s)", [oldRoot fileSystemRepresentation], MACOS_HOMEPATH_NAME );
+			fprintf( stderr, "%s\n", homepathMigrationMsg );
+			// same folder on a case-insensitive disk; on a case-sensitive one
+			// this keeps the migration below from copying over it
+			newRoot = oldRoot;
+			newBase = [newRoot stringByAppendingPathComponent: @BASEGAME];
+		}
 
 		if( [fm fileExistsAtPath: newBase] )
 			return qtrue;

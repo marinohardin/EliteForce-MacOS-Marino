@@ -58,7 +58,7 @@ Test hooks (environment variables, for automated tests without clicking):
 #endif
 
 #ifndef MACOS_HOMEPATH_NAME
-#define MACOS_HOMEPATH_NAME "VoyagerSP-macOS"
+#define MACOS_HOMEPATH_NAME "VoyagerSP-MacOS"
 #endif
 
 #define KEY_GAMEFOLDER	@"GameFolder"
@@ -658,7 +658,8 @@ static NSString *ExternalGameBase( void )
 {
 	NSString *base = CurrentGameBase();
 
-	if( base && ![[base stringByStandardizingPath] hasPrefix: [[HomeRoot() stringByStandardizingPath] stringByAppendingString: @"/"]] )
+	if( base && ![[[base stringByStandardizingPath] lowercaseString]
+			hasPrefix: [[[HomeRoot() stringByStandardizingPath] lowercaseString] stringByAppendingString: @"/"]] )
 		return base;
 	return nil;
 }
@@ -709,11 +710,16 @@ static unsigned long long FolderSize( NSString *dir, int *files )
 }
 
 // HomeRoot() if it is a real directory exactly where expected (no symlink
-// escapes), else nil.
+// escapes), else nil. realpath() reports the on-disk case, and the default
+// macOS filesystem is case-insensitive, so a folder created under an older
+// spelling ("VoyagerSP-macOS") is the same folder: only the last component
+// is compared case-insensitively; its parent must match exactly.
 static NSString *SafeHomeRoot( void )
 {
 	NSString *root = HomeRoot();
-	char parentReal[PATH_MAX], rootReal[PATH_MAX], expected[PATH_MAX];
+	char parentReal[PATH_MAX], rootReal[PATH_MAX];
+	const char *slash;
+	size_t plen;
 	struct stat st;
 
 	if( lstat( [root fileSystemRepresentation], &st ) || !S_ISDIR( st.st_mode ) )
@@ -721,8 +727,11 @@ static NSString *SafeHomeRoot( void )
 	if( !realpath( [[root stringByDeletingLastPathComponent] fileSystemRepresentation], parentReal ) ||
 		!realpath( [root fileSystemRepresentation], rootReal ) )
 		return nil;
-	Com_sprintf( expected, sizeof( expected ), "%s/%s", parentReal, MACOS_HOMEPATH_NAME );
-	if( strcmp( rootReal, expected ) )
+	plen = strlen( parentReal );
+	slash = strrchr( rootReal, '/' );
+	if( !slash || (size_t)( slash - rootReal ) != plen || strncmp( rootReal, parentReal, plen ) )
+		return nil;		// not directly inside Application Support
+	if( strcasecmp( slash + 1, MACOS_HOMEPATH_NAME ) )
 		return nil;
 	return [NSString stringWithUTF8String: rootReal];
 }

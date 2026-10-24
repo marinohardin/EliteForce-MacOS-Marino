@@ -731,7 +731,7 @@ char *Sys_ParseProtocolUri( const char *uri )
 #ifdef __APPLE__
 #ifndef MACOS_HOMEPATH_NAME
 // ~/Library/Application Support/<this> holds macOS saves/config (see sys_osx.m)
-#define MACOS_HOMEPATH_NAME "VoyagerSP-macOS"
+#define MACOS_HOMEPATH_NAME "VoyagerSP-MacOS"
 #endif
 #endif
 
@@ -928,7 +928,7 @@ int main( int argc, char **argv )
 #ifdef __APPLE__
 		{
 			extern void Sys_MacFrame( void );
-			Sys_MacFrame( );	// adds the app menu items once SDL made the menu bar
+			Sys_MacFrame( );	// adds the File menu once SDL made the menu bar
 		}
 #endif
 	}
