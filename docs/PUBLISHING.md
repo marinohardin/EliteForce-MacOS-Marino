@@ -83,41 +83,26 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
 
 ## 3. Release steps
 
-1. Merge the `app-bundle`, `video-settings`, `cleanup` and `repo-docs` branches. Resolve the
-   doc TODOs listed below.
-2. Clean build both CMake projects (Release). Smoke-test with retail data: new game, load a PC
-   save, a cinematic, windowed to fullscreen, Retina.
-3. Build the bundle (`macos/make-app.sh`, TODO verify) and check it is self-contained:
-   `otool -L` on every Mach-O in the bundle should show no `/opt/homebrew` paths. Test on a
-   second Mac or user account without Homebrew if possible.
-4. Sign:
-   - **Ad-hoc** (free): `codesign --force --deep --sign - "Elite Force.app"`. Users must
-     right-click → Open, or run `xattr -dr com.apple.quarantine "Elite Force.app"`.
-   - **Developer ID + notarization** (paid Apple Developer account): sign with hardened runtime,
-     then `xcrun notarytool submit ... --wait` and `xcrun stapler staple`. Gatekeeper then opens
-     it without warnings. Consider this before a wide announcement.
-5. Zip with `ditto -c -k --keepParent "Elite Force.app" EliteForce-MacOS-Marino-vX.Y.Z-arm64.zip`
-   (`ditto` keeps symlinks and signatures; plain `zip` can break them). Add `LICENSE`,
-   `THIRD_PARTY_LICENSES.md`, the Raven license document and a short `README.txt` (where to put
-   `BaseEF`, Gatekeeper note, source link).
-6. Tag: `git tag -a vX.Y.Z -m "EliteForce-MacOS-Marino vX.Y.Z"` and `git push origin vX.Y.Z`.
-7. Create the GitHub release from the tag. Attach the zip and its SHA-256
-   (`shasum -a 256 *.zip`). In the notes include: requirements (Apple Silicon, retail data,
-   `pak0.pk3` from the CD for minimum installs), the Gatekeeper workaround, known issues, a
-   source link (the tag), license summary and credits to upstream.
-8. Update the README release link (`TODO(release-link)`) and add screenshots.
+1. Everything merged into `main`; smoke-test with retail data: a new game, a PC save, a
+   cinematic, windowed / fullscreen / Retina, a Holomatch bot match, Host a Server.
+2. Bump `VERSION` in `macos/make-app.sh` (the app's version, e.g. 1.1.0).
+3. `macos/make-release.sh` builds the app (`macos/make-app.sh`: self-contained, ad-hoc signed,
+   it fails if anything still points outside the bundle) and packages it as
+   `dist/EliteForce-MacOS-Marino-<version>-arm64.dmg` (app, Applications shortcut, Read Me) and
+   `.zip` (app, Read Me), both made with `ditto` / `hdiutil` so signatures survive. The Read Me
+   template is `macos/release/ReadMe.txt`; the license texts ship inside the app.
+4. Signing: ad-hoc for now (users right-click → Open the first time). With a Developer ID:
+   sign with the hardened runtime, `xcrun notarytool submit … --wait`, `xcrun stapler staple`
+   (the app, then the DMG), and Gatekeeper opens it without warnings.
+5. Draft the release on the tag `macos-v<version>` (not `v<version>`: the Android project's
+   `v1.x` tags are in this repo's history) targeting `main`, as a pre-release while in beta:
+   `gh release create macos-v<version> dist/EliteForce-MacOS-Marino-<version>-arm64.{dmg,zip}
+   --draft --prerelease --target main --title "Elite Force for Mac <version>" --notes-file notes.md`.
+   Notes: what's new, install (DMG drag, Gatekeeper), requirements (Apple Silicon, macOS, retail
+   data), known issues, licenses and credits.
+6. Review the draft on GitHub and publish. Publishing creates the tag.
 
 ## 4. Open doc TODO markers
 
-Run `git grep -n 'TODO('` for the current list. At the time of writing:
-
-- `TODO(screenshots)`: README screenshots.
-- `TODO(video-menu)`: README features, the in-game Video menu (video-settings branch).
-- `TODO(min-macos)`: README requirements, the minimum macOS from `LSMinimumSystemVersion`.
-- `TODO(release-link)`: README install, the real Releases URL / owner.
-- `TODO(data-location)`: README install, where `BaseEF` goes for the .app (app-bundle branch).
-- `TODO(verify-homepath)`: README saves, the config/save path if `HOMEPATH_NAME` changes.
-- `TODO(verify-make-app)`: README build and reporting, `make-app.sh` usage and the bundle executable name.
-- `TODO(credits-merge)`: CREDITS macOS section, describe the .app, video-settings and cleanup work.
-- `TODO(verify-bundle)`: THIRD_PARTY_LICENSES, match the list to what the bundle actually contains.
-- `.gitignore`: "make-app.sh output dir: TODO verify".
+`git grep -n 'TODO('` lists any; there are none at the moment. Parked ideas live in
+`docs/TODO.md`.
