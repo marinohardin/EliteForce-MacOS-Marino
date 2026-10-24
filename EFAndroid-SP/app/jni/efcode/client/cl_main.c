@@ -2025,13 +2025,15 @@ void CL_Vid_Restart_f( void ) {
 	// the SP bridge. Refuse the restart while an SP game is live; the changed r_* cvars are archived and take
 	// effect on the next SP map load (Video Apply / Controls Reset-Defaults reach here in-game).
 	{ extern int SP_IsActive(void);
-	  if ( SP_IsActive() && Cvar_VariableIntegerValue("sp_dropHM") ) {
+	  // SP_IsActive() stays set after leaving a game (disconnect) until the next SP load, so
+	  // also require a connection: at the main menu the restart is safe and must go through.
+	  if ( SP_IsActive() && Cvar_VariableIntegerValue("sp_dropHM") && clc.state != CA_DISCONNECTED ) {
 		Com_Printf("vid_restart deferred: settings saved, applied on next map load (SP game active)\n");
 #if defined( USE_VULKAN ) && !defined( __ANDROID__ )
 		// the window can't be recreated under a running SP game (fullscreen and
 		// the windowed size were applied live above)
 		if ( refShutdownCode == 2 )
-			Com_Printf("r_highdpi applies after a vid_restart from the main menu or a relaunch\n");
+			Com_Printf("High-DPI can only be changed from the main menu (Video > Apply) or on the next launch\n");
 #endif
 		return;
 	  } }
