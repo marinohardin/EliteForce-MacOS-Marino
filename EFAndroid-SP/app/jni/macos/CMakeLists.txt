@@ -21,7 +21,22 @@ set(SP  ${JNI}/sp)
 set(EFG ${JNI}/../../../efgame)
 
 find_package(PkgConfig REQUIRED)
+# SDL2 (sdl2-compat on SDL3) from macos/build-deps.sh, built for the app's minimum
+# macOS, when present; else pkg-config's default (Homebrew, the build Mac's macOS)
+set(_ef_deps_default "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build-deps/install")
+if(NOT EXISTS "${_ef_deps_default}/lib/pkgconfig/sdl2.pc")
+  set(_ef_deps_default "")
+endif()
+set(EF_DEPS_PREFIX "${_ef_deps_default}" CACHE PATH "SDL2/SDL3/Vulkan loader prefix from macos/build-deps.sh (empty = pkg-config default)")
+if(EF_DEPS_PREFIX)
+  get_filename_component(EF_DEPS_PREFIX "${EF_DEPS_PREFIX}" ABSOLUTE)
+  set(ENV{PKG_CONFIG_PATH} "${EF_DEPS_PREFIX}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+endif()
+unset(__pkg_config_checked_SDL2 CACHE)
+unset(pkgcfg_lib_SDL2_SDL2 CACHE)
+unset(pkgcfg_lib_SDL2_SDL2main CACHE)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+message(STATUS "SDL2: ${SDL2_LINK_LIBRARIES}")
 if(EF_BINK)
   # Prefer the minimal LGPL FFmpeg from macos/build-ffmpeg.sh over Homebrew's
   # (GPL-3.0) one; make-app.sh bundles whichever was linked.

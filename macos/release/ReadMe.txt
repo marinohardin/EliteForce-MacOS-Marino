@@ -3,7 +3,7 @@ Star Trek: Voyager - Elite Force single player and Holomatch for Apple Silicon M
 https://github.com/marinohardin/EliteForce-MacOS-Marino
 
 You need:
-- A Mac with Apple Silicon (M1 or later) and macOS 27 or later.
+- A Mac with Apple Silicon (M1 or later) and macOS 12 Monterey or later.
 - Your own copy of the game (GOG, Steam or CD + patch). No game data is included.
 
 Install:

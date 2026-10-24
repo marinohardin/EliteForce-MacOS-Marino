@@ -66,8 +66,8 @@ It also supports running a **dedicated multiplayer server**, with NAT-PMP suppor
 ## Requirements
 
 - **An Apple Silicon Mac** (M1 or later). Intel Macs are not supported.
-- **macOS 27 or later** (tested on an M1 Pro). The current builds bundle libraries built for
-  macOS 27; support for older releases needs rebuilding those with an older deployment target.
+- **macOS 12 Monterey or later** (developed and tested on macOS 27 on an M1 Pro; older
+  releases are supported by the build but haven't been tried yet).
 - **The retail game.** Copy these files from the `BaseEF` folder of a PC installation:
   - `pak0.pk3` (about 541 MB, the main game data). This one is required.
   - The patch paks, such as `pak1.pk3` and `pak2.pk3` (and `pak3.pk3` if you have it).
@@ -196,12 +196,17 @@ Everything needed to build is in the repository. Game data is only needed to run
 - [Homebrew](https://brew.sh) packages:
 
   ```sh
-  brew install cmake pkg-config sdl2 molten-vk vulkan-loader
+  brew install cmake ninja pkg-config molten-vk vulkan-headers vulkan-loader
   ```
 
-  (`sdl2` is provided by `sdl2-compat` on top of SDL3 in current Homebrew. That's fine.)
+  (`vulkan-loader` is only used by `run-macos.sh`; the `.app` bundles its own.)
+- SDL and the Vulkan loader for the app: `macos/build-deps.sh` builds SDL3 3.4.18,
+  sdl2-compat 2.32.74 and the Vulkan loader 1.4.363 (the releases Homebrew ships, checksums
+  pinned) for the app's minimum macOS into `build-deps/install`. Homebrew's own builds target
+  the build Mac's macOS, so bundling them would raise the app's minimum. `make-app.sh` runs it
+  when needed; the engine CMake uses it automatically (else pkg-config's `sdl2`).
 - FFmpeg for the cinematics: `macos/build-ffmpeg.sh` downloads FFmpeg 9.0.2 and builds a
-  minimal LGPL version (Bink only) into `build-ffmpeg/install`. `make-app.sh` runs it when
+  minimal LGPL version (Bink only, for the app's minimum macOS) into `build-ffmpeg/install`. `make-app.sh` runs it when
   needed; the engine CMake uses it automatically, and falls back to a Homebrew `ffmpeg` if
   it hasn't been built.
 

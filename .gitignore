@@ -38,6 +38,7 @@ thirdparty/
 /build-macos/
 /build-macos-*/
 /build-ffmpeg/
+/build-deps/
 efgame/buildmac/
 # Packaged app / release output (macos/make-app.sh writes "dist/Elite Force.app")
 /dist/

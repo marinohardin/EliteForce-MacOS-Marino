@@ -5,8 +5,10 @@
 #   macos/make-app.sh               build (incremental) + bundle
 #   NO_BUILD=1 macos/make-app.sh    bundle the existing build outputs only
 #
-# Needs Xcode command line tools, cmake, pkg-config and the Homebrew packages
-# used by the dev build: sdl2-compat (+ sdl3), molten-vk, vulkan-loader.
+# Needs Xcode command line tools, cmake, ninja, pkg-config and the Homebrew
+# packages molten-vk and vulkan-headers. SDL3, sdl2-compat and the Vulkan loader
+# (macos/build-deps.sh) and FFmpeg (macos/build-ffmpeg.sh) are built from source
+# for the app's minimum macOS (MIN_MACOS_TARGET, default 12.0), on demand.
 # FFmpeg is the minimal LGPL build from macos/build-ffmpeg.sh (run on demand).
 # Every non-system dylib (and its transitive deps) is copied into
 # Contents/Frameworks and relinked to @rpath, so the .app runs without Homebrew.
@@ -35,11 +37,20 @@ BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 # ---- 1. build ---------------------------------------------------------------
 FFMPEG="$ROOT/build-ffmpeg/install"
+# the oldest macOS the app supports: the engine, the game modules and the libraries
+# from build-deps.sh / build-ffmpeg.sh are built for it (MoltenVK from Homebrew
+# already supports it)
+MIN_MACOS_TARGET="${MIN_MACOS_TARGET:-12.0}"
+DEPS="$ROOT/build-deps/install"
 if [ -z "${NO_BUILD:-}" ]; then
-	[ -f "$FFMPEG/lib/pkgconfig/libavcodec.pc" ] || "$ROOT/macos/build-ffmpeg.sh"
-	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64
+	[ -f "$FFMPEG/lib/pkgconfig/libavcodec.pc" ] && [ "$(otool -l "$FFMPEG/lib/libavutil.dylib" | awk '/minos/{print $2; exit}')" = "$MIN_MACOS_TARGET" ] ||
+		MIN_MACOS="$MIN_MACOS_TARGET" "$ROOT/macos/build-ffmpeg.sh"
+	[ -f "$DEPS/lib/pkgconfig/sdl2.pc" ] && [ "$(otool -l "$DEPS/lib/libSDL3.0.dylib" | awk '/minos/{print $2; exit}')" = "$MIN_MACOS_TARGET" ] ||
+		MIN_MACOS="$MIN_MACOS_TARGET" "$ROOT/macos/build-deps.sh"
+	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET"
 	cmake --build "$GAME_BUILD" -j"$(sysctl -n hw.ncpu)"
-	cmake -S "$ROOT/EFAndroid-SP/app/jni/macos" -B "$ENGINE_BUILD" -DEF_FFMPEG_PREFIX="$FFMPEG"
+	cmake -S "$ROOT/EFAndroid-SP/app/jni/macos" -B "$ENGINE_BUILD" -DEF_FFMPEG_PREFIX="$FFMPEG" \
+		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET"
 	cmake --build "$ENGINE_BUILD" -j"$(sysctl -n hw.ncpu)"
 fi
 
@@ -59,9 +70,12 @@ cp "$GAME_BUILD/libefgame.dylib" "$GAME_BUILD/libefui.dylib" "$MACOS/"
 #   libSDL3      - loaded by sdl2-compat from @loader_path/libSDL3.dylib
 #   libvulkan    - SDL_VULKAN_LIBRARY, set by Sys_MacSetupBundleEnv
 #   libMoltenVK  - the Vulkan ICD, found through Resources/vulkan/icd.d
-cp -L "$BREW/lib/libSDL3.0.dylib"      "$FW/libSDL3.dylib"
-cp -L "$BREW/lib/libvulkan.1.dylib"    "$FW/libvulkan.1.dylib"
-cp -L "$BREW/lib/libMoltenVK.dylib"    "$FW/libMoltenVK.dylib"
+#   libSDL2      - sdl2-compat, linked by efsp as @rpath/libSDL2-2.0.0.dylib
+# SDL and the Vulkan loader come from build-deps.sh (built for MIN_MACOS_TARGET)
+cp -L "$DEPS/lib/libSDL3.0.dylib"         "$FW/libSDL3.dylib"
+cp -L "$DEPS/lib/libSDL2-2.0.0.dylib"     "$FW/libSDL2-2.0.0.dylib"
+cp -L "$DEPS/lib/libvulkan.1.dylib"       "$FW/libvulkan.1.dylib"
+cp -L "$BREW/lib/libMoltenVK.dylib"       "$FW/libMoltenVK.dylib"
 # The LGPL FFmpeg's install names are already @rpath/..., so the relink pass
 # below skips them: copy them explicitly (whatever efsp links, nothing more).
 for dep in $(otool -L "$MACOS/efsp" | awk '/@rpath\/lib(av|sw)/{print $1}'); do
@@ -111,7 +125,7 @@ relink() {   # relink FILE: copy its deps into Frameworks and point it at @rpath
 	done
 }
 
-QUEUE="$MACOS/efsp $MACOS/libefgame.dylib $MACOS/libefui.dylib $FW/libSDL3.dylib $FW/libvulkan.1.dylib $FW/libMoltenVK.dylib"
+QUEUE="$MACOS/efsp $MACOS/libefgame.dylib $MACOS/libefui.dylib $FW/libSDL3.dylib $FW/libSDL2-2.0.0.dylib $FW/libvulkan.1.dylib $FW/libMoltenVK.dylib"
 DONE=""
 while [ -n "$(echo $QUEUE)" ]; do
 	set -- $QUEUE

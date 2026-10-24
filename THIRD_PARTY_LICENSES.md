@@ -6,8 +6,9 @@ Credits for the engine lineage (id Software, ioquake3, lilium-voyager, Quake3e) 
 game source are in [CREDITS.md](CREDITS.md). For the project's own licensing, see the License section
 of the [README](README.md).
 
-The versions below are the ones used for the first macOS builds (Homebrew, October 2026). Update them
-when the release toolchain changes.
+The versions below are the ones the release builds bundle. SDL3, sdl2-compat and the Vulkan loader
+are built from source by `macos/build-deps.sh`, FFmpeg by `macos/build-ffmpeg.sh` (both for the
+app's minimum macOS, macOS 12); MoltenVK is Homebrew's. Update them when the toolchain changes.
 Checked against `dist/Elite Force.app/Contents/Frameworks` as produced by `macos/make-app.sh`
 (8 dylibs: SDL3, sdl2-compat, Vulkan loader, MoltenVK and 4 FFmpeg libraries).
 Re-check with `ls` / `otool -L` whenever the toolchain changes.
