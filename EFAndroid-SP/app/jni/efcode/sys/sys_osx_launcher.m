@@ -35,6 +35,8 @@ Test hooks (environment variables):
   VOYAGERSP_TEST_LAUNCHER_PLAY=1              press Play without showing it
   VOYAGERSP_TEST_LAUNCHER_AUTOPLAY=<s>        show it, press Play after <s> s
   VOYAGERSP_TEST_ADD=<path>                   press Add Game Files… with <path>
+  VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>    show it, choose About from the app
+                                menu, render the panel, close it and quit
 ===========================================================================
 */
 
@@ -1036,6 +1038,145 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 @end
 
 /* ------------------------------------------------------------------------
+   The app menu during the launcher's modal sessions
+   ------------------------------------------------------------------------ */
+
+// SDL's app menu items (About, Hide, Quit…) target the responder chain,
+// which a modal session (runModalForWindow) doesn't let through: they did
+// nothing while the launcher or the server window was up. While one is,
+// they are retargeted to this object, which works when modal.
+@interface VSPModalMenu : NSObject
+@property (nonatomic, copy) void ( ^quit )( void );
+@end
+
+@implementation VSPModalMenu
+{
+	NSMutableArray *saved;		// @[ item, target or NSNull, action name ]
+}
+
+- (BOOL)worksWhenModal	{ return YES; }
+- (BOOL)validateMenuItem: (NSMenuItem *)item	{ return YES; }
+
+// The About panel, above the modal window and usable while it runs.
+- (void)about: (id)sender
+{
+	NSArray *before = [NSApp windows];
+
+	[NSApp orderFrontStandardAboutPanel: sender];
+	for( NSWindow *w in [NSApp windows] )
+		if( [NSStringFromClass( [w class] ) rangeOfString: @"About"].location != NSNotFound ||
+			( ![before containsObject: w] && [w isVisible] ) )
+		{
+			if( [w isKindOfClass: [NSPanel class]] )
+				[(NSPanel *)w setWorksWhenModal: YES];
+			[w setLevel: NSModalPanelWindowLevel];
+			[w makeKeyAndOrderFront: nil];
+			LLog( @"Launcher: About panel (%@)", NSStringFromClass( [w class] ) );
+		}
+}
+
+- (void)hide: (id)sender		{ [NSApp hide: sender]; }
+- (void)hideOthers: (id)sender	{ [NSApp hideOtherApplications: sender]; }
+- (void)showAll: (id)sender		{ [NSApp unhideAllApplications: sender]; }
+- (void)quit: (id)sender
+{
+	if( _quit )
+		_quit();
+}
+
+- (void)install
+{
+	NSMenu *appMenu = [[[NSApp mainMenu] itemArray] count] ? [[[NSApp mainMenu] itemAtIndex: 0] submenu] : nil;
+	NSDictionary *map = @{ @"orderFrontStandardAboutPanel:": @"about:", @"hide:": @"hide:",
+		@"hideOtherApplications:": @"hideOthers:", @"unhideAllApplications:": @"showAll:", @"terminate:": @"quit:" };
+
+	saved = [NSMutableArray array];
+	for( NSMenuItem *item in [appMenu itemArray] )
+	{
+		NSString *mine = [item action] ? map[NSStringFromSelector( [item action] )] : nil;
+		if( !mine )
+			continue;
+		[saved addObject: @[ item, [item target] ? [item target] : [NSNull null], NSStringFromSelector( [item action] ) ]];
+		[item setTarget: self];
+		[item setAction: NSSelectorFromString( mine )];
+	}
+}
+
+- (void)uninstall
+{
+	for( NSArray *s in saved )
+	{
+		NSMenuItem *item = s[0];
+		[item setTarget: s[1] == [NSNull null] ? nil : s[1]];
+		[item setAction: NSSelectorFromString( s[2] )];
+	}
+	saved = nil;
+}
+
+@end
+
+id VSP_BeginModalMenu( void ( ^quit )( void ) )
+{
+	VSPModalMenu *m = [[VSPModalMenu alloc] init];
+	m.quit = quit;
+	[m install];
+	return m;
+}
+
+void VSP_EndModalMenu( id token )
+{
+	[(VSPModalMenu *)token uninstall];
+}
+
+// VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>: while the launcher runs, check
+// that the app menu items are enabled, choose About, render the panel, close
+// it and quit.
+static void TestAboutPanel( const char *path )
+{
+	NSMenu *appMenu = [[[NSApp mainMenu] itemAtIndex: 0] submenu];
+	NSInteger about = -1;
+
+	[appMenu update];
+	for( NSMenuItem *item in [appMenu itemArray] )
+	{
+		if( [item action] == @selector(about:) )
+			about = [appMenu indexOfItem: item];
+		if( [item action] && ![item isSeparatorItem] )
+			LLog( @"[test] app menu \"%@\" -> %@ %@", [item title], NSStringFromSelector( [item action] ),
+				[item isEnabled] ? @"enabled" : @"DISABLED" );
+	}
+	if( about < 0 )
+	{
+		LLog( @"[test] no About item" );
+		[NSApp stopModalWithCode: NSModalResponseCancel];
+		return;
+	}
+	[appMenu performActionForItemAtIndex: about];
+	{
+		NSTimer *t = [NSTimer timerWithTimeInterval: 1.5 repeats: NO block: ^( NSTimer *timer ) {
+			NSWindow *panel = nil;
+			for( NSWindow *w in [NSApp windows] )
+				if( [w isVisible] && [w level] == NSModalPanelWindowLevel && [w isKindOfClass: [NSPanel class]] )
+					panel = w;
+			if( !panel )
+			{
+				LLog( @"[test] About panel not found" );
+				[NSApp stopModalWithCode: NSModalResponseCancel];
+				return;
+			}
+			LLog( @"[test] About panel %@ visible %d key %d level %ld worksWhenModal %d, above the launcher %d",
+				NSStringFromClass( [panel class] ), [panel isVisible], [panel isKeyWindow], (long)[panel level],
+				[(NSPanel *)panel worksWhenModal], [panel level] >= [[NSApp modalWindow] level] );
+			VSP_SnapshotWindow( panel, path );
+			[panel performClose: nil];
+			LLog( @"[test] About panel after close: visible %d", [panel isVisible] );
+			[NSApp stopModalWithCode: NSModalResponseCancel];
+		}];
+		[[NSRunLoop currentRunLoop] addTimer: t forMode: NSRunLoopCommonModes];
+	}
+}
+
+/* ------------------------------------------------------------------------
    Entry point
    ------------------------------------------------------------------------ */
 
@@ -1156,6 +1297,15 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 			}
 			else
 			{
+				id menu = VSP_BeginModalMenu( ^{ [NSApp stopModalWithCode: NSModalResponseCancel]; } );
+
+				if( getenv( "VOYAGERSP_TEST_LAUNCHER_ABOUT" ) )
+				{
+					NSTimer *t = [NSTimer timerWithTimeInterval: 1 repeats: NO block: ^( NSTimer *timer ) {
+						TestAboutPanel( getenv( "VOYAGERSP_TEST_LAUNCHER_ABOUT" ) );
+					}];
+					[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
+				}
 				if( getenv( "VOYAGERSP_TEST_LAUNCHER_AUTOPLAY" ) )
 				{
 					NSTimer *t = [NSTimer timerWithTimeInterval: atof( getenv( "VOYAGERSP_TEST_LAUNCHER_AUTOPLAY" ) ) repeats: NO block: ^( NSTimer *timer ) {
@@ -1168,6 +1318,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 				[NSApp activateIgnoringOtherApps: YES];
 				[[l window] makeKeyAndOrderFront: nil];
 				r = [NSApp runModalForWindow: [l window]];
+				VSP_EndModalMenu( menu );
 				[[l window] orderOut: nil];
 			}
 			if( r != RESPONSE_HOST )

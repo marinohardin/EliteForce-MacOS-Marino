@@ -2492,7 +2492,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 {
 	BOOL test = TestEnvSet( "VOYAGERSP_TEST_SERVER_START" );
 	NSModalResponse r;
-	id monitor;
+	id monitor, menu;
 	__weak VSPServerWindowController *weakSelf = self;
 
 	[_window center];
@@ -2528,8 +2528,10 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		[[NSRunLoop currentRunLoop] addTimer: t forMode: NSRunLoopCommonModes];
 	}
 
+	menu = VSP_BeginModalMenu( ^{ [weakSelf stopThen: NSModalResponseCancel]; } );
 	[self start];
 	r = [NSApp runModalForWindow: _window];
+	VSP_EndModalMenu( menu );
 	[NSEvent removeMonitor: monitor];
 	[_window orderOut: nil];
 	return r;

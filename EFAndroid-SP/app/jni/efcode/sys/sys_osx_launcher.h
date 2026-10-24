@@ -29,6 +29,10 @@ NSColor *VSP_GroupFill( void );
 NSView *VSP_Group( NSString *caption, NSView *content );
 BOOL VSP_SnapshotWindow( NSWindow *w, const char *path );
 void VSP_ApplyTestAppearance( NSWindow *w );
+// While a modal session runs: the app menu's About, Hide… and Quit work
+// (quit is called for Quit). Returns a token for VSP_EndModalMenu.
+id VSP_BeginModalMenu( void ( ^quit )( void ) );
+void VSP_EndModalMenu( id token );
 
 /* ------------------------------------------------------------------------
    sys_osx_server.m: Host a Server
