@@ -33,6 +33,7 @@ Test hooks (environment variables, for automated tests without clicking):
   VOYAGERSP_TEST_INPLACE=1     ...with the "in place" checkbox ticked
   VOYAGERSP_TEST_CONFIRM=1     answer confirmation alerts with the first button
   VOYAGERSP_TEST_NOTRASH=1     log instead of moving to the Trash
+  VOYAGERSP_TEST_PANEL_TIMEOUT=<s>  log the open panel's size and cancel it after <s> s
 ===========================================================================
 */
 
@@ -63,6 +64,7 @@ Test hooks (environment variables, for automated tests without clicking):
 #endif
 
 #define KEY_GAMEFOLDER	@"GameFolder"
+#define KEY_PANELSIZERESET	@"ChooserPanelSizeReset"
 #define MSG_PAK0_ON_CD	@"pak0.pk3 is missing — minimum CD installs leave it on the CD; copy it from BaseEF on the CD into this BaseEF folder, or choose a full installation."
 
 extern NSString *Sys_MacAppBundlePath( void );
@@ -448,6 +450,84 @@ static BOOL CopyGameFiles( NSString *srcBase )
    Chooser
    ------------------------------------------------------------------------ */
 
+#define CHOOSER_TEXT_WIDTH	480
+
+// Accessory view of the game folder open panel: an explanation, the
+// "in place" checkbox and a line saying what the current choice will do.
+@interface VSPChooserOptions : NSObject
+{
+	NSView *view;
+	NSButton *check;
+	NSTextField *status;
+}
+- (NSView *)view;
+- (BOOL)inPlace;
+- (void)toggled: (id)sender;
+@end
+
+@implementation VSPChooserOptions
+static NSTextField *WrappingLabel( NSString *text, NSFont *font )
+{
+	NSTextField *l = [NSTextField wrappingLabelWithString: text];
+
+	[l setFont: font];
+	[l setSelectable: NO];
+	[l setPreferredMaxLayoutWidth: CHOOSER_TEXT_WIDTH];
+	[l setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[[[l widthAnchor] constraintEqualToConstant: CHOOSER_TEXT_WIDTH] setActive: YES];
+	return l;
+}
+
+- (id)init
+{
+	NSStackView *stack;
+	NSTextField *info;	// all autoreleased; view retains them
+	NSSize size;
+
+	if( !( self = [super init] ) )
+		return nil;
+	info = WrappingLabel( @"Select the folder where Star Trek: Voyager – Elite Force is installed "
+		"(the one containing BaseEF with pak0.pk3), or the BaseEF folder itself. "
+		"By default the game files are copied into the app's own folder in Application Support, "
+		"so the original folder or CD is no longer needed.",
+		[NSFont systemFontOfSize: [NSFont smallSystemFontSize]] );
+	check = [NSButton checkboxWithTitle: @"Use BaseEF files in place rather than copy" target: self action: @selector(toggled:)];
+	[check setState: NSControlStateValueOff];
+	status = WrappingLabel( @"", [NSFont systemFontOfSize: [NSFont smallSystemFontSize]] );
+	[status setTextColor: [NSColor secondaryLabelColor]];
+	[self toggled: nil];
+
+	stack = [NSStackView stackViewWithViews: @[ info, check, status ]];
+	[stack setOrientation: NSUserInterfaceLayoutOrientationVertical];
+	[stack setAlignment: NSLayoutAttributeLeading];
+	[stack setSpacing: 8];
+	[stack setCustomSpacing: 4 afterView: check];
+	[stack setEdgeInsets: NSEdgeInsetsMake( 12, 20, 12, 20 )];
+	[stack setTranslatesAutoresizingMaskIntoConstraints: NO];
+	size = [stack fittingSize];
+
+	// The panel stretches its accessory view to its own width; keep the
+	// fixed-width block centred in it.
+	view = [[NSView alloc] initWithFrame: NSMakeRect( 0, 0, size.width, size.height )];
+	[view addSubview: stack];
+	[[[stack centerXAnchor] constraintEqualToAnchor: [view centerXAnchor]] setActive: YES];
+	[[[stack topAnchor] constraintEqualToAnchor: [view topAnchor]] setActive: YES];
+	[[[stack bottomAnchor] constraintEqualToAnchor: [view bottomAnchor]] setActive: YES];
+	return self;
+}
+
+- (void)dealloc { [view release]; [super dealloc]; }
+- (NSView *)view { return view; }
+- (BOOL)inPlace { return [check state] == NSControlStateValueOn; }
+
+- (void)toggled: (id)sender
+{
+	[status setStringValue: [self inPlace]
+		? @"Files will be read from this folder; nothing is copied."
+		: @"Files will be copied into the app's data folder (about 600 MB for a standard install)."];
+}
+@end
+
 // Ask for the install (or BaseEF) folder until a valid one is chosen.
 // Returns NO on cancel. On success either *outBasepath is set (in place) or
 // the files were copied into the homepath (*outBasepath = nil).
@@ -469,32 +549,50 @@ static BOOL RunChooser( NSString **outBasepath )
 		}
 		else
 		{
-			NSOpenPanel *op = [NSOpenPanel openPanel];
-			NSButton *check = [NSButton checkboxWithTitle: @"Use BaseEF files in place rather than copy" target: nil action: nil];
-			NSView *acc = [[[NSView alloc] initWithFrame: NSMakeRect( 0, 0, 420, 36 )] autorelease];
+			NSOpenPanel *op;
+			VSPChooserOptions *opts;
+			NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
 
-			[check setState: NSControlStateValueOff];
-			[check setFrame: NSMakeRect( 16, 8, 400, 20 )];
-			[acc addSubview: check];
+			// Older builds had a one-line message that stretched the panel, and
+			// AppKit remembers the panel size; forget it once so the panel
+			// opens at its normal size. Later resizes by the user are kept.
+			if( ![ud boolForKey: KEY_PANELSIZERESET] )
+			{
+				[ud removeObjectForKey: @"NSNavPanelExpandedSizeForOpenMode"];
+				[ud setBool: YES forKey: KEY_PANELSIZERESET];
+				[ud synchronize];
+			}
+			op = [NSOpenPanel openPanel];
+			opts = [[[VSPChooserOptions alloc] init] autorelease];
+
 			[op setCanChooseDirectories: YES];
 			[op setCanChooseFiles: NO];
 			[op setAllowsMultipleSelection: NO];
 			[op setPrompt: @"Choose"];
-			[op setMessage: @"Choose the folder where Star Trek: Voyager – Elite Force is installed "
-				"(it contains a BaseEF folder with pak0.pk3). By default the game files are copied "
-				"into the app's own folder in Application Support."];
-			[op setAccessoryView: acc];
+			[op setMessage: @"Choose your Elite Force folder"];
+			[op setAccessoryView: [opts view]];
 			if( [op respondsToSelector: @selector(setAccessoryViewDisclosed:)] )
 				[op setAccessoryViewDisclosed: YES];
-			MacLog( @"[dialog] Choose the Elite Force game folder (open panel)" );
+			MacLog( @"[dialog] Choose your Elite Force folder (open panel, options %.0fx%.0f pt)",
+				[[opts view] frame].size.width, [[opts view] frame].size.height );
 			[NSApp activateIgnoringOtherApps: YES];
+			if( getenv( "VOYAGERSP_TEST_PANEL_TIMEOUT" ) )
+			{
+				NSTimer *t = [NSTimer timerWithTimeInterval: atof( getenv( "VOYAGERSP_TEST_PANEL_TIMEOUT" ) ) repeats: NO block: ^( NSTimer *timer ) {
+					MacLog( @"[test] open panel %.0fx%.0f pt, options %.0fx%.0f pt, message \"%@\"; cancelling",
+						[op frame].size.width, [op frame].size.height,
+						[[opts view] frame].size.width, [[opts view] frame].size.height, [op message] );
+					[op cancel: nil];
+				}];
+				[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
+			}
 			if( [op runModal] != NSModalResponseOK || ![[op URLs] count] )
 			{
 				MacLog( @"Game folder selection cancelled" );
 				return NO;
 			}
 			chosen = [[[op URLs] objectAtIndex: 0] path];
-			inPlace = [check state] == NSControlStateValueOn;
+			inPlace = [opts inPlace];
 			MacLog( @"Chosen game folder \"%@\" (in place: %d)", chosen, inPlace );
 		}
 
