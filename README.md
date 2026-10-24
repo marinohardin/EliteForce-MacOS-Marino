@@ -196,9 +196,9 @@ by imjustadudegamer, the Android port of Elite Force single-player. That port wa
 [VoyagerNX](https://github.com/faithvoid/VoyagerNX), faithvoid's Nintendo Switch port. It is
 built on [lilium-voyager](https://github.com/clover-moe/lilium-voyager) (Zack Middleton),
 [ioquake3](https://github.com/ioquake/ioq3) and id Software's Quake III Arena, with the
-Vulkan renderer from [Quake3e](https://github.com/ec-/Quake3e) (Eugene C.). The Android
-sources (`EFAndroid-SP/app/src`, Gradle files) are still in the tree, untouched. The macOS
-build only uses the shared engine and game code. Full attribution:
+Vulkan renderer from [Quake3e](https://github.com/ec-/Quake3e) (Eugene C.). The Android-only
+parts (the Java/Gradle app, its SDL and FFmpeg copies) have been removed. The shared engine
+code still lives under `EFAndroid-SP/app/jni/` so upstream changes keep merging cleanly. Full attribution:
 [CREDITS.md](CREDITS.md).
 
 ## License

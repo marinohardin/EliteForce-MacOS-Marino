@@ -95,7 +95,8 @@ SDL_VULKAN_LIBRARY=/opt/homebrew/lib/libvulkan.1.dylib build-macos/efsp +set fs_
 - `qcommon/files.c`: in-app import of pk3s plus `efgamex86.dll` through the system file picker.
 - `sp/*.c|cpp`: the android/log.h include (shimmed) and the `.so` module names (mapped).
 - The Java/Gradle app (`EFAndroid-SP/app/src`): SDLActivity, the file-picker importer and the
-  manifest. None of it is needed on macOS.
+  manifest. None of it is needed on macOS (since removed from the tree, with the Android SDL and
+  FFmpeg copies).
 
 ## Remaining work for a playable macOS .app (estimate: about 4–8 focused days)
 1. **Real-data bring-up (1–3 days, the unknown).** Run the retail paks and play through the first

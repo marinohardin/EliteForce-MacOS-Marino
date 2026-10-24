@@ -1,20 +1,11 @@
 # Build outputs
 **/build/
-**/.cxx/
-**/.gradle/
-*.apk
 *.so
 *.o
 *.a
 build64/
-efsp_obb_backup/
 
-# Local config
-**/local.properties
-
-# Release signing key (NEVER commit — debug.keystore is intentionally tracked)
-*.jks
-voyagersp-release.keystore
+# Editor config
 .idea/
 *.iml
 
