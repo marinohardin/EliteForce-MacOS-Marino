@@ -165,3 +165,47 @@ not a second engine:
   configs that archived the old values. Downloads use UDP only (no cURL). On a LAN the
   server sends several rounds of blocks per pass and the client acknowledges every 10 ms.
   A 3.3 MB map takes about 2 s. Single player keeps `net_enabled 0`.
+
+### Host a Server (2026-10-24)
+
+The launcher's third card, **Host a Server**, runs a Holomatch dedicated server from the app
+(`sys_osx_server.m`, ARC; shared declarations in `sys_osx_launcher.h`).
+
+- **Main window.** With Host selected, a Server group summarizing the settings (name, game,
+  rotation, players and bots, network, the LAN address) replaces the Graphics group at the same
+  height, and Play becomes Start Server. Config… is in the card. The window is 784 pt tall.
+- **Config… sheet** (Maps, Game, Server). The map list comes from the pk3s in the game folder and
+  the homepath's baseEF, read without the engine: central directories, `maps/<name>.bsp`, arena
+  info (`scripts/arenas.txt`, `scripts/*.arena`: long name, `type`), levelshot thumbnails
+  inflated with the bundled zlib. Retail-pak maps without arena info are single-player maps and
+  are left out. Maps get marked as Expansion Pack (pak3.pk3: clients need the pack, servers never
+  send it), Add-on, "not made for <game type>", or missing (in the rotation, no longer in the
+  files: skipped).
+- **Retail rules**, from the Holomatch `ui.qvm` (`vm/ui.qvm` in pak2.pk3; its Create Server code
+  disassembled): `g_gametype` 0 FFA, 1 Tournament, 3 Team Holomatch, 4 CTF. Assimilation needs
+  Team Holomatch; Elimination isn't for CTF; Action Hero is only for FFA and Tournament.
+  Assimilation excludes Disintegration, Elimination and Action Hero; Specialties exclude
+  Disintegration and Action Hero; Disintegration excludes Specialties and Action Hero;
+  Elimination excludes Action Hero. qagame itself doesn't clear conflicting `g_pMod*` cvars.
+  Bots: `bot_minplayers` (per team in team games, checked with the retail qagame) and
+  `g_spSkill` 1–5 (Cadet … Captain).
+- **Settings** are kept in the app's defaults (`ServerSettings`) and written at each start to
+  `baseEF/vsp_server.cfg`, with `set` (not `seta`) and the rotation as
+  `set vsp_mapN "map X ; set nextmap vstr vsp_mapN+1"` followed by `vstr vsp_map1`.
+- **Server window.** The app's own executable runs as an `NSTask` child:
+  `+set com_holomatch 1 +set dedicated 1|2 +set net_port P [+set fs_basepath …] +exec vsp_server.cfg`,
+  with stdin/stdout piped and the `VOYAGERSP_TEST_*` variables removed from its environment. The
+  window shows the LAN address (getifaddrs, en0 first), map, game, players (a hidden `status`
+  every 2 s, parsed), the console and a command field. It also reads "Server ready: …" and
+  "Opening IP socket: …:port" (when the port was taken). Play on This Mac opens a second
+  instance (`NSWorkspace`, new instance, same environment) with the launcher's graphics, the
+  name, the password, and `+connect 127.0.0.1:P`. Stop sends `quit`, then SIGTERM after 5 s,
+  then SIGKILL after 3 more. Closing the window stops the server and returns to the launcher;
+  Quit stops it and quits. A server that exits on its own leaves the window open with its output.
+- **App menu during the launcher.** SDL's About/Hide/Quit items did nothing during the modal
+  sessions. They are now retargeted to an object that works when modal while the launcher or
+  the server window is up.
+- **Open points.** Until dedicated mode is headless, the child also opens a game window. A
+  non-DEDICATED build's dedicated server reads and writes `hmconfig.cfg` (`Q3CONFIG_CFG`), the
+  same file as the Holomatch client, and so can overwrite a running client's settings when it
+  quits.
