@@ -1063,6 +1063,22 @@ static void DeleteSettings_f( void )
 - (void)deleteSettings: (id)sender	{ @autoreleasepool { DeleteSettings_f(); } }
 @end
 
+// Diagnostics for the fullscreen menu bar: window levels, presentation
+// options, pointer and SDL mouse state.
+static void Cmd_WindowState( void )
+{
+	@autoreleasepool {
+		NSPoint p = [NSEvent mouseLocation];
+		Com_Printf( "macOS: presentationOptions 0x%lx, menuBarVisible %d, pointer %.0f,%.0f, relative %d, cursor shown %d\n",
+			(unsigned long)[NSApp presentationOptions], [NSMenu menuBarVisible], p.x, p.y,
+			(int)SDL_GetRelativeMouseMode(), SDL_ShowCursor( SDL_QUERY ) );
+		for( NSWindow *w in [NSApp windows] )
+			Com_Printf( "  window \"%s\" level %ld, fullscreen %d, key %d, frame %.0fx%.0f\n",
+				[[w title] UTF8String], (long)[w level], ( [w styleMask] & NSWindowStyleMaskFullScreen ) != 0,
+				[w isKeyWindow], [w frame].size.width, [w frame].size.height );
+	}
+}
+
 static void Cmd_ToLauncher( void )		{ @autoreleasepool { ReturnToLauncher_f(); } }
 static void Cmd_SwitchMode( void )		{ @autoreleasepool { SwitchMode_f(); } }
 static void Cmd_ShowSaves( void )		{ @autoreleasepool { ShowSaves_f(); } }
@@ -1101,6 +1117,7 @@ void Sys_MacDataPostInit( void )
 		}
 		if( !Sys_MacAppBundlePath() )
 			return;
+		Cmd_AddCommand( "macos_windowstate", Cmd_WindowState );
 		Cmd_AddCommand( "macos_launcher", Cmd_ToLauncher );
 		Cmd_AddCommand( "macos_switchmode", Cmd_SwitchMode );
 		Cmd_AddCommand( "macos_showsaves", Cmd_ShowSaves );
@@ -1160,6 +1177,19 @@ void Sys_MacFrame( void )
 	static NSMenuItem *fileItem;
 	static qboolean notBundle, logged;
 	static int checks;
+	static cvar_t *debugPointer;
+	static int frames;
+
+	// macos_debugpointer 1: log the pointer / menu bar state about twice a
+	// second (for the fullscreen menu bar)
+	if( !debugPointer )
+		debugPointer = Cvar_Get( "macos_debugpointer", "0", CVAR_TEMP );
+	if( debugPointer->integer && !( ++frames % 30 ) )
+	{
+		extern int Key_GetCatcher( void );
+		Com_Printf( "[pointer] catcher 0x%x r_fullscreen %d ", Key_GetCatcher(), Cvar_VariableIntegerValue( "r_fullscreen" ) );
+		Cmd_WindowState();
+	}
 
 	if( notBundle || ( ++checks & 15 ) )
 		return;

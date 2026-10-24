@@ -15,6 +15,9 @@ set -eu
 
 APP_NAME="${APP_NAME:-Elite Force}"
 DISPLAY_NAME="${DISPLAY_NAME:-Elite Force}"
+# the executable's name is what macOS shows in some prompts (Local Network)
+# and in Activity Monitor; the build calls it efsp
+EXE_NAME="${EXE_NAME:-$DISPLAY_NAME}"
 BUNDLE_ID="${BUNDLE_ID:-org.voyagersp.macos}"
 BREW="${BREW:-$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
 
@@ -129,11 +132,14 @@ for lib in "$FW"/*.dylib; do
 	otool -l "$lib" | grep -q "path @loader_path " || install_name_tool -add_rpath "@loader_path" "$lib" 2>/dev/null
 done
 
+# the bundle's executable; renamed only now, the steps above split paths on spaces
+mv "$MACOS/efsp" "$MACOS/$EXE_NAME"
+
 # ---- 4. Info.plist ------------------------------------------------------------
 # LSMinimumSystemVersion = the newest minos of anything in the bundle
 # (Homebrew bottles are built for the host macOS).
 MIN_MACOS="$(for f in "$MACOS"/* "$FW"/*; do otool -l "$f" | awk '/minos/{print $2}'; done | sort -t. -k1,1n -k2,2n | tail -1)"
-sed -e "s|@APP_NAME@|$DISPLAY_NAME|g" -e "s|@BUNDLE_ID@|$BUNDLE_ID|g" \
+sed -e "s|@APP_NAME@|$DISPLAY_NAME|g" -e "s|@EXECUTABLE@|$EXE_NAME|g" -e "s|@BUNDLE_ID@|$BUNDLE_ID|g" \
 	-e "s|@VERSION@|$VERSION|g" -e "s|@BUILD@|$BUILD|g" -e "s|@MIN_MACOS@|$MIN_MACOS|g" \
 	"$ROOT/macos/Info.plist.in" > "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null

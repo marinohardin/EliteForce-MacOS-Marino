@@ -209,7 +209,7 @@ needed: the SP game runs natively, and the interpreter is fast enough for Holoma
 The engine runs single player by default; `+set com_holomatch 1` starts Holomatch (the
 launcher passes it; it is command-line only). From the `.app`, naming the mode on the
 command line also skips the launcher:
-`"Elite Force.app/Contents/MacOS/efsp" +set com_holomatch 1`.
+`"Elite Force.app/Contents/MacOS/Elite Force" +set com_holomatch 1`.
 
 Technical background on the port is in
 [docs/macos-port-notes.md](docs/macos-port-notes.md).
@@ -233,7 +233,7 @@ Please open an issue on GitHub with:
 - where your game data comes from (GOG, Steam, CD + patch) and which `pak*.pk3` files you have,
 - what happened and how to reproduce it (map name, save file if relevant),
 - the console log. Start from Terminal with
-  `"/Applications/Elite Force.app/Contents/MacOS/efsp" 2>&1 | tee ef.log`, or use
+  `"/Applications/Elite Force.app/Contents/MacOS/Elite Force" 2>&1 | tee ef.log`, or use
   `qconsole.log` (enable with `+set logfile 2`). Add `+set developer 1` for verbose logs.
 
 See also [CONTRIBUTING.md](CONTRIBUTING.md).
