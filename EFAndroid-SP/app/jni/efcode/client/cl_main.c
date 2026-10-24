@@ -3561,7 +3561,7 @@ void CL_InitRenderer( void ) {
 	   CVAR_LATCH so it applies immediately (no vid_restart / stale-config race). */
 	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "4", CVAR_ARCHIVE);
 #else
-	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "1", CVAR_ARCHIVE | CVAR_LATCH);
+	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", Com_Holomatch() ? "2" : "1", CVAR_ARCHIVE | CVAR_LATCH);
 #endif
 #endif
 
@@ -4311,6 +4311,21 @@ void CL_Init( void ) {
 	   CVAR_LATCH so it applies immediately (no vid_restart / stale-config race). */
 	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "4", CVAR_ARCHIVE);
 #else
+	if ( Com_Holomatch() ) {
+		/* Holomatch: widescreen by default. Mode 2 widens the 3D view (Hor+ fov,
+		   from the retail cgame's cg_fov for 4:3) and keeps the HUD and menus 4:3
+		   centered and unstretched. Mode 1 (lilium-voyager's default) pillarboxes
+		   the whole game. hmconfig.cfg files from before this saved the old default
+		   "1": switch those to 2 once (cl_flexibleDisplayHM marks it done), so an
+		   explicit choice made after that is kept. */
+		cvar_t *migrated = Cvar_Get( "cl_flexibleDisplayHM", "0", CVAR_ARCHIVE );
+		if ( !migrated->integer ) {
+			if ( Cvar_VariableIntegerValue( "cl_flexibleDisplay" ) == 1 )
+				Cvar_Set( "cl_flexibleDisplay", "2" );	// not latched yet: applies now
+			Cvar_Set( "cl_flexibleDisplayHM", "1" );
+		}
+		cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "2", CVAR_ARCHIVE | CVAR_LATCH);
+	} else
 	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "1", CVAR_ARCHIVE | CVAR_LATCH);
 #endif
 	cl_viewmode = cl_flexibleDisplay;
