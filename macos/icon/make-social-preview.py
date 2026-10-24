@@ -83,8 +83,11 @@ def main():
         px = x + 4
         for t in tags:
             px = pill(d, px, row, t, font(MEDIUM, 24))
-    d.text((x + 4, 552), "Marino's Build  ·  unofficial fan port",
-        font=font(REGULAR, 22), fill=DIM)
+    # the credit: brighter and heavier than the note after it
+    f_credit, f_note = font(DEMI, 28), font(REGULAR, 24)
+    d.text((x + 4, 580), "Marino's Build", font=f_credit, fill=WHITE, anchor="ls")
+    cw = d.textlength("Marino's Build", font=f_credit)
+    d.text((x + 4 + cw + 12, 580), "·  unofficial fan port", font=f_note, fill=SOFT, anchor="ls")
     img.alpha_composite(over)
     img.convert("RGB").save(OUT, optimize=True)
     print("wrote", OUT)
