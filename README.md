@@ -9,7 +9,7 @@ idTech 3 derivative (lilium-voyager, an ioquake3 fork) with the Quake3e Vulkan r
 which runs on Metal through MoltenVK. Game logic comes from Raven's officially released
 Elite Force SP source, built as native modules.
 
-**No game data is included.** You need your own copy of the retail game.
+**No game data is included.** You need your own copy of the retail game. (Even the icon is intentionally not using copyrighted symbols.)
 
 > Status: **beta.** The campaign is playable, my old PC savegames load, but it has not been played 
 > through end to end on macOS yet. Please [report issues](#reporting-issues).
