@@ -1,3 +1,4 @@
+
 # EliteForce-MacOS (Marino's Build)
 <img width="256" height="256" alt="EliteForce-MacOS Non-Starfleet App Icon" src="macos/icon/AppIcon-1024.png" />
 
@@ -35,6 +36,7 @@ code from your `pak*.pk3` files, like lilium-voyager does.
   player name; and where the game files are, whether the Expansion Pack was found, and
   **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last
   used, including changes made in the game's own Video menu.
+  <img width="630" height="790" alt="Launcher" src="https://github.com/user-attachments/assets/81962865-d259-4357-b6d5-1318ec26118e" />
 - **Holomatch (multiplayer).** Host or join games on your local network (LAN party, see
   [Holomatch and LAN parties](#holomatch-and-lan-parties)) or by IP address, with bots.
   It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
