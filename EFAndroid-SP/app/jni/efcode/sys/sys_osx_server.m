@@ -2262,13 +2262,15 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	NSString *line = StripColors( raw );
 	BOOL show = YES;
 	NSTextCheckingResult *m;
-	static NSRegularExpression *rowRE, *readyRE, *portRE;
+	static NSRegularExpression *rowRE, *readyRE, *portRE, *tailRE;
 
 	if( !rowRE )
 	{
 		rowRE = [NSRegularExpression regularExpressionWithPattern: @"^\\s*(\\d+)\\s+(-?\\d+)\\s+(\\d+|CON|ZMB)\\s(.*)$" options: 0 error: NULL];
 		readyRE = [NSRegularExpression regularExpressionWithPattern: @"^Server ready: map (\\S+) port (\\d+)" options: 0 error: NULL];
 		portRE = [NSRegularExpression regularExpressionWithPattern: @"^Opening IP socket: [^ ]*:(\\d+)" options: 0 error: NULL];
+		// what follows the cl/score/ping columns: name (may contain spaces), address ("bot"), rate
+		tailRE = [NSRegularExpression regularExpressionWithPattern: @"^(.*?)\\s+(\\S+)\\s+(-?\\d+)\\s*$" options: 0 error: NULL];
 	}
 	if( echo )
 	{
@@ -2283,11 +2285,11 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 			[self endStatus];
 		else if( ( m = [rowRE firstMatchInString: raw options: 0 range: NSMakeRange( 0, [raw length] )] ) )
 		{
-			NSString *rest = [raw substringWithRange: [m rangeAtIndex: 4]];
-			NSRange sep = [rest rangeOfString: @"^7" options: NSBackwardsSearch];
-			NSString *name = sep.location != NSNotFound ? [rest substringToIndex: sep.location] : rest;
-			NSString *addr = sep.location != NSNotFound ? [[[rest substringFromIndex: NSMaxRange( sep )]
-				componentsSeparatedByCharactersInSet: [NSCharacterSet whitespaceCharacterSet]] firstObject] : @"";
+			// the headless server strips colour codes, so the "^7" ending the name may be gone
+			NSString *rest = [[raw substringWithRange: [m rangeAtIndex: 4]] stringByReplacingOccurrencesOfString: @"^7" withString: @" "];
+			NSTextCheckingResult *t = [tailRE firstMatchInString: rest options: 0 range: NSMakeRange( 0, [rest length] )];
+			NSString *name = t ? [rest substringWithRange: [t rangeAtIndex: 1]] : rest;
+			NSString *addr = t ? [rest substringWithRange: [t rangeAtIndex: 2]] : @"";
 			BOOL bot = [addr isEqualToString: @"bot"];
 			NSString *ping = [raw substringWithRange: [m rangeAtIndex: 3]];
 
