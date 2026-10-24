@@ -21,6 +21,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include <signal.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <sys/types.h>
@@ -753,9 +754,25 @@ char *Sys_ParseProtocolUri( const char *uri )
 Sys_SigHandler
 =================
 */
+// SIGTERM/SIGINT: quit from the main loop, not from the handler
+volatile sig_atomic_t sys_quitSignal = 0;
+
 void Sys_SigHandler( int signal )
 {
 	static qboolean signalcaught = qfalse;
+
+	// A quit request (kill, Activity Monitor > Quit, Ctrl-C) can arrive in the
+	// middle of a frame, e.g. inside vkQueueSubmit with MoltenVK's locks held:
+	// shutting the renderer down from here then deadlocks in vkDeviceWaitIdle.
+	// Let the main loop run the normal quit after the frame; a second request
+	// exits at once.
+	if( signal == SIGTERM || signal == SIGINT )
+	{
+		if( sys_quitSignal )
+			_exit( 1 );
+		sys_quitSignal = signal;
+		return;
+	}
 
 	{ extern void SP_LogBacktrace(int); SP_LogBacktrace(signal); }   // EF1 SP: symbolized native backtrace
 
@@ -918,6 +935,12 @@ int main( int argc, char **argv )
 	signal( SIGSEGV, Sys_SigHandler );
 	signal( SIGTERM, Sys_SigHandler );
 	signal( SIGINT, Sys_SigHandler );
+#ifdef __APPLE__
+	{
+		extern void Sys_MacQuitSignals( void );
+		Sys_MacQuitSignals( );	// SIGTERM/SIGINT through dispatch sources instead
+	}
+#endif
 
 #ifdef __EMSCRIPTEN__
 	emscripten_set_main_loop( Com_Frame, 0, 1 );
@@ -925,6 +948,11 @@ int main( int argc, char **argv )
 	while( 1 )
 	{
 		Com_Frame( );
+		if( sys_quitSignal )
+		{
+			Com_Printf( "Received signal %d, quitting\n", (int)sys_quitSignal );
+			Com_Quit_f( );
+		}
 #ifdef __APPLE__
 		{
 			extern void Sys_MacFrame( void );

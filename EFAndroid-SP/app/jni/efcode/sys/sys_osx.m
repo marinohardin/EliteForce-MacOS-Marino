@@ -35,6 +35,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #import <Cocoa/Cocoa.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <signal.h>
+#include <dispatch/dispatch.h>
 
 #ifndef MACOS_HOMEPATH_NAME
 // ~/Library/Application Support/<this> holds macOS saves/config (see sys_osx.m)
@@ -42,6 +44,42 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #endif
 // homepath folder name of earlier builds, renamed on first start
 #define MACOS_LEGACY_HOMEPATH_NAME "VoyagerSP-MacOS"
+
+/*
+==============
+Sys_MacQuitSignals
+
+Catch SIGTERM/SIGINT (kill, Activity Monitor > Quit, Ctrl-C) with dispatch
+sources, so nothing runs inside the signal itself: an async handler can land
+in the middle of vkQueueSubmit, and returning from it there trapped (SIGTRAP)
+or a shutdown from it deadlocked in MoltenVK. The source only sets
+sys_quitSignal, and the main loop quits normally after the frame; a second
+request exits at once.
+==============
+*/
+extern volatile sig_atomic_t sys_quitSignal;	// sys_main.c
+
+void Sys_MacQuitSignals( void )
+{
+	static dispatch_source_t sources[2];
+	static const int sigs[2] = { SIGTERM, SIGINT };
+	int i;
+
+	for( i = 0; i < 2; i++ )
+	{
+		const int sig = sigs[i];
+
+		signal( sig, SIG_IGN );		// the dispatch source still sees it
+		sources[i] = dispatch_source_create( DISPATCH_SOURCE_TYPE_SIGNAL, sig, 0,
+			dispatch_get_global_queue( QOS_CLASS_DEFAULT, 0 ) );
+		dispatch_source_set_event_handler( sources[i], ^{
+			if( sys_quitSignal )
+				_exit( 1 );
+			sys_quitSignal = sig;
+		} );
+		dispatch_resume( sources[i] );
+	}
+}
 
 /*
 ==============
