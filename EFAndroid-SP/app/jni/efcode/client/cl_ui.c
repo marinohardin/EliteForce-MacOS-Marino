@@ -814,6 +814,284 @@ static int FloatAsInt( float f ) {
 	return fi.i;
 }
 
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+/*
+===========================================================================
+Holomatch Video menu: window sizes instead of the retail 4:3 mode list
+
+The retail ui.qvm (closed source) only knows Quake 3's fixed r_mode list
+(320x240 ... 2048x1536, 856x480): it shows r_mode -1 (the launcher's window
+size, r_customwidth/height in points) as its fallback entry 640x480 and writes
+r_mode 3 on every Apply Changes, which threw the chosen size away.
+
+So, for the Holomatch UI only:
+- the twelve mode names it reads from ext_data/mp_normaltext*.dat are replaced
+  with twelve window sizes (points) that fit the screen, always including the
+  current one (CL_HMVideo_PatchText);
+- it reads r_mode as the index of the current window size;
+- it writes r_mode N as "a window of size N" (r_customwidth/height, r_mode
+  stays -1); writing back the index it was shown keeps the current size, even
+  if the window was drag-resized to a size that isn't listed.
+If the text file doesn't look as expected nothing is patched or translated.
+===========================================================================
+*/
+#define HMV_MODES	12		// r_mode 0..11 in the retail ui.qvm
+
+static int		hmv_w[HMV_MODES], hmv_h[HMV_MODES];
+static qboolean	hmv_active;			// the qvm shows our sizes
+static int		hmv_shown = -1;		// r_mode index last reported to the qvm
+
+static fileHandle_t	hmv_file;		// the mp_normaltext file the qvm is reading
+static char		*hmv_text;
+static int		hmv_textLen, hmv_textPos;
+
+static void CL_HMVideo_CurrentSize( int *w, int *h ) {
+	*w = Cvar_VariableIntegerValue( "r_customwidth" );
+	*h = Cvar_VariableIntegerValue( "r_customheight" );
+	if ( Cvar_VariableIntegerValue( "r_mode" ) != -1 || *w <= 0 || *h <= 0 ) {
+		*w = 1920;	// VKimp_DesiredWindow's default
+		*h = 1080;
+	}
+}
+
+// twelve window sizes, ascending: the current one and the ones that fit the screen
+// (the largest, if more fit), then larger ones if fewer than twelve fit
+static void CL_HMVideo_BuildModes( void ) {
+	static const int sizes[][2] = {
+		{ 800, 600 }, { 960, 540 }, { 1024, 576 }, { 1024, 768 }, { 1152, 648 },
+		{ 1280, 720 }, { 1280, 800 }, { 1280, 960 }, { 1366, 768 }, { 1440, 900 },
+		{ 1600, 900 }, { 1680, 1050 }, { 1920, 1080 }, { 1920, 1200 }, { 2048, 1152 },
+		{ 2560, 1440 }, { 2560, 1600 }, { 2880, 1620 }, { 3200, 1800 }, { 3840, 2160 },
+	};
+	int list[ARRAY_LEN( sizes ) + 1][2];
+	int maxW = Cvar_VariableIntegerValue( "r_windowMaxWidth" );
+	int maxH = Cvar_VariableIntegerValue( "r_windowMaxHeight" );
+	int curW, curH, n = 0, i, j;
+	qboolean haveCurrent = qfalse;
+
+	CL_HMVideo_CurrentSize( &curW, &curH );
+	if ( maxW <= 0 || maxH <= 0 )
+		maxW = maxH = 1 << 14;
+
+	// the fitting sizes and the current one, ascending
+	for ( i = 0; i <= ARRAY_LEN( sizes ); i++ ) {
+		int w = i < ARRAY_LEN( sizes ) ? sizes[i][0] : 1 << 15;
+		int h = i < ARRAY_LEN( sizes ) ? sizes[i][1] : 1 << 15;
+		if ( !haveCurrent && ( curW < w || ( curW == w && curH <= h ) ) ) {
+			list[n][0] = curW;
+			list[n][1] = curH;
+			n++;
+			haveCurrent = qtrue;
+			if ( curW == w && curH == h )
+				continue;
+		}
+		if ( i < ARRAY_LEN( sizes ) && w <= maxW && h <= maxH ) {
+			list[n][0] = w;
+			list[n][1] = h;
+			n++;
+		}
+	}
+
+	// too many: drop the smallest ones, but not the current size
+	while ( n > HMV_MODES ) {
+		i = ( list[0][0] == curW && list[0][1] == curH ) ? 1 : 0;
+		memmove( list[i], list[i + 1], ( n - i - 1 ) * sizeof( list[0] ) );
+		n--;
+	}
+
+	// too few: add larger ones (VKimp shrinks a window that doesn't fit, keeping its aspect)
+	for ( j = 0; n < HMV_MODES && j < ARRAY_LEN( sizes ); j++ ) {
+		int w = sizes[j][0], h = sizes[j][1];
+		if ( w > list[n - 1][0] || ( w == list[n - 1][0] && h > list[n - 1][1] ) ) {
+			list[n][0] = w;
+			list[n][1] = h;
+			n++;
+		}
+	}
+	for ( i = 0; i < HMV_MODES; i++ ) {
+		j = i < n ? i : n - 1;	// (only a huge current size leaves slots: repeat it)
+		hmv_w[i] = list[j][0];
+		hmv_h[i] = list[j][1];
+	}
+}
+
+// the r_mode index the qvm sees: the current window size, or the nearest listed one
+static int CL_HMVideo_ModeIndex( void ) {
+	int curW, curH, i, best = 0, bestDist = 0x7fffffff;
+
+	CL_HMVideo_CurrentSize( &curW, &curH );
+	for ( i = 0; i < HMV_MODES; i++ ) {
+		int d = abs( hmv_w[i] - curW ) + abs( hmv_h[i] - curH );
+		if ( d < bestDist ) {
+			bestDist = d;
+			best = i;
+		}
+	}
+	hmv_shown = best;
+	return best;
+}
+
+// returns the length of the next quoted string at *p (advancing past it), -1 if none
+static int CL_HMVideo_NextQuoted( const char *text, int len, int *pos, int *start ) {
+	int i = *pos, end;
+
+	while ( i < len && text[i] != '"' ) {
+		if ( text[i] != ' ' && text[i] != '\t' && text[i] != '\r' && text[i] != '\n' )
+			return -1;	// something other than whitespace between the entries
+		i++;
+	}
+	if ( i >= len )
+		return -1;
+	*start = i;
+	for ( end = i + 1; end < len && text[end] != '"' && text[end] != '\n'; end++ )
+		;
+	if ( end >= len || text[end] != '"' )
+		return -1;
+	*pos = end + 1;
+	return end + 1 - i;
+}
+
+/*
+Replace the twelve r_mode names ("320X240" ... "856x480 Wide Screen") in an
+mp_normaltext file with the window sizes. Returns a new Z_Malloc'd text or NULL.
+*/
+static char *CL_HMVideo_PatchText( const char *text, int len, int *newLen ) {
+	static const char *expect[HMV_MODES] = {
+		"\"320X240\"", "\"400X300\"", "\"512X384\"", "\"640X480\"", "\"800X600\"", "\"960X720\"",
+		"\"1024x768\"", "\"1152x864\"", "\"1280x1024\"", "\"1600x1200\"", "\"2048x1536\"", "\"856x480"
+	};
+	char repl[HMV_MODES * 24];
+	const char *sep = "\r\n";
+	char *out;
+	int pos, start, first = -1, l, i, replLen = 0;
+
+	// find "320X240" as a whole entry
+	for ( pos = 0; pos + 9 <= len; pos++ ) {
+		if ( !Q_stricmpn( text + pos, expect[0], 9 ) ) {
+			first = pos;
+			break;
+		}
+	}
+	if ( first < 0 )
+		return NULL;
+
+	pos = first;
+	for ( i = 0; i < HMV_MODES; i++ ) {
+		l = CL_HMVideo_NextQuoted( text, len, &pos, &start );
+		if ( l < (int)strlen( expect[i] ) || Q_stricmpn( text + start, expect[i], strlen( expect[i] ) ) )
+			return NULL;
+		if ( i == 0 && pos + 1 < len && text[pos] != '\r' )
+			sep = "\n";
+	}
+
+	CL_HMVideo_BuildModes();
+	for ( i = 0; i < HMV_MODES; i++ ) {
+		replLen += Com_sprintf( repl + replLen, sizeof( repl ) - replLen, "%s\"%dx%d\"",
+			i ? sep : "", hmv_w[i], hmv_h[i] );
+	}
+
+	*newLen = first + replLen + ( len - pos );
+	out = Z_Malloc( *newLen + 1 );
+	Com_Memcpy( out, text, first );
+	Com_Memcpy( out + first, repl, replLen );
+	Com_Memcpy( out + first + replLen, text + pos, len - pos );
+	out[*newLen] = '\0';
+	return out;
+}
+
+static void CL_HMVideo_CloseText( void ) {
+	if ( hmv_text )
+		Z_Free( hmv_text );
+	hmv_text = NULL;
+	hmv_file = 0;
+}
+
+// UI_FS_FOPENFILE: serve a patched copy of ext_data/mp_normaltext*.dat
+static int CL_HMVideo_FOpenFile( const char *qpath, fileHandle_t *f, fsMode_t mode ) {
+	int len = FS_FOpenFileByMode( qpath, f, mode );
+	char *text, *patched;
+	int newLen;
+
+	if ( !Com_Holomatch() || mode != FS_READ || !f || !*f || len <= 0 || len > 0x100000
+		|| Q_stricmpn( qpath, "ext_data/mp_normaltext", 22 ) )
+		return len;
+
+	text = Z_Malloc( len + 1 );
+	if ( FS_Read( text, len, *f ) != len ) {
+		Z_Free( text );
+		return len;	// leave the handle at the end: the qvm reads nothing (it didn't before either)
+	}
+	patched = CL_HMVideo_PatchText( text, len, &newLen );
+	if ( !patched ) {
+		Com_DPrintf( "Holomatch Video menu: %s has no r_mode list, sizes not shown\n", qpath );
+		hmv_active = qfalse;
+		patched = text;	// serve it unchanged
+		newLen = len;
+	} else {
+		Z_Free( text );
+		hmv_active = qtrue;
+		Com_DPrintf( "Holomatch Video menu: r_mode 0..11 = %dx%d ... %dx%d (window sizes)\n",
+			hmv_w[0], hmv_h[0], hmv_w[HMV_MODES - 1], hmv_h[HMV_MODES - 1] );
+	}
+	CL_HMVideo_CloseText();
+	hmv_file = *f;
+	hmv_text = patched;
+	hmv_textLen = newLen;
+	hmv_textPos = 0;
+	return newLen;
+}
+
+static qboolean CL_HMVideo_Read( void *buffer, int len, fileHandle_t f ) {
+	if ( !hmv_text || f != hmv_file )
+		return qfalse;
+	if ( len > hmv_textLen - hmv_textPos )
+		len = hmv_textLen - hmv_textPos;
+	if ( len > 0 ) {
+		Com_Memcpy( buffer, hmv_text + hmv_textPos, len );
+		hmv_textPos += len;
+	}
+	return qtrue;
+}
+
+static void CL_HMVideo_FCloseFile( fileHandle_t f ) {
+	if ( hmv_text && f == hmv_file )
+		CL_HMVideo_CloseText();
+}
+
+// UI_CVAR_VARIABLEVALUE / VARIABLESTRINGBUFFER "r_mode"
+static qboolean CL_HMVideo_IsMode( const char *name ) {
+	return hmv_active && name && !Q_stricmp( name, "r_mode" );
+}
+
+// UI_CVAR_SET / SETVALUE "r_mode": an index into the window sizes
+static qboolean CL_HMVideo_SetMode( const char *name, const char *value ) {
+	int curW, curH, mode;
+
+	if ( !CL_HMVideo_IsMode( name ) )
+		return qfalse;
+	mode = atoi( value );
+	if ( mode < 0 || mode >= HMV_MODES || ( strchr( value, '.' ) && atof( value ) != mode ) )
+		return qfalse;	// e.g. -1: as is
+
+	CL_HMVideo_CurrentSize( &curW, &curH );
+	if ( mode == hmv_shown || ( hmv_w[mode] == curW && hmv_h[mode] == curH ) ) {
+		// unchanged in the menu: keep the window as it is (it may be a drag-resized size)
+		if ( Cvar_VariableIntegerValue( "r_mode" ) != -1 ) {
+			Cvar_Set( "r_mode", "-1" );
+			Cvar_SetValue( "r_customwidth", curW );
+			Cvar_SetValue( "r_customheight", curH );
+		}
+		return qtrue;
+	}
+	Com_DPrintf( "Holomatch Video menu: r_mode %d -> window %dx%d\n", mode, hmv_w[mode], hmv_h[mode] );
+	Cvar_Set( "r_mode", "-1" );
+	Cvar_SetValue( "r_customwidth", hmv_w[mode] );
+	Cvar_SetValue( "r_customheight", hmv_h[mode] );
+	hmv_shown = mode;
+	return qtrue;
+}
+#endif
+
 /*
 ====================
 CL_UISystemCalls
@@ -843,17 +1121,35 @@ intptr_t CL_UISystemCalls( intptr_t *args ) {
 		return 0;
 
 	case UI_CVAR_SET:
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+		if ( CL_HMVideo_SetMode( VMA(1), VMA(2) ) )
+			return 0;
+#endif
 		Cvar_SetSafe( VMA(1), VMA(2) );
 		return 0;
 
 	case UI_CVAR_VARIABLEVALUE:
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+		if ( CL_HMVideo_IsMode( VMA(1) ) )
+			return FloatAsInt( CL_HMVideo_ModeIndex() );
+#endif
 		return FloatAsInt( Cvar_VariableValue( VMA(1) ) );
 
 	case UI_CVAR_VARIABLESTRINGBUFFER:
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+		if ( CL_HMVideo_IsMode( VMA(1) ) ) {
+			Q_strncpyz( VMA(2), va( "%d", CL_HMVideo_ModeIndex() ), args[3] );
+			return 0;
+		}
+#endif
 		Cvar_VariableStringBuffer( VMA(1), VMA(2), args[3] );
 		return 0;
 
 	case UI_CVAR_SETVALUE:
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+		if ( CL_HMVideo_SetMode( VMA(1), va( "%g", VMF(2) ) ) )
+			return 0;
+#endif
 		Cvar_SetValueSafe( VMA(1), VMF(2) );
 		return 0;
 
@@ -889,9 +1185,17 @@ intptr_t CL_UISystemCalls( intptr_t *args ) {
 		return 0;
 
 	case UI_FS_FOPENFILE:
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+		return CL_HMVideo_FOpenFile( VMA(1), VMA(2), args[3] );
+#else
 		return FS_FOpenFileByMode( VMA(1), VMA(2), args[3] );
+#endif
 
 	case UI_FS_READ:
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+		if ( CL_HMVideo_Read( VMA(1), args[2], args[3] ) )
+			return 0;
+#endif
 		FS_Read( VMA(1), args[2], args[3] );
 		return 0;
 
@@ -900,6 +1204,9 @@ intptr_t CL_UISystemCalls( intptr_t *args ) {
 		return 0;
 
 	case UI_FS_FCLOSEFILE:
+#if defined( USE_VULKAN ) && !defined( __ANDROID__ )
+		CL_HMVideo_FCloseFile( args[1] );
+#endif
 		FS_FCloseFile( args[1] );
 		return 0;
 
