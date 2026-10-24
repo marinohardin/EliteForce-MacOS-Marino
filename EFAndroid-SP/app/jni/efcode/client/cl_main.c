@@ -4236,6 +4236,17 @@ void CL_Init( void ) {
 	Cvar_Get ("team_headmodel", "*james", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("g_redTeam", "Stroggs", CVAR_SERVERINFO | CVAR_ARCHIVE);
 	Cvar_Get ("g_blueTeam", "Pagans", CVAR_SERVERINFO | CVAR_ARCHIVE);
+	#else
+	// EF SP player model (the UI sets these on character select; sp_bridge.cpp builds
+	// the game's userinfo from them). Userinfo, like retail, so saves carry them, and
+	// archived, so they survive a restart; until then default to the selected sex's
+	// hazard-suit Munro (the config, with "sex", is already loaded here).
+	{
+		qboolean female = !Q_stricmp( Cvar_VariableString( "sex" ), "female" );
+		Cvar_Get ("headModel", female ? "alexandria/default" : "munro/default", CVAR_USERINFO | CVAR_ARCHIVE );
+		Cvar_Get ("torsoModel", female ? "hazardfemale/default" : "hazard/default", CVAR_USERINFO | CVAR_ARCHIVE );
+		Cvar_Get ("legsModel", female ? "hazardfemale/default" : "hazard/default", CVAR_USERINFO | CVAR_ARCHIVE );
+	}
 	#endif
 	Cvar_Get ("color1",  "4", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("color2", "5", CVAR_USERINFO | CVAR_ARCHIVE );
