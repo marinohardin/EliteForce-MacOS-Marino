@@ -327,6 +327,83 @@ static void CopyWorker( VSPCopyJob *job )
 	}
 }
 
+// Copy src[i] to dst[i] on a worker thread behind a progress panel. On
+// failure or cancel the files it created are removed again and (unless
+// cancelled) an alert says why.
+static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NSString *dstBase, unsigned long long *copied )
+{
+	VSPCopyJob *job;
+	NSPanel *panel;
+	NSProgressIndicator *bar;
+	NSTextField *label;
+	NSButton *cancel;
+	NSModalSession session;
+	BOOL ok;
+
+	job = [[[VSPCopyJob alloc] init] autorelease];
+	job->src = [src copy];
+	job->dst = [dst copy];
+	job->total = total ? total : 1;
+	job->created = [[NSMutableArray alloc] init];
+
+	panel = [[[NSPanel alloc] initWithContentRect: NSMakeRect( 0, 0, 440, 120 )
+		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO] autorelease];
+	[panel setTitle: @"Copying game files"];
+	label = [NSTextField labelWithString: [NSString stringWithFormat: @"Copying game files to %@ …", dstBase]];
+	[label setFrame: NSMakeRect( 20, 80, 400, 20 )];
+	[label setLineBreakMode: NSLineBreakByTruncatingMiddle];
+	bar = [[[NSProgressIndicator alloc] initWithFrame: NSMakeRect( 20, 52, 400, 20 )] autorelease];
+	[bar setIndeterminate: NO];
+	[bar setMinValue: 0];
+	[bar setMaxValue: (double)job->total];
+	cancel = [NSButton buttonWithTitle: @"Cancel" target: job action: @selector(cancelPressed:)];
+	[cancel setFrame: NSMakeRect( 330, 12, 90, 30 )];
+	[[panel contentView] addSubview: label];
+	[[panel contentView] addSubview: bar];
+	[[panel contentView] addSubview: cancel];
+	[panel center];
+
+	[job retain];
+	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
+		CopyWorker( job );
+	} );
+	[NSApp activateIgnoringOtherApps: YES];
+	session = [NSApp beginModalSessionForWindow: panel];
+	while( !job->done )
+	{
+		[NSApp runModalSession: session];
+		[bar setDoubleValue: (double)job->copied];
+		usleep( 20000 );
+	}
+	[NSApp endModalSession: session];
+	[panel orderOut: nil];
+
+	ok = !job->failed;
+	*copied = job->copied;
+	if( !ok )
+	{
+		MacLog( @"Copy failed: %@", job->error );
+		if( !job->cancel )
+			ErrorAlert( @"Copying the game files failed",
+				[NSString stringWithFormat: @"%@\n\nThe partial copy was removed.", job->error] );
+	}
+	[job release];
+	return ok;
+}
+
+// Free space on the disk holding dir, or 0 if unknown.
+static unsigned long long FreeSpace( NSString *dir )
+{
+	NSNumber *avail = nil;
+
+	if( [[NSURL fileURLWithPath: dir] getResourceValue: &avail
+			forKey: NSURLVolumeAvailableCapacityForImportantUsageKey error: NULL] && avail )
+		return [avail unsignedLongLongValue];
+	if( ( avail = [[[NSFileManager defaultManager] attributesOfFileSystemForPath: dir error: NULL] objectForKey: NSFileSystemFreeSize] ) )
+		return [avail unsignedLongLongValue];
+	return 0;
+}
+
 // Copy *.pk3 and saves/ from srcBase into HomeBase(), with a progress panel.
 static BOOL CopyGameFiles( NSString *srcBase )
 {
@@ -335,15 +412,7 @@ static BOOL CopyGameFiles( NSString *srcBase )
 	NSMutableArray *src = [NSMutableArray array], *dst = [NSMutableArray array];
 	unsigned long long total = 0, freeBytes = 0;
 	NSString *saves;
-	NSNumber *avail = nil;
-	NSError *err = nil;
-	VSPCopyJob *job;
-	NSPanel *panel;
-	NSProgressIndicator *bar;
-	NSTextField *label;
-	NSButton *cancel;
-	NSModalSession session;
-	BOOL ok;
+	unsigned long long copied = 0;
 	int pk3s = 0, savesCopied = 0, savesSkipped = 0;
 
 	// top-level *.pk3 only (no .tmp/.bsp/.map/.cfg/.log)
@@ -391,11 +460,7 @@ static BOOL CopyGameFiles( NSString *srcBase )
 
 	// free space
 	[fm createDirectoryAtPath: dstBase withIntermediateDirectories: YES attributes: nil error: NULL];
-	if( [[NSURL fileURLWithPath: dstBase] getResourceValue: &avail
-			forKey: NSURLVolumeAvailableCapacityForImportantUsageKey error: &err] && avail )
-		freeBytes = [avail unsignedLongLongValue];
-	else if( ( avail = [[fm attributesOfFileSystemForPath: dstBase error: NULL] objectForKey: NSFileSystemFreeSize] ) )
-		freeBytes = [avail unsignedLongLongValue];
+	freeBytes = FreeSpace( dstBase );
 	if( freeBytes && freeBytes < total + 64ull * 1024 * 1024 )
 	{
 		ErrorAlert( @"Not enough disk space",
@@ -405,63 +470,16 @@ static BOOL CopyGameFiles( NSString *srcBase )
 		return NO;
 	}
 
-	job = [[[VSPCopyJob alloc] init] autorelease];
-	job->src = [src copy];
-	job->dst = [dst copy];
-	job->total = total ? total : 1;
-	job->created = [[NSMutableArray alloc] init];
-
-	panel = [[[NSPanel alloc] initWithContentRect: NSMakeRect( 0, 0, 440, 120 )
-		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO] autorelease];
-	[panel setTitle: @"Copying game files"];
-	label = [NSTextField labelWithString: [NSString stringWithFormat: @"Copying game files to %@ …", dstBase]];
-	[label setFrame: NSMakeRect( 20, 80, 400, 20 )];
-	[label setLineBreakMode: NSLineBreakByTruncatingMiddle];
-	bar = [[[NSProgressIndicator alloc] initWithFrame: NSMakeRect( 20, 52, 400, 20 )] autorelease];
-	[bar setIndeterminate: NO];
-	[bar setMinValue: 0];
-	[bar setMaxValue: (double)job->total];
-	cancel = [NSButton buttonWithTitle: @"Cancel" target: job action: @selector(cancelPressed:)];
-	[cancel setFrame: NSMakeRect( 330, 12, 90, 30 )];
-	[[panel contentView] addSubview: label];
-	[[panel contentView] addSubview: bar];
-	[[panel contentView] addSubview: cancel];
-	[panel center];
-
-	[job retain];
-	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
-		CopyWorker( job );
-	} );
-	[NSApp activateIgnoringOtherApps: YES];
-	session = [NSApp beginModalSessionForWindow: panel];
-	while( !job->done )
+	if( !RunCopyJob( src, dst, total, dstBase, &copied ) )
+		return NO;
+	if( !Pak0In( dstBase ) )
 	{
-		[NSApp runModalSession: session];
-		[bar setDoubleValue: (double)job->copied];
-		usleep( 20000 );
-	}
-	[NSApp endModalSession: session];
-	[panel orderOut: nil];
-
-	ok = !job->failed;
-	if( ok && !Pak0In( dstBase ) )
-	{
-		ok = NO;
 		ErrorAlert( @"Copying the game files failed", @"pak0.pk3 did not end up in the destination folder." );
+		return NO;
 	}
-	else if( ok )
-		MacLog( @"Copied %@ of game files to \"%@\"", FormatBytes( job->copied ), dstBase );
-	else
-	{
-		MacLog( @"Copy failed: %@", job->error );
-		if( !job->cancel )
-			ErrorAlert( @"Copying the game files failed",
-				[NSString stringWithFormat: @"%@\n\nThe partial copy was removed.", job->error] );
-	}
-	[job release];
-	return ok;
+	MacLog( @"Copied %@ of game files to \"%@\"", FormatBytes( copied ), dstBase );
+	return YES;
 }
-
 /* ------------------------------------------------------------------------
    Chooser
    ------------------------------------------------------------------------ */
@@ -763,6 +781,187 @@ void VSP_RevealFolder( NSString *path )
 {
 	MacLog( @"Showing \"%@\" in Finder", path );
 	[[NSWorkspace sharedWorkspace] openURL: [NSURL fileURLWithPath: path isDirectory: YES]];
+}
+
+/*
+=================
+VSP_AddGameFiles
+
+Asks for .pk3 files or folders holding them (a BaseEF, an installation
+containing one, the Expansion Pack's folder or CD) and copies the .pk3 files
+the game doesn't have yet into the homepath's baseEF, which the engine always
+searches, also when the game files are used in place. A file of the same
+name and size already present is skipped; a different one is replaced.
+Returns the number of files added.
+=================
+*/
+int VSP_AddGameFiles( void )
+{
+	NSFileManager *fm = [NSFileManager defaultManager];
+	NSString *dstBase = HomeBase(), *remembered, *external = nil;
+	NSMutableArray *picked = [NSMutableArray array], *src = [NSMutableArray array], *dst = [NSMutableArray array];
+	NSMutableArray *names = [NSMutableArray array];
+	unsigned long long total = 0, copied = 0, freeBytes;
+	int present = 0;
+
+	if( getenv( "VOYAGERSP_TEST_ADD" ) )
+	{
+		[picked addObject: [NSString stringWithUTF8String: getenv( "VOYAGERSP_TEST_ADD" )]];
+		MacLog( @"[test] add game files from \"%@\"", picked[0] );
+	}
+	else
+	{
+		NSOpenPanel *op = [NSOpenPanel openPanel];
+
+		[op setCanChooseDirectories: YES];
+		[op setCanChooseFiles: YES];
+		[op setAllowsMultipleSelection: YES];
+		[op setPrompt: @"Add"];
+		[op setMessage: @"Choose .pk3 files, or a folder that contains them (such as BaseEF of the Expansion Pack or its CD)"];
+		[NSApp activateIgnoringOtherApps: YES];
+		if( [op runModal] != NSModalResponseOK )
+			return 0;
+		for( NSURL *u in [op URLs] )
+			[picked addObject: [u path]];
+	}
+
+	if( ( remembered = [[NSUserDefaults standardUserDefaults] stringForKey: KEY_GAMEFOLDER] ) )
+		external = BaseIn( remembered );
+
+	for( NSString *path in picked )
+	{
+		NSMutableArray *files = [NSMutableArray array];
+
+		if( IsDir( path ) )
+		{
+			NSString *dir = ( BaseIn( path ) && IsDir( BaseIn( path ) ) ) ? BaseIn( path ) : path;
+			for( NSString *e in [fm contentsOfDirectoryAtPath: dir error: NULL] )
+				[files addObject: [dir stringByAppendingPathComponent: e]];
+		}
+		else
+			[files addObject: path];
+
+		for( NSString *f in files )
+		{
+			NSString *name = [f lastPathComponent], *have;
+			NSDictionary *a = [fm attributesOfItemAtPath: [f stringByResolvingSymlinksInPath] error: NULL];
+			unsigned long long size = [a fileSize];
+
+			if( [name hasPrefix: @"."] || [[name pathExtension] caseInsensitiveCompare: @"pk3"] != NSOrderedSame ||
+				![[a fileType] isEqualToString: NSFileTypeRegular] || [names containsObject: [name lowercaseString]] )
+				continue;
+			if( ( ( have = ChildCI( dstBase, name ) ) || ( external && ( have = ChildCI( external, name ) ) ) ) &&
+				[[fm attributesOfItemAtPath: [have stringByResolvingSymlinksInPath] error: NULL] fileSize] == size )
+			{
+				present++;
+				continue;
+			}
+			[names addObject: [name lowercaseString]];
+			[src addObject: f];
+			// replace an existing file of that name (any case) in place
+			[dst addObject: ChildCI( dstBase, name ) ? ChildCI( dstBase, name ) : [dstBase stringByAppendingPathComponent: name]];
+			total += size;
+		}
+	}
+	MacLog( @"Add game files: %lu new .pk3 (%@), %d already present", (unsigned long)[src count], FormatBytes( total ), present );
+
+	if( ![src count] )
+	{
+		ErrorAlert( @"Nothing to add", present
+			? ( present == 1 ? @"The game already has that .pk3 file." : @"The game already has all of those .pk3 files." )
+			: @"No .pk3 files were found there. Choose .pk3 files, or the BaseEF folder that contains them." );
+		return 0;
+	}
+	[fm createDirectoryAtPath: dstBase withIntermediateDirectories: YES attributes: nil error: NULL];
+	freeBytes = FreeSpace( dstBase );
+	if( freeBytes && freeBytes < total + 64ull * 1024 * 1024 )
+	{
+		ErrorAlert( @"Not enough disk space",
+			[NSString stringWithFormat: @"Adding the files needs %@, but only %@ is free.", FormatBytes( total ), FormatBytes( freeBytes )] );
+		return 0;
+	}
+	if( !RunCopyJob( src, dst, total, dstBase, &copied ) )
+		return 0;
+	MacLog( @"Added %@ (%@) to \"%@\"", [[dst valueForKey: @"lastPathComponent"] componentsJoinedByString: @", "],
+		FormatBytes( copied ), dstBase );
+	return (int)[src count];
+}
+
+/*
+=================
+VSP_HasExpansion
+
+qtrue when the Expansion Pack's data is there: Virtual Voyager's first map
+(the same test as the single-player main menu), in a .pk3 or loose, in the
+homepath's baseEF or the game folder base.
+=================
+*/
+// qtrue if the zip (pk3) at path has an entry named name (any case). Reads
+// only the central directory, without the engine's unzip code, which
+// allocates from the zone (not there yet while the launcher runs).
+static BOOL ZipHasEntry( NSString *path, const char *name )
+{
+	NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath: path];
+	unsigned long long size, tailStart;
+	NSData *tail, *cd;
+	const unsigned char *t, *p, *end;
+	unsigned int cdSize, cdOffset;
+	size_t nameLen = strlen( name );
+	long i;
+
+	if( !fh )
+		return NO;
+	size = [fh seekToEndOfFile];
+	if( size < 22 )
+		return NO;
+	tailStart = size > 65536 + 22 ? size - ( 65536 + 22 ) : 0;
+	[fh seekToFileOffset: tailStart];
+	tail = [fh readDataOfLength: (NSUInteger)( size - tailStart )];
+	t = [tail bytes];
+	// end of central directory record, searched backwards (a comment may follow)
+	for( i = (long)[tail length] - 22; i >= 0; i-- )
+		if( t[i] == 'P' && t[i+1] == 'K' && t[i+2] == 5 && t[i+3] == 6 )
+			break;
+	if( i < 0 )
+		return NO;
+	cdSize = t[i+12] | t[i+13] << 8 | t[i+14] << 16 | (unsigned)t[i+15] << 24;
+	cdOffset = t[i+16] | t[i+17] << 8 | t[i+18] << 16 | (unsigned)t[i+19] << 24;
+	if( (unsigned long long)cdOffset + cdSize > size )
+		return NO;
+	[fh seekToFileOffset: cdOffset];
+	cd = [fh readDataOfLength: cdSize];
+	[fh closeFile];
+	p = [cd bytes];
+	end = p + [cd length];
+	while( p + 46 <= end && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 )
+	{
+		unsigned n = p[28] | p[29] << 8, x = p[30] | p[31] << 8, c = p[32] | p[33] << 8;
+		if( p + 46 + n > end )
+			break;
+		if( n == nameLen && !Q_stricmpn( (const char *)p + 46, name, (int)n ) )
+			return YES;
+		p += 46 + n + x + c;
+	}
+	return NO;
+}
+
+BOOL VSP_HasExpansion( NSString *base )
+{
+	static const char *probe = "maps/tour/deck02.bsp";
+	NSMutableArray *dirs = [NSMutableArray arrayWithObject: HomeBase()];
+
+	if( base && ![dirs containsObject: base] )
+		[dirs addObject: base];
+	for( NSString *dir in dirs )
+	{
+		if( [[NSFileManager defaultManager] fileExistsAtPath: [dir stringByAppendingPathComponent: @(probe)]] )
+			return YES;
+		for( NSString *e in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: dir error: NULL] )
+			if( ![e hasPrefix: @"."] && [[e pathExtension] caseInsensitiveCompare: @"pk3"] == NSOrderedSame &&
+				ZipHasEntry( [dir stringByAppendingPathComponent: e], probe ) )
+				return YES;
+	}
+	return NO;
 }
 
 void VSP_Log( NSString *msg )

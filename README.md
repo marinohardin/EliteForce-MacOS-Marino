@@ -27,8 +27,9 @@ code from your `pak*.pk3` files, like lilium-voyager does.
 - **Launcher.** Choose Single Player or Holomatch; a graphics **Quality** preset
   (Performance, Balanced, Best) or the individual settings: window or full screen, window
   size, full Retina resolution, anti-aliasing, texture detail and V-Sync; your Holomatch
-  player name; and where the game files are. The launcher shows what the game last used,
-  including changes made in the game's own Video menu.
+  player name; and where the game files are, whether the Expansion Pack was found, and
+  **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last
+  used, including changes made in the game's own Video menu.
 - **Holomatch (multiplayer).** Host or join games on your local network (LAN party, see
   [Holomatch and LAN parties](#holomatch-and-lan-parties)) or by IP address, with bots.
   It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
@@ -66,7 +67,11 @@ code from your `pak*.pk3` files, like lilium-voyager does.
   **minimum install from the CD does not copy `pak0.pk3` to disk**: it stays on the CD, at
   `BaseEF/pak0.pk3`. Copy it from the CD yourself.
 
-  The Expansion Pack is optional; see [Known issues](#known-issues).
+  The **Expansion Pack** is optional. Its files go into the same `BaseEF`: if they're there
+  when you choose the folder they're copied along; otherwise use **Add Game Files…** in the
+  launcher and choose the Expansion Pack's `BaseEF` (or its `.pk3` files). The launcher's
+  Game Files section says whether it was found. It adds single player's Virtual Voyager and
+  Holomatch maps that many servers run (such as `ctf_oldwest`).
 
 ## Install (players)
 
@@ -117,7 +122,9 @@ automatically on first launch.
 Everyone needs their own copy of the game and the app (or Elite Force 1.2 on a PC; the
 protocol is the original one). Holomatch uses `pak0.pk3`–`pak2.pk3` from the retail game, so
 copy all of them; extra map paks (`*.pk3` in `BaseEF`) must match between host and players
-for the maps they use.
+for the maps they use. Custom maps download automatically when you join a server that has
+them; the official paks never do, so **Expansion Pack maps need the Expansion Pack** (a server
+running one shows "Couldn't load maps/….bsp" otherwise).
 
 1. Everyone opens the app, picks **Holomatch**, sets a **player name** and clicks **Play**.
 2. The host opens **Servers → Create Server**, picks a map and game type (and bots, if you
@@ -216,8 +223,9 @@ Technical background on the port is in
 
 ## Known issues
 
-- **Virtual Voyager (Expansion Pack) is not supported** without the Expansion Pack's data.
-  If its maps are missing, the main-menu button shows **EXPANSION ONLY** and is greyed out.
+- **Expansion Pack content needs the Expansion Pack's data.** Without it, single player's
+  Virtual Voyager button shows **EXPANSION ONLY** (greyed out) and Holomatch servers running
+  Expansion maps can't be joined. The Expansion Pack itself is untested with this port.
 - **Alpha quality.** Expect occasional rendering, audio or animation glitches inherited from
   the Android port. Back up your saves.
 - Apple Silicon only, and the app is not notarized (see Install step 4).

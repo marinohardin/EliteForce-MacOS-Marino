@@ -29,6 +29,7 @@ Test hooks (environment variables):
   VOYAGERSP_TEST_LAUNCHER_PRESET=performance|balanced|best
   VOYAGERSP_TEST_LAUNCHER_PLAY=1              press Play without showing it
   VOYAGERSP_TEST_LAUNCHER_AUTOPLAY=<s>        show it, press Play after <s> s
+  VOYAGERSP_TEST_ADD=<path>                   press Add Game Files… with <path>
 ===========================================================================
 */
 
@@ -57,6 +58,8 @@ extern BOOL VSP_ChooseGameData( NSString **outBasepath );
 extern NSString *VSP_HomeBase( void );
 extern void VSP_RevealFolder( NSString *path );
 extern void VSP_Log( NSString *msg );
+extern int VSP_AddGameFiles( void );
+extern BOOL VSP_HasExpansion( NSString *base );
 
 #define LLog( ... ) VSP_Log( [NSString stringWithFormat: __VA_ARGS__] )
 
@@ -276,6 +279,7 @@ static NSView *Group( NSString *caption, NSView *content )
 @interface VSPLauncher : NSObject <NSWindowDelegate>
 - (void)selectMode: (BOOL)holomatch;
 - (void)play: (id)sender;
+- (void)addFiles: (id)sender;
 @end
 
 @implementation VSPModeCard
@@ -407,7 +411,9 @@ static NSView *Group( NSString *caption, NSView *content )
 	NSTextField *nameLabel, *name, *nameHint;
 	NSImageView *folderIcon, *statusIcon;
 	NSTextField *folderPath, *status;
-	NSButton *showButton, *changeButton, *playButton;
+	NSButton *showButton, *addButton, *changeButton, *playButton;
+	NSImageView *expansionIcon;
+	NSTextField *expansion;
 	BOOL updating;
 }
 
@@ -567,20 +573,39 @@ static NSView *Group( NSString *caption, NSView *content )
 	[status setLineBreakMode: NSLineBreakByTruncatingTail];
 	[status setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
 	{
-		NSStackView *statusRow = [NSStackView stackViewWithViews: @[ statusIcon, status ]];
+		NSStackView *statusRow = [NSStackView stackViewWithViews: @[ statusIcon, status ]], *expansionRow;
 		[statusRow setSpacing: 4];
-		folderText = [NSStackView stackViewWithViews: @[ folderPath, statusRow ]];
+		expansionIcon = [[NSImageView alloc] init];
+		expansion = Label( @"", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+		[expansion setLineBreakMode: NSLineBreakByTruncatingTail];
+		[expansion setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
+		expansionRow = [NSStackView stackViewWithViews: @[ expansionIcon, expansion ]];
+		[expansionRow setSpacing: 4];
+		folderText = [NSStackView stackViewWithViews: @[ folderPath, statusRow, expansionRow ]];
 	}
 	[folderText setOrientation: NSUserInterfaceLayoutOrientationVertical];
 	[folderText setAlignment: NSLayoutAttributeLeading];
 	[folderText setSpacing: 3];
 	showButton = [NSButton buttonWithTitle: @"Show in Finder" target: self action: @selector(showFolder:)];
+	addButton = [NSButton buttonWithTitle: @"Add Game Files…" target: self action: @selector(addFiles:)];
+	[addButton setToolTip: @"Copy more .pk3 files into the game, such as the Expansion Pack's or extra maps"];
 	changeButton = [NSButton buttonWithTitle: @"Change…" target: self action: @selector(changeFolder:)];
-	folderRow = [NSStackView stackViewWithViews: @[ folderIcon, folderText, showButton, changeButton ]];
-	[folderRow setSpacing: 10];
-	[folderRow setAlignment: NSLayoutAttributeCenterY];
-	[folderRow setCustomSpacing: 12 afterView: folderText];
-	[folderText setContentHuggingPriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
+	{
+		NSStackView *info = [NSStackView stackViewWithViews: @[ folderIcon, folderText ]];
+		NSStackView *buttons = [NSStackView stackViewWithViews: @[ [NSView new], showButton, addButton, changeButton ]];
+
+		[info setSpacing: 10];
+		[info setAlignment: NSLayoutAttributeCenterY];
+		[folderText setContentHuggingPriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
+		[[buttons views][0] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+		[buttons setSpacing: 8];
+		folderRow = [NSStackView stackViewWithViews: @[ info, buttons ]];
+		[folderRow setOrientation: NSUserInterfaceLayoutOrientationVertical];
+		[folderRow setAlignment: NSLayoutAttributeLeading];
+		[folderRow setSpacing: 10];
+		[[buttons widthAnchor] constraintEqualToAnchor: [folderRow widthAnchor]].active = YES;
+		[[info widthAnchor] constraintEqualToAnchor: [folderRow widthAnchor]].active = YES;
+	}
 
 	// footer
 	quit = [NSButton buttonWithTitle: @"Quit" target: self action: @selector(quit:)];
@@ -755,6 +780,18 @@ static NSView *Group( NSString *caption, NSView *content )
 	[statusIcon setImage: [NSImage imageWithSystemSymbolName: symbol accessibilityDescription: nil]];
 	[statusIcon setContentTintColor: color];
 	[showButton setHidden: dataFolder == nil];
+	[addButton setHidden: !haveData || dataOverridden];
+	[expansionIcon setHidden: !haveData || dataOverridden];
+	[expansion setHidden: !haveData || dataOverridden];
+	if( haveData && !dataOverridden )
+	{
+		BOOL have = VSP_HasExpansion( dataFolder );
+		[expansion setStringValue: have ? @"Expansion Pack found · Virtual Voyager and its Holomatch maps"
+			: @"No Expansion Pack · add its files to play Virtual Voyager and its maps"];
+		[expansionIcon setImage: [NSImage imageWithSystemSymbolName: have ? @"puzzlepiece.extension.fill" : @"puzzlepiece.extension"
+			accessibilityDescription: nil]];
+		[expansionIcon setContentTintColor: have ? [NSColor systemGreenColor] : [NSColor tertiaryLabelColor]];
+	}
 	[changeButton setEnabled: !dataOverridden];
 	[changeButton setTitle: haveData ? @"Change…" : @"Choose…"];
 	[playButton setEnabled: haveData];
@@ -764,6 +801,14 @@ static NSView *Group( NSString *caption, NSView *content )
 {
 	if( dataFolder )
 		VSP_RevealFolder( dataFolder );
+}
+
+- (void)addFiles: (id)sender
+{
+	if( VSP_AddGameFiles() > 0 )
+		LLog( @"Launcher: game files added" );
+	[self refreshData];
+	[window makeKeyAndOrderFront: nil];
 }
 
 - (void)changeFolder: (id)sender
@@ -885,6 +930,8 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 		SDL_InitSubSystem( SDL_INIT_VIDEO );
 		l = [[VSPLauncher alloc] initWithOverridden: VSP_DataOverridden( argc, argv )];
 
+		if( getenv( "VOYAGERSP_TEST_ADD" ) )
+			[l addFiles: nil];		// with sys_osx_data.m's hook instead of the open panel
 		if( getenv( "VOYAGERSP_TEST_LAUNCHER_SNAPSHOT" ) )
 		{
 			SnapshotWindow( [l window], getenv( "VOYAGERSP_TEST_LAUNCHER_SNAPSHOT" ) );
