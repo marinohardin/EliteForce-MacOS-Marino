@@ -48,6 +48,7 @@ Test hooks (environment variables, see also sys_osx_launcher.m):
                                          (default 15)
   VOYAGERSP_TEST_SERVER_STOP_AFTER=<s>    press Stop Server
   VOYAGERSP_TEST_SERVER_COMMAND=<cmd>     send it once the server is ready
+  VOYAGERSP_TEST_SERVER_PLAY_AFTER=<s>    press Play on This Mac
 With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 "[server] ..." and each status poll is logged as "[test] status: ...".
 ===========================================================================
@@ -2516,6 +2517,14 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		double after = getenv( "VOYAGERSP_TEST_SERVER_SNAPSHOT_AFTER" ) ? atof( getenv( "VOYAGERSP_TEST_SERVER_SNAPSHOT_AFTER" ) ) : 15;
 		NSTimer *t = [NSTimer timerWithTimeInterval: after repeats: NO block: ^( NSTimer *timer ) {
 			VSP_SnapshotWindow( [weakSelf window], [path fileSystemRepresentation] );
+		}];
+		[[NSRunLoop currentRunLoop] addTimer: t forMode: NSRunLoopCommonModes];
+	}
+	if( getenv( "VOYAGERSP_TEST_SERVER_PLAY_AFTER" ) )
+	{
+		NSTimer *t = [NSTimer timerWithTimeInterval: atof( getenv( "VOYAGERSP_TEST_SERVER_PLAY_AFTER" ) ) repeats: NO block: ^( NSTimer *timer ) {
+			LLog( @"[test] pressing Play on This Mac" );
+			[weakSelf playHere: nil];
 		}];
 		[[NSRunLoop currentRunLoop] addTimer: t forMode: NSRunLoopCommonModes];
 	}
