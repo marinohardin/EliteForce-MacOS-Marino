@@ -605,6 +605,16 @@ static void InitOpenGL( void )
 	} else {
 		ri.Error( ERR_FATAL, "Recursive error during Vulkan initialization" );
 	}
+
+	// With fbo the gamma post-pass applies r_gamma live (RE_EndFrame), so tell the
+	// UI, which reads deviceSupportsGamma to skip its vid_restart after a brightness
+	// change (the SP and Holomatch Initial Configure screens; the SP one also shows
+	// its gamma test picture then). Inside the renderer every deviceSupportsGamma
+	// test is paired with vk.fboActive, so this changes nothing there.
+	if ( vk.fboActive )
+		glConfig.deviceSupportsGamma = qtrue;
+	else
+		glConfig.deviceSupportsGamma = gls.deviceSupportsGamma && !r_ignorehwgamma->integer;
 #endif
 
 	// set default state
@@ -1477,6 +1487,11 @@ Prints info that may change every R_Init() call
 */
 static void VarInfo( void )
 {
+#ifdef USE_VULKAN
+	if ( vk.fboActive ) {
+		ri.Printf( PRINT_ALL, "GAMMA: post-process (live) w/ %d overbright bits\n", tr.overbrightBits );
+	} else
+#endif
 	if ( glConfig.deviceSupportsGamma ) {
 		ri.Printf( PRINT_ALL, "GAMMA: hardware w/ %d overbright bits\n", tr.overbrightBits );
 	} else {
@@ -1867,7 +1882,13 @@ static void R_Register( void )
 		" -2 - first integrated GPU" );
 	r_device->modified = qfalse;
 
+#ifdef __APPLE__
+	// on by default on macOS: the gamma post-pass makes brightness changes live, and
+	// Apple Silicon doesn't notice the extra fullscreen pass
+	r_fbo = ri.Cvar_Get( "r_fbo", "1", CVAR_ARCHIVE_ND | CVAR_LATCH );
+#else
 	r_fbo = ri.Cvar_Get( "r_fbo", "0", CVAR_ARCHIVE_ND | CVAR_LATCH );
+#endif
 	ri.Cvar_SetDescription( r_fbo, "Use framebuffer objects, enables gamma correction in windowed mode and allows arbitrary video size and screenshot/video capture.\n Required for bloom, HDR rendering, anti-aliasing and greyscale effects." );
 	r_hdr = ri.Cvar_Get( "r_hdr", "0", CVAR_ARCHIVE_ND | CVAR_LATCH );
 	ri.Cvar_SetDescription(r_hdr, "Enables high dynamic range frame buffer texture format. Requires \\r_fbo 1.\n -1: 4-bit, for testing purposes, heavy color banding, might not work on all systems\n  0: 8 bit, default, moderate color banding with multi-stage shaders\n  1: 16 bit, enhanced blending precision, no color banding, might decrease performance on AMD / Intel GPUs\n" );

@@ -2398,6 +2398,8 @@ For controlling environment variables
 ==================
 */
 
+static qboolean com_hmNetDefaultsApplied;
+
 void Com_ExecuteCfg(void)
 {
 	Cbuf_ExecuteText(EXEC_NOW, "exec default.cfg\n");
@@ -2410,6 +2412,21 @@ void Com_ExecuteCfg(void)
 		Cbuf_Execute();
 		Cbuf_ExecuteText(EXEC_NOW, "exec autoexec.cfg\n");
 		Cbuf_Execute();
+
+		// Holomatch network defaults, applied once per version over an existing
+		// hmconfig.cfg: earlier builds archived this port's old defaults
+		// (cl_allowDownload 0, sv_dlRate 100), which no player chose, and every
+		// archived cvar is written, so changed defaults alone wouldn't reach them.
+		// From then on the config owns the values again.
+#define HM_NET_DEFAULTS_VERSION 1	// v1: map downloads on, LAN download rate
+		if ( Com_Holomatch() && Cvar_VariableIntegerValue( "com_hmNetDefaults" ) < HM_NET_DEFAULTS_VERSION )
+		{
+			Cvar_Set( "cl_allowDownload", "1" );
+			Cvar_Set( "sv_dlRate", HM_DEFAULT_DLRATE );
+			Cvar_Get( "com_hmNetDefaults", "0", CVAR_ARCHIVE );
+			Cvar_Set( "com_hmNetDefaults", XSTRING( HM_NET_DEFAULTS_VERSION ) );
+			com_hmNetDefaultsApplied = qtrue;
+		}
 
 #ifdef __ANDROID__
 		// One-time Android control/graphics defaults. autoexec.cfg runs every
@@ -2873,6 +2890,11 @@ void Com_Init( char *commandLine ) {
 	// if any archived cvars are modified after this, we will trigger a writing
 	// of the config file
 	cvar_modifiedFlags &= ~CVAR_ARCHIVE;
+
+	// keep the Holomatch network defaults stamp (Com_ExecuteCfg) for this
+	// session's config write, or the defaults would apply again every launch
+	if ( com_hmNetDefaultsApplied )
+		cvar_modifiedFlags |= CVAR_ARCHIVE;
 
 #ifdef __ANDROID__
 	// Com_ExecuteCfg above may have just applied android_defaults.cfg (first

@@ -1828,6 +1828,59 @@ static void Slider_Init( menuslider_s *s )
 	}
 }
 
+// The slider being dragged: a click on a slider grabs it, and Slider_Draw keeps
+// following the cursor (and firing the callback) until the button is released, so
+// e.g. Brightness changes live while dragging instead of one value per click.
+static menuslider_s *s_dragSlider;
+
+/*
+===============
+Slider_CursorValue
+===============
+*/
+static float Slider_CursorValue( menuslider_s *s )
+{
+	float value;
+
+	value = ((uis.cursorx - s->generic.x)/(float)(s->focusWidth)) * (s->maxvalue-s->minvalue) + s->minvalue;
+	if (value < s->minvalue)
+	{
+		value = s->minvalue;
+	}
+	else if (value > s->maxvalue)
+	{
+		value = s->maxvalue;
+	}
+	return value;
+}
+
+/*
+===============
+Slider_Drag
+===============
+*/
+static void Slider_Drag( menuslider_s *s )
+{
+	float value;
+
+	if ( s_dragSlider != s )
+		return;
+
+	if ( !ui.Key_IsDown( K_MOUSE1 ) || ( s->generic.flags & ( QMF_GRAYED | QMF_INACTIVE | QMF_HIDDEN ) ) )
+	{
+		s_dragSlider = NULL;
+		return;
+	}
+
+	value = Slider_CursorValue( s );
+	if ( value != s->curvalue )
+	{
+		s->curvalue = value;
+		if ( s->generic.callback )
+			s->generic.callback( s, QM_ACTIVATED );
+	}
+}
+
 /*
 ===============
 Slider_Key
@@ -1836,24 +1889,14 @@ Slider_Key
 static sfxHandle_t Slider_Key( menuslider_s *s, int key )
 {
 	sfxHandle_t sound;
-	int			xLength;
-	int			oldvalue;
+	float		oldvalue;
 
 	switch (key)
 	{
 		case K_MOUSE1:
-			xLength     = uis.cursorx - s->generic.x;
 			oldvalue    = s->curvalue;
-			s->curvalue = (xLength/(float)(s->focusWidth)) * (s->maxvalue-s->minvalue) + s->minvalue;
-
-			if (s->curvalue < s->minvalue)
-			{
-				s->curvalue = s->minvalue;
-			}
-			else if (s->curvalue > s->maxvalue)
-			{
-				s->curvalue = s->maxvalue;
-			}
+			s->curvalue = Slider_CursorValue( s );
+			s_dragSlider = s;
 
 			if (s->curvalue != oldvalue)
 			{
@@ -1912,6 +1955,8 @@ static void Slider_Draw( menuslider_s *s )
 	int	thumbColor,backgroundColor;
 	int	focus,thumbX;
 	
+
+	Slider_Drag( s );
 
 	focus = 0;
 

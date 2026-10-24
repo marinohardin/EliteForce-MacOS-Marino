@@ -806,11 +806,9 @@ static NSView *Group( NSString *caption, NSView *content )
 		gfx.fullscreen, gfx.width, gfx.height];
 	[args appendFormat: @"+set r_highdpi %d +set r_picmip %d +set r_swapInterval %d ",
 		gfx.highdpi, gfx.picmip, gfx.vsync];
-	// multisampling needs the renderer's framebuffer objects
-	if( gfx.msaa )
-		[args appendFormat: @"+set r_fbo 1 +set r_ext_multisample %d ", gfx.msaa];
-	else
-		[args appendString: @"+set r_ext_multisample 0 "];
+	// framebuffer objects always: multisampling needs them, and their gamma
+	// post-pass is what makes the Brightness sliders apply live
+	[args appendFormat: @"+set r_fbo 1 +set r_ext_multisample %d ", gfx.msaa];
 	if( holomatch )
 		[args appendFormat: @"+set name \"%@\" ", CleanName( [name stringValue] )];
 	if( basepath )

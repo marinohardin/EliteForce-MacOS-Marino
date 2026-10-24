@@ -3653,9 +3653,57 @@ static qboolean CL_IsMinimized( void ) {
 #endif
 	return ( m && m->integer ) ? qtrue : qfalse;
 }
-static void CL_Stub_CvarSetGroup( cvar_t *var, int group ) { (void)var;(void)group; }
-static int  CL_Stub_CvarCheckGroup( int group ) { (void)group; return 0; }
-static void CL_Stub_CvarResetGroup( int group, qboolean resetModified ) { (void)group;(void)resetModified; }
+// Quake3e-style cvar groups for renderervk. lilium's cvar system has none, and the old
+// stubs (CheckGroup always 0) meant RE_EndFrame never saw r_gamma, r_textureMode,
+// r_greyscale or the bloom cvars change: they only applied after a vid_restart.
+// A group counts as modified when any member's modificationCount moved since the
+// last reset.
+#define CL_MAX_GROUP_CVARS 64
+static struct {
+	cvar_t	*var;
+	int		group;
+	int		seenCount;
+} cl_groupCvars[CL_MAX_GROUP_CVARS];
+static int cl_numGroupCvars;
+
+static void CL_CvarSetGroup( cvar_t *var, int group ) {
+	int i;
+	if ( !var )
+		return;
+	for ( i = 0; i < cl_numGroupCvars; i++ ) {
+		if ( cl_groupCvars[i].var == var ) {
+			cl_groupCvars[i].group = group;
+			cl_groupCvars[i].seenCount = var->modificationCount;
+			return;
+		}
+	}
+	if ( cl_numGroupCvars >= CL_MAX_GROUP_CVARS ) {
+		Com_DPrintf( S_COLOR_YELLOW "CL_CvarSetGroup: too many group cvars, %s not tracked\n", var->name );
+		return;
+	}
+	cl_groupCvars[cl_numGroupCvars].var = var;
+	cl_groupCvars[cl_numGroupCvars].group = group;
+	cl_groupCvars[cl_numGroupCvars].seenCount = var->modificationCount;
+	cl_numGroupCvars++;
+}
+static int CL_CvarCheckGroup( int group ) {
+	int i;
+	for ( i = 0; i < cl_numGroupCvars; i++ ) {
+		if ( cl_groupCvars[i].group == group && cl_groupCvars[i].var->modificationCount != cl_groupCvars[i].seenCount )
+			return 1;
+	}
+	return 0;
+}
+static void CL_CvarResetGroup( int group, qboolean resetModified ) {
+	int i;
+	for ( i = 0; i < cl_numGroupCvars; i++ ) {
+		if ( cl_groupCvars[i].group != group )
+			continue;
+		cl_groupCvars[i].seenCount = cl_groupCvars[i].var->modificationCount;
+		if ( resetModified )
+			cl_groupCvars[i].var->modified = qfalse;
+	}
+}
 static void CL_Stub_InitGamma( glconfig_t *config ) { (void)config; }
 static void CL_Stub_FreeAll( void ) { }
 static void CL_Stub_SetScaling( float factor, int cw, int ch ) { (void)factor;(void)cw;(void)ch; }
@@ -3781,9 +3829,9 @@ void CL_InitRef( void ) {
 	ri.GLimp_SetGamma = CL_Stub_SetGamma;
 	ri.FreeAll = CL_Stub_FreeAll;
 	ri.CL_IsMinimized = CL_IsMinimized;
-	ri.Cvar_SetGroup = CL_Stub_CvarSetGroup;
-	ri.Cvar_CheckGroup = CL_Stub_CvarCheckGroup;
-	ri.Cvar_ResetGroup = CL_Stub_CvarResetGroup;
+	ri.Cvar_SetGroup = CL_CvarSetGroup;
+	ri.Cvar_CheckGroup = CL_CvarCheckGroup;
+	ri.Cvar_ResetGroup = CL_CvarResetGroup;
 	ri.Cvar_VariableString = Cvar_VariableString;
 	ri.Cvar_VariableStringBuffer = Cvar_VariableStringBuffer;
 	ri.Com_RealTime = Com_RealTime;
@@ -4164,7 +4212,9 @@ void CL_Init( void ) {
 
 	cl_showMouseRate = Cvar_Get ("cl_showmouserate", "0", 0);
 
-	cl_allowDownload = Cvar_Get ("cl_allowDownload", "0", CVAR_ARCHIVE);
+	// Holomatch: fetch the map pk3s a server has and we lack, as retail EF did
+	// (single player has no networking at all)
+	cl_allowDownload = Cvar_Get ("cl_allowDownload", Com_Holomatch() ? "1" : "0", CVAR_ARCHIVE);
 #ifdef USE_CURL_DLOPEN
 	cl_cURLLib = Cvar_Get("cl_cURLLib", DEFAULT_CURL_LIB, CVAR_ARCHIVE | CVAR_PROTECTED);
 #endif

@@ -1268,7 +1268,7 @@ Return the time in msec until we expect to be called next
 
 int SV_SendQueuedPackets()
 {
-	int numBlocks;
+	int numBlocks, roundBlocks, rounds;
 	int dlStart, deltaT, delayT;
 	static int dlNextRound = 0;
 	int timeVal = INT_MAX;
@@ -1292,7 +1292,24 @@ int SV_SendQueuedPackets()
 		}
 		else
 		{
-			numBlocks = SV_SendDownloadMessages();
+			// One round sends one block (1 KB) per downloading client, and
+			// rounds are at least ~1 ms apart, which held UDP downloads well
+			// under 1 MB/s whatever sv_dlRate said. High rates (a LAN) send
+			// several rounds back to back: one per 500 KB/s. The download
+			// window (MAX_DOWNLOAD_WINDOW unacknowledged blocks) still bounds
+			// the burst, and the delay below still keeps the average rate.
+			// Up to 999 KB/s nothing changes.
+			rounds = sv_dlRate->integer / 500;
+			if ( rounds < 1 )
+				rounds = 1;
+			else if ( rounds > MAX_DOWNLOAD_WINDOW )
+				rounds = MAX_DOWNLOAD_WINDOW;
+
+			numBlocks = 0;
+			do {
+				roundBlocks = SV_SendDownloadMessages();
+				numBlocks += roundBlocks;
+			} while ( roundBlocks && --rounds > 0 );
 
 			if(numBlocks)
 			{

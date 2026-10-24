@@ -928,6 +928,8 @@ extern	cvar_t	*com_holomatch;
 // Holomatch (multiplayer) mode instead of single player; set once at launch
 // (+set com_holomatch 1, the macOS launcher) and fixed for the whole run.
 qboolean Com_Holomatch( void );
+// Holomatch's default UDP download rate (sv_dlRate, KB/s per client): LAN speed
+#define HM_DEFAULT_DLRATE	"4000"
 extern	cvar_t	*com_homepath;
 
 // both client and server must agree to pause

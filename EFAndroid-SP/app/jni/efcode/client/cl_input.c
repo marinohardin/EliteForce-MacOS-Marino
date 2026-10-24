@@ -688,8 +688,12 @@ qboolean CL_ReadyToSendPacket( void ) {
 	}
 
 	// If we are downloading, we send no less than 50ms between packets
+	// (10 ms to a LAN server: each packet acknowledges at most one download
+	// window, MAX_DOWNLOAD_WINDOW 1 KB blocks, so 50 ms held a LAN download
+	// under 1 MB/s)
 	if ( *clc.downloadTempName &&
-		cls.realtime - clc.lastPacketSentTime < 50 ) {
+		cls.realtime - clc.lastPacketSentTime <
+			( Sys_IsLANAddress( clc.netchan.remoteAddress ) ? 10 : 50 ) ) {
 		return qfalse;
 	}
 
