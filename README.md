@@ -17,6 +17,9 @@ through MoltenVK. Single-player game logic comes from Raven's officially release
 Force SP source, built as native modules; Holomatch runs the retail game's own multiplayer
 code from your `pak*.pk3` files, like lilium-voyager does.
 
+It also supports running a **dedicated multiplayer server**, with NAT-PMP support, dramatically simplifying hosting servers compared to the original game.
+
+
 **No game data is included.** You need your own copy of the retail game. (Even the icon is intentionally not using copyrighted symbols.)
 
 > Status: **beta.** The campaign is playable, my old PC savegames load, but it has not been played 
@@ -159,6 +162,8 @@ sets the map rotation, game type, Holomatch modifiers, limits, bots, name, passw
 and its console; **Play on This Mac** joins it from the same Mac. It also runs from Terminal:
 `"/Applications/Elite Force.app/Contents/MacOS/Elite Force" +set dedicated 1 +map hm_voy1`
 (`dedicated 2` for the internet), with console commands typed into Terminal.
+
+<img width="722" height="805" alt="Screenshot 2026-10-24 at 2 25 52 AM" src="https://github.com/user-attachments/assets/4c10d28e-30f9-4812-9501-1aee39840111" />
 
 ### Playing over the internet
 
