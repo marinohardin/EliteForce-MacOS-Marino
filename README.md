@@ -163,7 +163,7 @@ and its console; **Play on This Mac** joins it from the same Mac. It also runs f
 `"/Applications/Elite Force.app/Contents/MacOS/Elite Force" +set dedicated 1 +map hm_voy1`
 (`dedicated 2` for the internet), with console commands typed into Terminal.
 
-<img width="722" height="805" alt="Screenshot 2026-10-24 at 2 25 52 AM" src="https://github.com/user-attachments/assets/4c10d28e-30f9-4812-9501-1aee39840111" />
+<img width="724" height="843" alt="Dedicated Elite Force Server" src="https://github.com/user-attachments/assets/059ae1d4-4601-4f03-96a3-180fd2792056" />
 
 ### Playing over the internet
 
