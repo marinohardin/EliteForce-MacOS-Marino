@@ -5,10 +5,10 @@ Internal notes for turning this fork into its own public repository and shipping
 
 ## 0. Pick the name, then replace the placeholder
 
-The docs use **`VoyagerSP-macOS`** everywhere as a placeholder. Once the name is final:
+The docs use **`VoyagerSP-MacOS`** everywhere as a placeholder. Once the name is final:
 
 ```sh
-git grep -l 'VoyagerSP-macOS' | xargs sed -i '' 's/VoyagerSP-macOS/NEWNAME/g'
+git grep -l 'VoyagerSP-MacOS' | xargs sed -i '' 's/VoyagerSP-MacOS/NEWNAME/g'
 git grep -n 'OWNER/'          # release link placeholder in README.md
 git grep -n 'TODO('           # every open doc TODO (see the list at the end)
 ```
@@ -18,7 +18,7 @@ Leave those alone.)
 
 Suggested names:
 
-1. **`VoyagerSP-macOS`**: mirrors the upstream `VoyagerSP-Android` and makes the lineage obvious.
+1. **`VoyagerSP-MacOS`**: mirrors the upstream `VoyagerSP-Android` and makes the lineage obvious.
    (Recommended.)
 2. **`EliteForceSP-macOS`**: easier to find by people searching for "Elite Force", and avoids
    leaning on "Voyager". Still descriptive, not a logo or trademark.
@@ -118,16 +118,16 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
    `otool -L` on every Mach-O in the bundle should show no `/opt/homebrew` paths. Test on a
    second Mac or user account without Homebrew if possible.
 4. Sign:
-   - **Ad-hoc** (free): `codesign --force --deep --sign - VoyagerSP-macOS.app`. Users must
-     right-click → Open, or run `xattr -dr com.apple.quarantine VoyagerSP-macOS.app`.
+   - **Ad-hoc** (free): `codesign --force --deep --sign - VoyagerSP-MacOS.app`. Users must
+     right-click → Open, or run `xattr -dr com.apple.quarantine VoyagerSP-MacOS.app`.
    - **Developer ID + notarization** (paid Apple Developer account): sign with hardened runtime,
      then `xcrun notarytool submit ... --wait` and `xcrun stapler staple`. Gatekeeper then opens
      it without warnings. Consider this before a wide announcement.
-5. Zip with `ditto -c -k --keepParent VoyagerSP-macOS.app VoyagerSP-macOS-vX.Y.Z-arm64.zip`
+5. Zip with `ditto -c -k --keepParent VoyagerSP-MacOS.app VoyagerSP-MacOS-vX.Y.Z-arm64.zip`
    (`ditto` keeps symlinks and signatures; plain `zip` can break them). Add `LICENSE`,
    `THIRD_PARTY_LICENSES.md`, the Raven license document and a short `README.txt` (where to put
    `BaseEF`, Gatekeeper note, source link).
-6. Tag: `git tag -a vX.Y.Z -m "VoyagerSP-macOS vX.Y.Z"` and `git push origin vX.Y.Z`.
+6. Tag: `git tag -a vX.Y.Z -m "VoyagerSP-MacOS vX.Y.Z"` and `git push origin vX.Y.Z`.
 7. Create the GitHub release from the tag. Attach the zip and its SHA-256
    (`shasum -a 256 *.zip`). In the notes include: requirements (Apple Silicon, retail data,
    `pak0.pk3` from the CD for minimum installs), the Gatekeeper workaround, known issues, a

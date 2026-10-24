@@ -1,4 +1,4 @@
-# VoyagerSP-macOS
+# VoyagerSP-MacOS
 
 A native macOS (Apple Silicon) port of *Star Trek: Voyager — Elite Force*: the
 **single-player campaign** (Raven Software, 2000).
@@ -54,8 +54,8 @@ Elite Force SP source, built as native modules.
 
 ## Install (players)
 
-1. Download `VoyagerSP-macOS.zip` from the
-   [Releases page](https://github.com/OWNER/VoyagerSP-macOS/releases). <!-- TODO(release-link): real owner/URL -->
+1. Download `VoyagerSP-MacOS.zip` from the
+   [Releases page](https://github.com/OWNER/VoyagerSP-MacOS/releases). <!-- TODO(release-link): real owner/URL -->
 2. Unzip it and move **EliteForceSP.app** to `/Applications` (or anywhere you like).
 3. Open the app. On first launch it looks for your game data, and if it can't find it, it
    asks you to **choose the folder where Elite Force is installed** (the folder that
@@ -78,7 +78,7 @@ Elite Force SP source, built as native modules.
 ### Saves and settings
 
 Config files, saves (and game files the app copied) live in
-`~/Library/Application Support/VoyagerSP-macOS/baseEF/`. You don't need to find that
+`~/Library/Application Support/VoyagerSP-MacOS/baseEF/`. You don't need to find that
 folder yourself: the app's menu (**Elite Force SP** in the menu bar) has
 
 - **Show Saves Folder** and **Show Game Folder**: open them in Finder,
