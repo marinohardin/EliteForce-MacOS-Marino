@@ -50,7 +50,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
   #define PRODUCT_NAME				"Lilium Voyager SP"
   #define BASEGAME					"baseEF"
   #ifdef __APPLE__
-  #define CLIENT_WINDOW_TITLE		"Elite Force SP"	// matches the macOS app name
+  #define CLIENT_WINDOW_TITLE		"Elite Force"	// the macOS app name; sdl_glimp.c adds the mode
   #else
   #define CLIENT_WINDOW_TITLE		"Lilium Voyager SP"
   #endif

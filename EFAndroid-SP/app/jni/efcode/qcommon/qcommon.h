@@ -650,7 +650,7 @@ issues.
   // SP-named file is created+owned by the app in its OBB dir, so user settings
   // and gamepad/touch rebinds actually persist (the pushed hmconfig.cfg was
   // shell-owned and read-only to the app, so writes to it failed).
-  #	define Q3CONFIG_CFG "efspconfig.cfg"
+  #	define Q3CONFIG_CFG ( Com_Holomatch() ? "hmconfig.cfg" : "efspconfig.cfg" )	// Holomatch: lilium's name
   #endif
 #else
   #ifdef DEDICATED
@@ -923,6 +923,11 @@ extern	cvar_t	*com_maxfpsMinimized;
 extern	cvar_t	*com_altivec;
 extern	cvar_t	*com_standalone;
 extern	cvar_t	*com_basegame;
+extern	cvar_t	*com_holomatch;
+
+// Holomatch (multiplayer) mode instead of single player; set once at launch
+// (+set com_holomatch 1, the macOS launcher) and fixed for the whole run.
+qboolean Com_Holomatch( void );
 extern	cvar_t	*com_homepath;
 
 // both client and server must agree to pause

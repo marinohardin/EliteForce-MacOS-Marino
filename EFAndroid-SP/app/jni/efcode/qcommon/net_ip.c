@@ -1455,13 +1455,20 @@ static qboolean NET_GetCvars( void ) {
 	// I want server owners to explicitly turn on ipv6 support.
 	net_enabled = Cvar_Get( "net_enabled", "1", CVAR_LATCH | CVAR_ARCHIVE );
 #else
+	if ( Com_Holomatch() ) {
+		/* Holomatch, as lilium-voyager: end users have it enabled so they can
+		 * connect to ipv6-only hosts, but ipv4 will be used if available due to ping */
+		net_enabled = Cvar_Get( "net_enabled", "3", CVAR_LATCH | CVAR_ARCHIVE );
+	} else
 	/* Single-player port: real networking is disabled. The campaign runs
 	 * entirely on the in-memory loopback channel, so no UDP sockets are opened,
 	 * no listening ports are bound, and local interface addresses are never
 	 * enumerated or logged. CVAR_ROM with default "0" forces this off even on
 	 * devices that previously archived net_enabled "3", and prevents it from
 	 * being re-enabled at runtime. */
-	net_enabled = Cvar_Get( "net_enabled", "0", CVAR_ROM );
+	{
+		net_enabled = Cvar_Get( "net_enabled", "0", CVAR_ROM );
+	}
 #endif
 	modified = net_enabled->modified;
 	net_enabled->modified = qfalse;

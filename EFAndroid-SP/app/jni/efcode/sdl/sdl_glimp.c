@@ -35,6 +35,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../sys/sys_local.h"
 #include "sdl_icon.h"
 
+#ifdef __APPLE__
+// the window title names the mode the app was launched in
+#undef CLIENT_WINDOW_TITLE
+#define CLIENT_WINDOW_TITLE ( ri.Cvar_VariableIntegerValue( "com_holomatch" ) ? \
+	"Elite Force \u2014 Holomatch" : "Elite Force \u2014 Single Player" )
+#endif
+
 typedef enum
 {
 	RSERR_OK,
@@ -1822,6 +1829,8 @@ void VKimp_Init( glconfig_t *config )
 		ri.Cvar_Get( "r_mode", "-1", CVAR_ARCHIVE );
 		ri.Cvar_Get( "r_customwidth", "1920", CVAR_ARCHIVE );
 		ri.Cvar_Get( "r_customheight", "1080", CVAR_ARCHIVE );
+		// read by vk.c when it creates the swapchain (V-Sync, set by the launcher)
+		ri.Cvar_Get( "r_swapInterval", "0", CVAR_ARCHIVE | CVAR_LATCH );
 		ri.Cvar_Get( "r_windowMaxWidth", "0", CVAR_ROM );
 		ri.Cvar_Get( "r_windowMaxHeight", "0", CVAR_ROM );
 

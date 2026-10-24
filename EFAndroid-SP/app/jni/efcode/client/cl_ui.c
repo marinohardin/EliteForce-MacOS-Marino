@@ -1362,7 +1362,7 @@ void CL_InitUI( void ) {
 	// EF1 SP: load the native single-player UI (libefui.so via GetUIAPI) instead of the
 	// Holomatch ui.qvm. Defaults ON for the SP app (the real EF1 main menu); SPUI_Load() falls
 	// back to the QVM path below if the module fails to load. `seta sp_ui 0` forces the HM menu.
-	if ( Cvar_Get("sp_ui", "1", CVAR_ARCHIVE)->integer && SPUI_Load() ) {
+	if ( !Com_Holomatch() && Cvar_Get("sp_ui", "1", CVAR_ARCHIVE)->integer && SPUI_Load() ) {
 		Cvar_SetValue("ui_cdkeychecked2", 1);
 		return;					// uivm stays NULL; all UI_* sites route to SPUI_* (SPUI_IsActive)
 	}

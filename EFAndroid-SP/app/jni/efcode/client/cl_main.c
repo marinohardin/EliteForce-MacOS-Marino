@@ -4241,7 +4241,8 @@ void CL_Init( void ) {
 	// the game's userinfo from them). Userinfo, like retail, so saves carry them, and
 	// archived, so they survive a restart; until then default to the selected sex's
 	// hazard-suit Munro (the config, with "sex", is already loaded here).
-	{
+	// Single player only: Holomatch uses "model" and would send these to servers.
+	if ( !Com_Holomatch() ) {
 		qboolean female = !Q_stricmp( Cvar_VariableString( "sex" ), "female" );
 		Cvar_Get ("headModel", female ? "alexandria/default" : "munro/default", CVAR_USERINFO | CVAR_ARCHIVE );
 		Cvar_Get ("torsoModel", female ? "hazardfemale/default" : "hazard/default", CVAR_USERINFO | CVAR_ARCHIVE );
@@ -4362,9 +4363,13 @@ void CL_Init( void ) {
 
 	Com_Printf( "----- Client Initialization Complete -----\n" );
 
-	{
+	if ( !Com_Holomatch() ) {
 		extern void SP_RegisterCommands( void );
 		SP_RegisterCommands();   // adds the 'spmap <map>' single-player command
+	} else {
+		// Holomatch: the stock map/save/load commands stay, and the SP-only
+		// paths that check sp_dropHM stay off whatever a config says
+		Cvar_Get( "sp_dropHM", "0", CVAR_ROM );
 	}
 }
 

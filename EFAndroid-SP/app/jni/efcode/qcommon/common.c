@@ -65,6 +65,7 @@ fileHandle_t	com_journalFile;			// events are written here
 fileHandle_t	com_journalDataFile;		// config files are written here
 
 cvar_t	*com_speeds;
+cvar_t	*com_holomatch;
 cvar_t	*com_developer;
 cvar_t	*com_dedicated;
 cvar_t	*com_timescale;
@@ -489,6 +490,18 @@ qboolean Com_SafeMode( void ) {
 		}
 	}
 	return qfalse;
+}
+
+
+/*
+===================
+Com_Holomatch
+
+qtrue when running Holomatch (multiplayer) rather than single player
+===================
+*/
+qboolean Com_Holomatch( void ) {
+	return ( com_holomatch && com_holomatch->integer ) ? qtrue : qfalse;
 }
 
 
@@ -2393,7 +2406,7 @@ void Com_ExecuteCfg(void)
 	if(!Com_SafeMode())
 	{
 		// skip the q3config.cfg and autoexec.cfg if "safe" is on the command line
-		Cbuf_ExecuteText(EXEC_NOW, "exec " Q3CONFIG_CFG "\n");
+		Cbuf_ExecuteText(EXEC_NOW, va("exec %s\n", Q3CONFIG_CFG));
 		Cbuf_Execute();
 		Cbuf_ExecuteText(EXEC_NOW, "exec autoexec.cfg\n");
 		Cbuf_Execute();
@@ -2820,6 +2833,8 @@ void Com_Init( char *commandLine ) {
 	if ( !com_homepath->string[0] ) {
 		Cvar_ForceReset( "com_homepath" );
 	}
+	com_holomatch = Cvar_Get("com_holomatch", "0", CVAR_INIT|CVAR_PROTECTED);
+	Cvar_SetDescription( com_holomatch, "Run Holomatch (multiplayer) instead of single player. Command line only." );
 
 	FS_InitFilesystem ();
 
@@ -2959,7 +2974,9 @@ void Com_Init( char *commandLine ) {
 		// if the user didn't give any commands, run default action
 		if ( !com_dedicated->integer ) {
 #ifdef CINEMATICS_LOGO
-			Cbuf_AddText ("cinematic " CINEMATICS_LOGO "\n");
+			// the SP boot logo; Holomatch's ui.qvm plays its own intro
+			if ( !Com_Holomatch() )
+				Cbuf_AddText ("cinematic " CINEMATICS_LOGO "\n");
 #endif
 #ifdef CINEMATICS_INTRO
 			if( !com_introPlayed->integer ) {
