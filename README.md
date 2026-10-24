@@ -1,5 +1,9 @@
-# EliteForce-MacOS
+# EliteForce-MacOS (Marino's Build)
 <img width="256" height="256" alt="EliteForce-MacOS Non-Starfleet App Icon" src="macos/icon/AppIcon-1024.png" />
+
+My family didn't let me play M rated games like Quake growing up, so I played Elite Force!  I wanted to create an easily accessible way to play it again.
+
+## What This Is
 
 A native macOS (Apple Silicon) port of *Star Trek: Voyager — Elite Force* (Raven Software,
 2000): the **single-player campaign** and **Holomatch** multiplayer, in one app.
@@ -281,3 +285,10 @@ know about:
 
 Release builds also bundle third-party libraries (SDL, FFmpeg, the Vulkan loader, MoltenVK)
 under their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+## Personal Note
+
+Thanks for checking this out!  This was a project I learned a lot on.  As a disclosure, AI was
+utilized in building tools and code. I hope you enjoy playing!
+
+- Marino
