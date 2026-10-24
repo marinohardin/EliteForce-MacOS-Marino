@@ -52,7 +52,7 @@ void CG_RegisterWeapon( int weaponNum ) {
 	}
 	// if we couldn't find which weapon this is, give us an error
 	if ( !item->classname ) {
-		CG_Error( "Couldn't find item for weapon %s\nNeed to update Items.dat!", weaponData[weaponNum].classname);
+		CG_Error( "Couldn't find item for weapon %s (%d)\nNeed to update Items.dat!", weaponData[weaponNum].classname, weaponNum);
 	}
 	CG_RegisterItemVisuals( item - bg_itemlist );
 

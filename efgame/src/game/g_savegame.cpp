@@ -17,6 +17,25 @@ extern void G_LoadSave_ReadMiscData(void);
 
 static qboolean gbSaveGameWasOldFormat;
 
+/*
+Original (pre-1.2) EF saves predate WP_PROTON_GUN, which was inserted into the
+weapon enum, so every weapon from it on is one lower in them. Renumber the
+client's current weapon, its owned-weapons bits, and the entity's own copy of
+the weapon (cgame draws the first frame from that, before the game updates it
+from the client).
+*/
+static void G_OldSaveRenumberWeapons( gclient_t *client, entityState_t *es )
+{
+	const int lowMask = ( 1 << WP_PROTON_GUN ) - 1;
+	int weapons = client->ps.stats[STAT_WEAPONS];
+
+	if ( client->ps.weapon >= WP_PROTON_GUN )
+		client->ps.weapon++;
+	client->ps.stats[STAT_WEAPONS] = ( weapons & lowMask ) | ( ( weapons & ~lowMask ) << 1 );
+	if ( es && es->weapon >= WP_PROTON_GUN )
+		es->weapon++;
+}
+
 field_t savefields_gEntity[] =
 {
 	{strFOFS(client),			F_GCLIENT},
@@ -544,10 +563,21 @@ void EvaluateFields(field_t *pFields, byte *pbData, byte *pbOriginalRefData, uns
 		if ( sgd ) {
 			unsigned char sgdisk[8192];
 			int ds = SG_TranscodeDiskSize(sgd);
-			int got = gi.ReadFromSaveGame(ulChid, sgdisk, bOkToSizeMisMatch?0:ds, NULL);
+			int got;
+			// zeroed, so fields an older (shorter) chunk lacks unpack as 0, like the
+			// memset below does for native-size reads
+			memset(sgdisk, 0, sizeof(sgdisk));
+			got = gi.ReadFromSaveGame(ulChid, sgdisk, bOkToSizeMisMatch?0:ds, NULL);
 			if ( got > 0 ) {
 				SG_TranscodeUnpack(sgd, sgdisk, (unsigned char *)pbData);
 				iReadSize = iSize;   // report the native size so the (iReadSize!=iSize) check below passes
+				// a GCLI chunk shorter than the current 32-bit layout is from the
+				// original (pre-1.2) EF: flag it as the native path below would,
+				// so ReadGEntities renumbers weapons for the WP_PROTON_GUN insert
+				if ( got < ds ) {
+					assert(ulChid == 'GCLI');
+					gbSaveGameWasOldFormat = qtrue;
+				}
 			} else {
 				iReadSize = 0;
 			}
@@ -813,10 +843,7 @@ void ReadGEntities(qboolean qbAutosave)
 			//  (weapon enum was changed - WP_PROTON_GUN was added into the middle of it)
 			if (gbSaveGameWasOldFormat==qtrue)
 			{
-				if (pEnt->client->ps.weapon >= WP_PROTON_GUN)
-				{
-					pEnt->client->ps.weapon++;
-				}
+				G_OldSaveRenumberWeapons( pEnt->client, &pEnt->s );
 			}
 		}
 
@@ -977,6 +1004,9 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 
 	ReadLevelLocals();	// level_locals_t level	
 	ReadGEntities(qbAutosave);
+	// the player's client was read above, not through ReadGEntities
+	if ( gbSaveGameWasOldFormat && !qbLoadTransition && !qbAutosave )
+		G_OldSaveRenumberWeapons( &level.clients[0], &g_entities[0].s );
 	Q3_VariableLoad();
 	G_LoadSave_ReadMiscData();
 
