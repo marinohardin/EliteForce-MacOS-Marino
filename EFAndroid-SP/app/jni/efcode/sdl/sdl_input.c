@@ -119,16 +119,22 @@ static void IN_DeactivateMouse( qboolean isFullscreen, qboolean showSystemCursor
 ===============
 IN_SyncWindowSize
 
-Desktop: when the window's drawable (pixel) size changes -- a live fullscreen
-toggle (Alt+Enter, Video menu) or a new windowed size -- resize the renderer in
+Desktop: when the window's drawable (pixel) size changes -- a fullscreen
+toggle (Alt+Enter, green button, Video menu), a new windowed size or a user
+drag-resize -- resize the renderer in
 place and rescale the client's 2D/menu mapping, instead of a vid_restart (which
 is refused while an SP game is running). Checked once per frame (cheap) and
 right after VKimp_ApplyWindowSettings changes the window.
 ===============
 */
+void VKimp_CheckWindow( void );	// sdl_glimp.c
+
 void IN_SyncWindowSize( void )
 {
 	int width = 0, height = 0;
+
+	// fullscreen transitions (incl. the green button) and user resizes
+	VKimp_CheckWindow( );
 
 	if ( !SDL_window || ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_MINIMIZED ) )
 		return;

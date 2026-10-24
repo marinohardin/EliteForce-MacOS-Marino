@@ -1289,21 +1289,51 @@ GL-free: it creates an SDL_WINDOW_VULKAN window and a VkSurfaceKHR via SDL.
 #ifndef __ANDROID__
 /*
 Desktop window settings. The window is created from r_fullscreen, r_mode/
-r_customwidth/r_customheight and r_highdpi. A vid_restart recreates the window when they
-changed (REF_DESTROY_WINDOW). VKimp_ApplyWindowSettings applies fullscreen and
-windowed-size changes to the live window instead, for Alt+Enter and while an SP
-game is running (vid_restart is refused then); only r_highdpi can't be applied live.
+r_customwidth/r_customheight and r_highdpi.
+
+The windowed size is always the on-screen size in points (what the user sees);
+r_highdpi only changes the render resolution (drawable = points x backing scale,
+e.g. a 1920x1080 window renders at 3840x2160 on Retina). A size that doesn't fit
+the display's usable area is shrunk to fit, keeping its aspect.
+
+Fullscreen is the native macOS fullscreen (its own Space), the same one the green
+title-bar button, Ctrl+Cmd+F and Window > Enter Full Screen use, so the window can
+be taken in and out of fullscreen either way. Entering/leaving is animated and
+asynchronous: VKimp_CheckWindow (every frame) waits for a transition we started,
+keeps r_fullscreen in sync with transitions the system started, and stores a
+user drag-resize in r_customwidth/height. The drawable-size changes reach the
+renderer through IN_SyncWindowSize (re.ResizeWindow + CL_WindowResized).
+
+VKimp_ApplyWindowSettings applies fullscreen and windowed-size changes to the live
+window (Alt+Enter, vid_restart, Video menu while a SP game runs); only an r_highdpi
+change needs a new window (vid_restart, REF_DESTROY_WINDOW).
 */
+#include <SDL_syswm.h>
+#ifdef __APPLE__
+#include <objc/runtime.h>
+#include <objc/message.h>
+#endif
+
 typedef struct {
-	qboolean	fullscreen;
-	int			width, height;	// windowed size: pixels with r_highdpi, else points
+	qboolean	fullscreen;		// target state (reached, or a transition is under way)
+	int			width, height;	// requested windowed size, points (before fitting)
 	qboolean	highdpi;
 } vkimpWindow_t;
 
 void IN_SyncWindowSize( void );			// sdl_input.c
 
-static vkimpWindow_t vkimp_window;		// what the live window currently is
+static vkimpWindow_t vkimp_window;		// what the live window is / is becoming
 static qboolean vkimp_windowValid = qfalse;
+
+static int		vkimp_fsPending = -1;	// fullscreen state we asked for until the window reaches it
+static int		vkimp_fsPendingTime;
+static int		vkimp_settleTime;		// size changes before this are transition steps, not user resizes
+static int		vkimp_setW, vkimp_setH;	// windowed size (points) the window should have
+static int		vkimp_seenW, vkimp_seenH, vkimp_seenTime;	// last observed windowed size, for user resizes
+
+#define VKIMP_TRANSITION_TIMEOUT	4000	// ms to wait for a fullscreen transition
+#define VKIMP_SETTLE_MS				750		// ignore size changes this long after a transition
+#define VKIMP_RESIZE_STABLE_MS		300		// a user resize counts once the size held this long
 
 static void VKimp_DesiredWindow( vkimpWindow_t *win )
 {
@@ -1313,8 +1343,8 @@ static void VKimp_DesiredWindow( vkimpWindow_t *win )
 
 	win->highdpi = atoi( hdpi ) != 0;
 	win->fullscreen = ri.Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
-	win->width = 1280;
-	win->height = 720;
+	win->width = 1920;
+	win->height = 1080;
 	if ( ri.Cvar_VariableIntegerValue( "r_mode" ) == -1 ) {
 		int w = ri.Cvar_VariableIntegerValue( "r_customwidth" );
 		int h = ri.Cvar_VariableIntegerValue( "r_customheight" );
@@ -1325,15 +1355,79 @@ static void VKimp_DesiredWindow( vkimpWindow_t *win )
 	}
 }
 
-// pixels per point of the live window (2 on Retina with r_highdpi, else 1)
-static int VKimp_WindowScale( void )
+// height of the window's title bar in points (0 if unknown)
+#ifdef __APPLE__
+static id VKimp_NSWindow( void );
+typedef struct { double x, y, w, h; } vkimpRect_t;	// NSRect
+static int VKimp_TitleBarHeight( void )
 {
-	int pw = 0, ph = 0, ww = 0, wh = 0;
-	SDL_Vulkan_GetDrawableSize( SDL_window, &pw, &ph );
-	SDL_GetWindowSize( SDL_window, &ww, &wh );
-	if ( ww > 0 && pw > ww )
-		return pw / ww;
-	return 1;
+	id win = VKimp_NSWindow();
+	vkimpRect_t content = { 0, 0, 640, 480 }, frame;
+	unsigned long mask;
+
+	if ( !win )
+		return 0;
+	mask = ((unsigned long (*)( id, SEL ))objc_msgSend)( win, sel_registerName( "styleMask" ) );
+#if defined( __arm64__ ) || defined( __aarch64__ )
+	frame = ((vkimpRect_t (*)( id, SEL, vkimpRect_t, unsigned long ))objc_msgSend)
+#else
+	frame = ((vkimpRect_t (*)( id, SEL, vkimpRect_t, unsigned long ))objc_msgSend_stret)
+#endif
+		( (id)objc_getClass( "NSWindow" ), sel_registerName( "frameRectForContentRect:styleMask:" ), content, mask );
+	return (int)( frame.h - content.h + 0.5 );
+}
+#else
+static int VKimp_TitleBarHeight( void )
+{
+	int top = 0;
+	SDL_GetWindowBordersSize( SDL_window, &top, NULL, NULL, NULL );
+	return top;
+}
+#endif
+
+/*
+Largest window content size (points) that fits the display's usable area (below
+the menu bar, beside the Dock, room for the title bar). Published as
+r_windowMaxWidth/Height so the Video menu can hide sizes that don't fit.
+*/
+static void VKimp_MaxWindowSize( int *maxW, int *maxH )
+{
+	SDL_Rect r;
+	int display = SDL_window ? SDL_GetWindowDisplayIndex( SDL_window ) : 0;
+	int top = 0;
+
+	if ( display < 0 )
+		display = 0;
+	if ( SDL_GetDisplayUsableBounds( display, &r ) != 0 || r.w <= 0 || r.h <= 0 ) {
+		*maxW = 1 << 14;
+		*maxH = 1 << 14;
+		return;
+	}
+	if ( SDL_window && !( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN ) )
+		top = VKimp_TitleBarHeight();
+	if ( top <= 0 )
+		top = 32;	// title bar
+	ri.Printf( PRINT_DEVELOPER, "VKimp: usable area %dx%d, title bar %d\n", r.w, r.h, top );
+	*maxW = r.w;
+	*maxH = r.h - top;
+}
+
+static void VKimp_FitWindowSize( int *w, int *h )
+{
+	int maxW, maxH;
+
+	VKimp_MaxWindowSize( &maxW, &maxH );
+	ri.Cvar_Set( "r_windowMaxWidth", va( "%d", maxW ) );
+	ri.Cvar_Set( "r_windowMaxHeight", va( "%d", maxH ) );
+
+	if ( *w > maxW ) {
+		*h = (int)( (float)*h * maxW / *w + 0.5f );
+		*w = maxW;
+	}
+	if ( *h > maxH ) {
+		*w = (int)( (float)*w * maxH / *h + 0.5f );
+		*h = maxH;
+	}
 }
 
 static void VKimp_LogWindow( const char *what )
@@ -1345,12 +1439,173 @@ static void VKimp_LogWindow( const char *what )
 		( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN ) ? ", fullscreen" : "" );
 }
 
+#ifdef __APPLE__
+static id VKimp_NSWindow( void )
+{
+	SDL_SysWMinfo info;
+
+	if ( !SDL_window )
+		return nil;
+	SDL_VERSION( &info.version );
+	if ( !SDL_GetWindowWMInfo( SDL_window, &info ) || info.subsystem != SDL_SYSWM_COCOA )
+		return nil;
+	return (id)info.info.cocoa.window;
+}
+
+// the window is in, or animating into or out of, a native fullscreen Space
+static qboolean VKimp_NSWindowInFullScreenSpace( void )
+{
+	id win = VKimp_NSWindow();
+	unsigned long mask;
+
+	if ( !win )
+		return qfalse;
+	mask = ((unsigned long (*)( id, SEL ))objc_msgSend)( win, sel_registerName( "styleMask" ) );
+	return ( mask & ( 1UL << 14 ) ) ? qtrue : qfalse;	// NSWindowStyleMaskFullScreen
+}
+
+/*
+vid_toggleNativeFullscreen: [NSWindow toggleFullScreen:], exactly what the green
+title-bar button, Ctrl+Cmd+F and Window > Enter/Exit Full Screen do. A test hook
+for the "fullscreen changed by the system" path (VKimp_CheckWindow).
+*/
+void VKimp_ToggleNativeFullscreen_f( void )
+{
+	id win = VKimp_NSWindow();
+
+	if ( !win ) {
+		ri.Printf( PRINT_ALL, "vid_toggleNativeFullscreen: no Cocoa window\n" );
+		return;
+	}
+	ri.Printf( PRINT_ALL, "vid_toggleNativeFullscreen: [NSWindow toggleFullScreen:]\n" );
+	((void (*)( id, SEL, id ))objc_msgSend)( win, sel_registerName( "toggleFullScreen:" ), nil );
+}
+#else
+static qboolean VKimp_NSWindowInFullScreenSpace( void ) { return qfalse; }
+void VKimp_ToggleNativeFullscreen_f( void ) { }
+#endif
+
+// the window's current size is one we chose (the OS may have adjusted the request)
+static void VKimp_NoteWindowedSize( void )
+{
+	int w = 0, h = 0;
+	SDL_GetWindowSize( SDL_window, &w, &h );
+	vkimp_setW = vkimp_seenW = w;
+	vkimp_setH = vkimp_seenH = h;
+}
+
+// give a windowed window its (fitted) requested size, centered
+static void VKimp_SetWindowedSize( int w, int h )
+{
+	VKimp_FitWindowSize( &w, &h );
+	SDL_SetWindowSize( SDL_window, w, h );
+	SDL_SetWindowPosition( SDL_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED );
+	VKimp_NoteWindowedSize();
+}
+
+static void VKimp_RequestFullscreen( qboolean fullscreen )
+{
+	if ( SDL_SetWindowFullscreen( SDL_window, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 ) < 0 ) {
+		ri.Printf( PRINT_WARNING, "VKimp: %s fullscreen failed: %s\n", fullscreen ? "entering" : "leaving", SDL_GetError() );
+		return;
+	}
+	vkimp_fsPending = fullscreen;
+	vkimp_fsPendingTime = Sys_Milliseconds();
+	ri.Printf( PRINT_ALL, "...%s fullscreen\n", fullscreen ? "entering" : "leaving" );
+}
+
+/*
+===============
+VKimp_CheckWindow
+
+Called every frame (IN_SyncWindowSize). Tracks fullscreen transitions and user
+resizes; never re-applies r_fullscreen itself, so it doesn't fight the user.
+===============
+*/
+void VKimp_CheckWindow( void )
+{
+	Uint32 flags;
+	qboolean isFs;
+	int now, w = 0, h = 0;
+
+	if ( !SDL_window || !vkimp_windowValid )
+		return;
+
+	now = Sys_Milliseconds();
+	flags = SDL_GetWindowFlags( SDL_window );
+	isFs = ( flags & SDL_WINDOW_FULLSCREEN ) ? qtrue : qfalse;
+
+	if ( vkimp_fsPending >= 0 ) {
+		// a transition we started: wait for it (the size changes several times meanwhile)
+		if ( isFs == vkimp_fsPending && isFs == VKimp_NSWindowInFullScreenSpace() ) {
+			vkimp_fsPending = -1;
+			vkimp_settleTime = now + VKIMP_SETTLE_MS;
+			VKimp_LogWindow( isFs ? "entered fullscreen" : "left fullscreen" );
+			if ( !isFs ) {
+				// the window comes back at its pre-fullscreen size; apply a size chosen meanwhile
+				int fw = vkimp_window.width, fh = vkimp_window.height;
+				VKimp_FitWindowSize( &fw, &fh );
+				SDL_GetWindowSize( SDL_window, &w, &h );
+				if ( w != fw || h != fh )
+					VKimp_SetWindowedSize( vkimp_window.width, vkimp_window.height );
+				else
+					VKimp_NoteWindowedSize();
+			}
+		} else if ( now - vkimp_fsPendingTime > VKIMP_TRANSITION_TIMEOUT ) {
+			ri.Printf( PRINT_WARNING, "VKimp: fullscreen transition timed out, window is %s\n", isFs ? "fullscreen" : "windowed" );
+			vkimp_fsPending = -1;
+		} else {
+			return;
+		}
+	}
+
+	if ( isFs != VKimp_NSWindowInFullScreenSpace() )
+		return;		// the system is animating into or out of fullscreen
+
+	if ( isFs != vkimp_window.fullscreen ) {
+		// green button, Ctrl+Cmd+F, Window menu, Mission Control, timed-out request
+		vkimp_window.fullscreen = isFs;
+		ri.Cvar_Set( "r_fullscreen", isFs ? "1" : "0" );
+		vkimp_settleTime = now + VKIMP_SETTLE_MS;
+		VKimp_LogWindow( isFs ? "window entered fullscreen, r_fullscreen 1" : "window left fullscreen, r_fullscreen 0" );
+		if ( !isFs )
+			VKimp_NoteWindowedSize();
+		return;
+	}
+
+	if ( isFs || ( flags & SDL_WINDOW_MINIMIZED ) )
+		return;
+
+	// windowed: a size we didn't set that held for a moment is a user resize
+	// (drag, zoom/maximize); keep it as the new window size
+	SDL_GetWindowSize( SDL_window, &w, &h );
+	if ( w != vkimp_seenW || h != vkimp_seenH ) {
+		vkimp_seenW = w;
+		vkimp_seenH = h;
+		vkimp_seenTime = now;
+		return;
+	}
+	if ( now < vkimp_settleTime || now - vkimp_seenTime < VKIMP_RESIZE_STABLE_MS )
+		return;
+	if ( w > 0 && h > 0 && ( w != vkimp_setW || h != vkimp_setH ) ) {
+		vkimp_setW = w;
+		vkimp_setH = h;
+		vkimp_window.width = w;
+		vkimp_window.height = h;
+		ri.Cvar_Set( "r_mode", "-1" );
+		ri.Cvar_Set( "r_customwidth", va( "%d", w ) );
+		ri.Cvar_Set( "r_customheight", va( "%d", h ) );
+		VKimp_LogWindow( "window resized by the user" );
+	}
+}
+
 /*
 ===============
 VKimp_WindowSettingsChanged
 
-qtrue when r_fullscreen, the windowed size (r_mode -1 + r_customwidth/height)
-or r_highdpi differ from the live window. vid_restart then recreates the window.
+qtrue when the live window can't follow the settings in place: r_highdpi differs.
+vid_restart then recreates the window (fullscreen and size changes apply live,
+VKimp_ApplyWindowSettings).
 ===============
 */
 qboolean VKimp_WindowSettingsChanged( void )
@@ -1361,9 +1616,7 @@ qboolean VKimp_WindowSettingsChanged( void )
 		return qfalse;
 
 	VKimp_DesiredWindow( &want );
-	if ( want.highdpi != vkimp_window.highdpi || want.fullscreen != vkimp_window.fullscreen )
-		return qtrue;
-	return !want.fullscreen && ( want.width != vkimp_window.width || want.height != vkimp_window.height );
+	return want.highdpi != vkimp_window.highdpi;
 }
 
 /*
@@ -1371,54 +1624,34 @@ qboolean VKimp_WindowSettingsChanged( void )
 VKimp_ApplyWindowSettings
 
 Bring the live window in line with r_fullscreen and the windowed size, without
-recreating it. The resulting drawable-size change reaches the renderer through
-IN_SyncWindowSize (re.ResizeWindow + CL_WindowResized). Returns qtrue if a change
-remains that needs a new window (r_highdpi).
+recreating it. Returns qtrue if a change remains that needs a new window (r_highdpi).
 ===============
 */
 qboolean VKimp_ApplyWindowSettings( void )
 {
 	vkimpWindow_t want;
-	qboolean isFullscreen, changed = qfalse;
+	qboolean isFs;
 
 	if ( !SDL_window || !vkimp_windowValid )
 		return qfalse;
 
 	VKimp_DesiredWindow( &want );
-	isFullscreen = ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN ) ? qtrue : qfalse;
+	isFs = ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN ) ? qtrue : qfalse;
 
-	if ( want.fullscreen ) {
-		if ( !isFullscreen ) {
-			if ( SDL_SetWindowFullscreen( SDL_window, SDL_WINDOW_FULLSCREEN_DESKTOP ) < 0 ) {
-				ri.Printf( PRINT_WARNING, "VKimp: entering fullscreen failed: %s\n", SDL_GetError() );
-				ri.Cvar_Set( "r_fullscreen", "0" );
-			} else {
-				changed = qtrue;
-			}
-		}
-	} else {
-		if ( isFullscreen ) {
-			if ( SDL_SetWindowFullscreen( SDL_window, 0 ) < 0 )
-				ri.Printf( PRINT_WARNING, "VKimp: leaving fullscreen failed: %s\n", SDL_GetError() );
-			changed = qtrue;
-		}
-		if ( changed || want.width != vkimp_window.width || want.height != vkimp_window.height ) {
-			// windowed sizes are pixels with r_highdpi: convert to points
-			int scale = vkimp_window.highdpi ? VKimp_WindowScale() : 1;
-			SDL_SetWindowSize( SDL_window, want.width / scale, want.height / scale );
-			SDL_SetWindowPosition( SDL_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED );
-			changed = qtrue;
-		}
-	}
-
-	vkimp_window.fullscreen = want.fullscreen && ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN );
-	vkimp_window.width = want.width;
-	vkimp_window.height = want.height;
-
-	if ( changed ) {
-		VKimp_LogWindow( "window mode changed" );
+	if ( want.fullscreen != vkimp_window.fullscreen || ( vkimp_fsPending < 0 && want.fullscreen != isFs ) ) {
+		VKimp_RequestFullscreen( want.fullscreen );
+	} else if ( !want.fullscreen && vkimp_fsPending < 0
+		&& ( want.width != vkimp_window.width || want.height != vkimp_window.height ) ) {
+		VKimp_SetWindowedSize( want.width, want.height );
+		vkimp_settleTime = Sys_Milliseconds() + VKIMP_SETTLE_MS;
+		VKimp_LogWindow( "window size changed" );
 		IN_SyncWindowSize();	// resize the renderer now, before the next present
 	}
+	// a size chosen while (becoming) fullscreen is applied when the window is back
+
+	vkimp_window.fullscreen = want.fullscreen;
+	vkimp_window.width = want.width;
+	vkimp_window.height = want.height;
 
 	return want.highdpi != vkimp_window.highdpi;
 }
@@ -1433,9 +1666,11 @@ void VKimp_Init( glconfig_t *config )
 
 	SDL_SetHint( SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight" );
 #ifdef __APPLE__
-	// Borderless fullscreen in place (instant, like a game) rather than an animated
-	// move to a new Space; makes the live Alt+Enter toggle synchronous.
-	SDL_SetHint( SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0" );
+	// Native fullscreen in its own Space, shared with the green title-bar button,
+	// Ctrl+Cmd+F and the Window menu, so either way in can be undone either way out.
+	// The menu bar and title bar (green button) appear when hovering the top edge.
+	SDL_SetHint( SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "1" );
+	SDL_SetHint( "SDL_VIDEO_MAC_FULLSCREEN_MENU_VISIBILITY", "1" );
 #endif
 
 	if ( !SDL_WasInit( SDL_INIT_VIDEO ) ) {
@@ -1454,48 +1689,56 @@ void VKimp_Init( glconfig_t *config )
 		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, dm.w, dm.h,
 		SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_FULLSCREEN );
 #else
-	// Desktop: honor r_fullscreen (borderless desktop-size fullscreen) and, for a
-	// window, r_customwidth/r_customheight when r_mode is -1 (else 1280x720).
+	// Desktop: a window of r_customwidth x r_customheight points when r_mode is -1
+	// (else 1920x1080), fitted to the display, going native fullscreen if r_fullscreen.
 	// r_highdpi 1 renders at the display's backing resolution (Retina: 2x) instead
-	// of letting the OS upscale; windowed sizes are then in pixels, not points.
+	// of letting the OS upscale; the window's on-screen size is the same either way.
 	{
 		cvar_t *r_highdpi = ri.Cvar_Get( "r_highdpi", "0", CVAR_ARCHIVE | CVAR_LATCH );
 		vkimpWindow_t want;
 		int w, h;
-		Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN;
+		Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
 
-		// archive the window cvars so Alt+Enter / the Video menu persist
+		// archive the window cvars so Alt+Enter / the Video menu / resizes persist;
+		// the defaults only apply with no saved config
 		ri.Cvar_Get( "r_fullscreen", "0", CVAR_ARCHIVE );
 		ri.Cvar_Get( "r_mode", "-1", CVAR_ARCHIVE );
-		ri.Cvar_Get( "r_customwidth", "1280", CVAR_ARCHIVE );
-		ri.Cvar_Get( "r_customheight", "720", CVAR_ARCHIVE );
+		ri.Cvar_Get( "r_customwidth", "1920", CVAR_ARCHIVE );
+		ri.Cvar_Get( "r_customheight", "1080", CVAR_ARCHIVE );
+		ri.Cvar_Get( "r_windowMaxWidth", "0", CVAR_ROM );
+		ri.Cvar_Get( "r_windowMaxHeight", "0", CVAR_ROM );
 
 		VKimp_DesiredWindow( &want );
 		want.highdpi = r_highdpi->integer != 0;	// latched value was applied by Cvar_Get
 		w = want.width; h = want.height;
+		VKimp_FitWindowSize( &w, &h );
 
 		if ( want.highdpi )
 			flags |= SDL_WINDOW_ALLOW_HIGHDPI;
 
-		if ( want.fullscreen ) {
-			w = dm.w; h = dm.h;
-			flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-		}
+		// always created windowed: going fullscreen afterwards keeps this size as the
+		// one the window returns to
 		SDL_window = SDL_CreateWindow( CLIENT_WINDOW_TITLE,
 			SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, h, flags );
 
-		// The scale factor is only known once a window exists: shrink a high-DPI
-		// window so its pixel size, not its point size, matches the request.
-		if ( SDL_window && want.highdpi && !want.fullscreen ) {
-			int scale = VKimp_WindowScale();
-			if ( scale > 1 ) {
-				SDL_SetWindowSize( SDL_window, w / scale, h / scale );
-				SDL_SetWindowPosition( SDL_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED );
+		vkimp_window = want;
+		vkimp_window.fullscreen = qfalse;
+		vkimp_windowValid = SDL_window != NULL;
+		vkimp_fsPending = -1;
+		vkimp_settleTime = Sys_Milliseconds() + VKIMP_SETTLE_MS;
+		if ( SDL_window ) {
+			// refit now that the real title-bar height is known
+			int fw = want.width, fh = want.height;
+			VKimp_FitWindowSize( &fw, &fh );
+			if ( fw != w || fh != h )
+				VKimp_SetWindowedSize( want.width, want.height );
+			VKimp_NoteWindowedSize();
+			SDL_SetWindowMinimumSize( SDL_window, 640, 360 );
+			if ( want.fullscreen ) {
+				vkimp_window.fullscreen = qtrue;
+				VKimp_RequestFullscreen( qtrue );
 			}
 		}
-
-		vkimp_window = want;
-		vkimp_windowValid = SDL_window != NULL;
 	}
 #endif
 	if ( !SDL_window )
