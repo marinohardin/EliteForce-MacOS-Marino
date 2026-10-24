@@ -1305,8 +1305,11 @@ user drag-resize in r_customwidth/height. The drawable-size changes reach the
 renderer through IN_SyncWindowSize (re.ResizeWindow + CL_WindowResized).
 
 VKimp_ApplyWindowSettings applies fullscreen and windowed-size changes to the live
-window (Alt+Enter, vid_restart, Video menu while a SP game runs); only an r_highdpi
-change needs a new window (vid_restart, REF_DESTROY_WINDOW).
+window (Alt+Enter, vid_restart, Video menu while a SP game runs). An r_highdpi
+change needs a new window (the pixel density is fixed when a window is created):
+vid_restart asks for one (VKimp_RequestNewWindow) and, once no fullscreen
+transition is under way, the renderer swaps it in without restarting
+(re.ReplaceWindow -> VKimp_ReplaceWindow), so it works mid-game too.
 */
 #include <SDL_syswm.h>
 #ifdef __APPLE__
@@ -1324,6 +1327,7 @@ void IN_SyncWindowSize( void );			// sdl_input.c
 
 static vkimpWindow_t vkimp_window;		// what the live window is / is becoming
 static qboolean vkimp_windowValid = qfalse;
+static qboolean vkimp_newWindowPending = qfalse;	// replace the window for r_highdpi when it's safe
 
 static int		vkimp_fsPending = -1;	// fullscreen state we asked for until the window reaches it
 static int		vkimp_fsPendingTime;
@@ -1337,11 +1341,10 @@ static int		vkimp_seenW, vkimp_seenH, vkimp_seenTime;	// last observed windowed 
 
 static void VKimp_DesiredWindow( vkimpWindow_t *win )
 {
-	// r_highdpi is latched: a pending value counts as the desired one
-	cvar_t *r_highdpi = ri.Cvar_Get( "r_highdpi", "0", CVAR_ARCHIVE | CVAR_LATCH );
-	const char *hdpi = r_highdpi->latchedString ? r_highdpi->latchedString : r_highdpi->string;
+	// not latched: the window follows r_highdpi on the next vid_restart, live
+	cvar_t *r_highdpi = ri.Cvar_Get( "r_highdpi", "0", CVAR_ARCHIVE );
 
-	win->highdpi = atoi( hdpi ) != 0;
+	win->highdpi = r_highdpi->integer != 0;
 	win->fullscreen = ri.Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
 	win->width = 1920;
 	win->height = 1080;
@@ -1604,7 +1607,7 @@ void VKimp_CheckWindow( void )
 VKimp_WindowSettingsChanged
 
 qtrue when the live window can't follow the settings in place: r_highdpi differs.
-vid_restart then recreates the window (fullscreen and size changes apply live,
+vid_restart then asks for a new window (fullscreen and size changes apply live,
 VKimp_ApplyWindowSettings).
 ===============
 */
@@ -1655,6 +1658,121 @@ qboolean VKimp_ApplyWindowSettings( void )
 
 	return want.highdpi != vkimp_window.highdpi;
 }
+
+/*
+===============
+VKimp_RequestNewWindow / VKimp_NewWindowDue
+
+vid_restart with a changed r_highdpi asks for a new window. It is swapped in
+(CL_ReplaceWindow -> re.ReplaceWindow) right away, or from IN_SyncWindowSize once
+a fullscreen transition or minimize is over: a window can't be replaced while
+it is animating into or out of its fullscreen Space.
+===============
+*/
+void VKimp_RequestNewWindow( void )
+{
+	vkimp_newWindowPending = qtrue;
+}
+
+qboolean VKimp_NewWindowDue( void )
+{
+	Uint32 flags;
+	qboolean isFs;
+
+	if ( !vkimp_newWindowPending )
+		return qfalse;
+	if ( !SDL_window || !vkimp_windowValid ) {
+		vkimp_newWindowPending = qfalse;
+		return qfalse;
+	}
+	flags = SDL_GetWindowFlags( SDL_window );
+	isFs = ( flags & SDL_WINDOW_FULLSCREEN ) ? qtrue : qfalse;
+	if ( vkimp_fsPending >= 0 || isFs != VKimp_NSWindowInFullScreenSpace() || ( flags & SDL_WINDOW_MINIMIZED ) )
+		return qfalse;	// wait for the transition / restore
+	vkimp_newWindowPending = qfalse;
+	if ( !VKimp_WindowSettingsChanged() )
+		return qfalse;	// changed back meanwhile
+	return qtrue;
+}
+
+// the live window's drawable size in pixels
+void VKimp_DrawableSize( int *width, int *height )
+{
+	*width = *height = 0;
+	if ( SDL_window )
+		SDL_Vulkan_GetDrawableSize( SDL_window, width, height );
+}
+
+/*
+===============
+VKimp_ReplaceWindow
+
+ri.VKimp_ReplaceWindow, called by the renderer (vk_replace_window) after it
+destroyed the old window's surface and swapchain. Creates a window for the current
+r_highdpi with the same on-screen size and position, moves input to it and
+destroys the old one; a fullscreen window is created at its windowed size and
+taken back into fullscreen (a new Space; the renderer follows via
+IN_SyncWindowSize when the transition ends). Fills config's video size from the
+new drawable. On failure the old window is kept (qfalse).
+===============
+*/
+qboolean VKimp_ReplaceWindow( glconfig_t *config )
+{
+	vkimpWindow_t want;
+	SDL_Window *oldWindow = SDL_window, *newWindow;
+	Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
+	int x = SDL_WINDOWPOS_CENTERED, y = SDL_WINDOWPOS_CENTERED, w, h, dw = 0, dh = 0;
+	qboolean wasFs;
+
+	if ( !oldWindow || !vkimp_windowValid )
+		return qfalse;
+
+	VKimp_DesiredWindow( &want );
+	wasFs = ( SDL_GetWindowFlags( oldWindow ) & SDL_WINDOW_FULLSCREEN ) ? qtrue : qfalse;
+	if ( wasFs ) {
+		// it comes back from fullscreen at the windowed size, centered
+		w = vkimp_window.width;
+		h = vkimp_window.height;
+		VKimp_FitWindowSize( &w, &h );
+	} else {
+		SDL_GetWindowPosition( oldWindow, &x, &y );
+		SDL_GetWindowSize( oldWindow, &w, &h );
+	}
+	if ( want.highdpi )
+		flags |= SDL_WINDOW_ALLOW_HIGHDPI;
+
+	newWindow = SDL_CreateWindow( CLIENT_WINDOW_TITLE, x, y, w, h, flags );
+	if ( !newWindow ) {
+		ri.Printf( PRINT_WARNING, "VKimp_ReplaceWindow: SDL_CreateWindow failed: %s\n", SDL_GetError() );
+		return qfalse;
+	}
+	SDL_SetWindowMinimumSize( newWindow, 640, 360 );
+
+	ri.IN_Shutdown();	// releases the mouse grab / text input of the old window
+	SDL_DestroyWindow( oldWindow );
+	SDL_window = newWindow;
+	SDL_RaiseWindow( SDL_window );
+
+	vkimp_window.highdpi = want.highdpi;
+	vkimp_fsPending = -1;
+	vkimp_settleTime = Sys_Milliseconds() + VKIMP_SETTLE_MS;
+	VKimp_NoteWindowedSize();
+	if ( wasFs )
+		VKimp_RequestFullscreen( qtrue );	// vkimp_window.fullscreen stays qtrue
+
+	SDL_Vulkan_GetDrawableSize( SDL_window, &dw, &dh );
+	if ( dw <= 0 || dh <= 0 )
+		SDL_GetWindowSize( SDL_window, &dw, &dh );
+	config->vidWidth = dw;
+	config->vidHeight = dh;
+	config->windowAspect = (float)dw / (float)dh;
+	config->isFullscreen = ( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_FULLSCREEN ) ? qtrue : qfalse;
+
+	VKimp_LogWindow( want.highdpi ? "new window, r_highdpi 1" : "new window, r_highdpi 0" );
+
+	ri.IN_Init( SDL_window );	// input follows the new window (drawable size noted)
+	return qtrue;
+}
 #endif // !__ANDROID__
 
 void VKimp_Init( glconfig_t *config )
@@ -1694,7 +1812,6 @@ void VKimp_Init( glconfig_t *config )
 	// r_highdpi 1 renders at the display's backing resolution (Retina: 2x) instead
 	// of letting the OS upscale; the window's on-screen size is the same either way.
 	{
-		cvar_t *r_highdpi = ri.Cvar_Get( "r_highdpi", "0", CVAR_ARCHIVE | CVAR_LATCH );
 		vkimpWindow_t want;
 		int w, h;
 		Uint32 flags = SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
@@ -1709,7 +1826,6 @@ void VKimp_Init( glconfig_t *config )
 		ri.Cvar_Get( "r_windowMaxHeight", "0", CVAR_ROM );
 
 		VKimp_DesiredWindow( &want );
-		want.highdpi = r_highdpi->integer != 0;	// latched value was applied by Cvar_Get
 		w = want.width; h = want.height;
 		VKimp_FitWindowSize( &w, &h );
 
@@ -1725,6 +1841,7 @@ void VKimp_Init( glconfig_t *config )
 		vkimp_window.fullscreen = qfalse;
 		vkimp_windowValid = SDL_window != NULL;
 		vkimp_fsPending = -1;
+		vkimp_newWindowPending = qfalse;
 		vkimp_settleTime = Sys_Milliseconds() + VKIMP_SETTLE_MS;
 		if ( SDL_window ) {
 			// refit now that the real title-bar height is known
@@ -1774,6 +1891,7 @@ void VKimp_Shutdown( qboolean unloadDLL )
 	if ( SDL_window ) { SDL_DestroyWindow( SDL_window ); SDL_window = NULL; }
 #ifndef __ANDROID__
 	vkimp_windowValid = qfalse;
+	vkimp_newWindowPending = qfalse;
 	// window-recreating vid_restart: keep SDL video and the Vulkan loader up
 	if ( !unloadDLL )
 		return;

@@ -118,6 +118,10 @@ typedef struct {
 
 #ifdef USE_FLEXIBLE_DISPLAY
 	qboolean	(*ResizeWindow)( int width, int height );
+#ifndef __ANDROID__
+	// desktop r_highdpi switch: replace the window (VKimp_ReplaceWindow) keeping all media
+	qboolean	(*ReplaceWindow)( void );
+#endif
 #endif
 } refexport_t;
 
@@ -225,6 +229,11 @@ typedef struct {
 	void  (*VKimp_Shutdown)( qboolean unloadDLL );
 	void *(*VK_GetInstanceProcAddr)( VkInstance instance, const char *name );
 	qboolean (*VK_CreateSurface)( VkInstance instance, VkSurfaceKHR *surface );
+#ifndef __ANDROID__
+	// replace the window with one for the current r_highdpi, same on-screen size; fills
+	// config's video size. The caller destroyed the old window's surface beforehand.
+	qboolean (*VKimp_ReplaceWindow)( glconfig_t *config );
+#endif
 #endif
 
 	// SMP / render-thread support (r_smp). The renderer only calls these when it

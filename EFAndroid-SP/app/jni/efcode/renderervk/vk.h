@@ -263,6 +263,9 @@ void vk_init_descriptors( void );
 // Shutdown vulkan subsystem by releasing resources acquired by Vk_Instance.
 void vk_shutdown( refShutdownCode_t code );
 void vk_resize_swapchain( void );
+#if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
+qboolean vk_replace_window( void );
+#endif
 
 // Releases vulkan resources allocated during program execution.
 // This effectively puts vulkan subsystem into initial state (the state we have after vk_initialize call).

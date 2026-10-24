@@ -1247,7 +1247,7 @@ typedef enum{
 	// Append-only, desktop video menu "WINDOW SIZE" values (text assigned in C, ui_video.cpp).
 	MNT_VIDRES_FIRST,
 	MNT_VIDRES_LAST = MNT_VIDRES_FIRST + 15,
-	// Append-only, desktop video menu HIGH-DPI value while in a game (text assigned in ui_video.cpp).
+	// Append-only; unused since High-DPI applies live in a game (kept so later values don't shift).
 	MNT_HIGHDPI_OFF_MAINMENU,
 	MNT_HIGHDPI_ON_MAINMENU,
 	MNT_MAX

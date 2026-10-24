@@ -14,17 +14,6 @@ int s_enable_Names[] =
 	MNT_NONE
 };
 
-#ifndef __ANDROID__
-// HIGH-DPI values shown (greyed out) while a game is running: the setting needs a new
-// window, which can only be created from the main menu (or on the next launch).
-static int s_highdpi_ingame_Names[] =
-{
-	MNT_HIGHDPI_OFF_MAINMENU,
-	MNT_HIGHDPI_ON_MAINMENU,
-	MNT_NONE
-};
-#endif
-
 // Precache stuff for VideoScreens
 static struct 
 {
@@ -513,20 +502,8 @@ static void UpdateMenuItemValues( void )
 	s_video_apply_action.generic.flags &= ~QMF_BLINK;
 
 #ifdef UI_DESKTOP_VIDEO
-	// HIGH-DPI needs a new window, which can't be created mid-game: grey it out there
-	// and say where to change it. From the main menu Apply recreates the window at once.
-	if ( ingameFlag || ui.GetClientState() >= CA_CONNECTED )
-	{
-		s_video_highdpi_list.generic.flags |= QMF_GRAYED;
-		s_video_highdpi_list.listnames = s_highdpi_ingame_Names;
-		s_video_highdpi_list.curvalue = s_ivo_highdpi;	// no pending change from here
-	}
-	else
-	{
-		s_video_highdpi_list.generic.flags &= ~QMF_GRAYED;
-		s_video_highdpi_list.listnames = s_enable_Names;
-	}
-
+	// HIGH-DPI applies live on Apply, in a game too (the engine swaps in a new window
+	// without restarting the renderer).
 	s_video_highdpi_list.updated = 0;
 	if ( s_ivo_highdpi != s_video_highdpi_list.curvalue )
 	{
@@ -987,6 +964,13 @@ static void ApplyChanges( void *unused, int notification )
 	}
 
 	ui.Cmd_ExecuteText( EXEC_APPEND, "vid_restart\n" );
+
+#ifdef UI_DESKTOP_VIDEO
+	// window settings (and High-DPI) apply live without reloading the menu: the
+	// applied values are the new baseline, so Apply stops blinking
+	GetInitialVideoVars();
+	UpdateMenuItemValues();
+#endif
 }
 
 /*
@@ -1652,8 +1636,6 @@ static void VideoData_MenuInit( void )
 	menu_button_text[MBT_VIDEOFULLSCREEN][1] = "FULLSCREEN, ALSO ALT+ENTER / GREEN BUTTON";
 	menu_button_text[MBT_VIDEOHIGHDPI][0] = "HIGH-DPI";
 	menu_button_text[MBT_VIDEOHIGHDPI][1] = "RENDER AT FULL RETINA RESOLUTION";
-	menu_normal_text[MNT_HIGHDPI_OFF_MAINMENU] = "OFF - MAIN MENU";
-	menu_normal_text[MNT_HIGHDPI_ON_MAINMENU] = "ON - MAIN MENU";
 #endif
 
 	Menu_AddItem( &s_video_menu, ( void * )&s_video_mode_option_list);
