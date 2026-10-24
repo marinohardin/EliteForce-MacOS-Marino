@@ -169,10 +169,14 @@ static const videoRes_t s_videoRes[] =
 #define NUM_VIDEO_RES	( sizeof( s_videoRes ) / sizeof( s_videoRes[0] ) )
 
 static char			s_videoResText[NUM_VIDEO_RES + 1][16];
-static int			s_videoResNames[NUM_VIDEO_RES + 2];	// sizes, current custom size, MNT_NONE
-static videoRes_t	s_videoResCustom;					// the r_customwidth/height not in the table
+static int			s_videoResNames[NUM_VIDEO_RES + 2];	// shown sizes, MNT_NONE
+static videoRes_t	s_videoResShown[NUM_VIDEO_RES + 1];	// table sizes that fit the display + the current size
+static videoRes_t	s_videoResCurrent;					// r_customwidth x r_customheight when built
 static int			s_ivo_highdpi;
 static int			s_ivo_resolution;
+
+static videoRes_t	Video_CurrentWindowSize( void );
+static void			Video_BuildResolutionList( void );
 #endif
 
 void UI_VideoDriverMenu( void );
@@ -473,6 +477,17 @@ static void UpdateMenuItemValues( void )
 		{
 			s_ivo.fullscreen = fs;
 			s_video_fullscreen_list.curvalue = fs;
+		}
+	}
+
+	// follow a window resize (drag, zoom) made while this menu is open (unless the row was changed here)
+	{
+		videoRes_t res = Video_CurrentWindowSize();
+		if ( ( res.w != s_videoResCurrent.w || res.h != s_videoResCurrent.h )
+			&& s_video_resolution_list.curvalue == s_ivo_resolution )
+		{
+			Video_BuildResolutionList();
+			s_ivo_resolution = s_video_resolution_list.curvalue;
 		}
 	}
 
@@ -876,12 +891,13 @@ static void ApplyChanges( void *unused, int notification )
 	// Adding 2 because we don't show 320x200 and MNT_400X300
 	// Video Resolution Setting
 #ifdef UI_DESKTOP_VIDEO
-	// Desktop: the window size is r_mode -1 + r_customwidth/height (pixels with r_highdpi);
-	// fullscreen is borderless at the desktop resolution. The aspect row only sets cg_forceAspect.
+	// Desktop: the window size is r_mode -1 + r_customwidth/height, in points (on-screen size;
+	// r_highdpi renders it at the Retina pixel size); fullscreen is the native macOS fullscreen
+	// at the display resolution. The aspect row only sets cg_forceAspect.
 	{
-		videoRes_t res = s_videoResCustom;
-		if ( s_video_resolution_list.curvalue >= 0 && s_video_resolution_list.curvalue < (int)NUM_VIDEO_RES )
-			res = s_videoRes[s_video_resolution_list.curvalue];
+		videoRes_t res = s_videoResCurrent;
+		if ( s_video_resolution_list.curvalue >= 0 && s_video_resolution_list.curvalue <= (int)NUM_VIDEO_RES )
+			res = s_videoResShown[s_video_resolution_list.curvalue];
 		ui.Cvar_SetValue( "r_mode", -1 );
 		ui.Cvar_SetValue( "r_customwidth", res.w );
 		ui.Cvar_SetValue( "r_customheight", res.h );
@@ -1168,48 +1184,70 @@ Video_MenuInit
 #ifdef UI_DESKTOP_VIDEO
 /*
 =================
-Video_BuildResolutionList
+Video_CurrentWindowSize
 
-Window-size choices: the common 16:9 / 16:10 sizes, plus the current
-r_customwidth x r_customheight when it isn't one of them. Selects the current size.
+The windowed size in points: r_customwidth x r_customheight (r_mode -1), else
+VKimp_Init's default.
 =================
 */
-static void Video_BuildResolutionList( void )
+static videoRes_t Video_CurrentWindowSize( void )
 {
-	char	buf[32];
-	int		i, n, w = 1280, h = 720, cur = -1;	// VKimp_Init's size when r_mode isn't -1
+	char		buf[32];
+	videoRes_t	res = { 1920, 1080 };
 
 	if ( (int)ui.Cvar_VariableValue( "r_mode" ) == -1 )
 	{
 		ui.Cvar_VariableStringBuffer( "r_customwidth", buf, sizeof( buf ) );
-		w = atoi( buf );
+		int w = atoi( buf );
 		ui.Cvar_VariableStringBuffer( "r_customheight", buf, sizeof( buf ) );
-		h = atoi( buf );
-		if ( w <= 0 || h <= 0 )
+		int h = atoi( buf );
+		if ( w > 0 && h > 0 )
 		{
-			w = 1280;
-			h = 720;
+			res.w = w;
+			res.h = h;
 		}
 	}
+	return res;
+}
+
+/*
+=================
+Video_BuildResolutionList
+
+Window-size choices (on-screen sizes in points): the common 16:9 / 16:10 sizes
+that fit the display (r_windowMaxWidth/Height, set by the engine), plus the
+current size when it isn't one of them. Selects the current size.
+=================
+*/
+static void Video_BuildResolutionList( void )
+{
+	int			i, n = 0, cur = -1;
+	int			maxW = (int)ui.Cvar_VariableValue( "r_windowMaxWidth" );
+	int			maxH = (int)ui.Cvar_VariableValue( "r_windowMaxHeight" );
+	videoRes_t	res = Video_CurrentWindowSize();
+
+	s_videoResCurrent = res;
 
 	for ( i = 0; i < (int)NUM_VIDEO_RES; i++ )
 	{
-		Com_sprintf( s_videoResText[i], sizeof( s_videoResText[i] ), "%dx%d", s_videoRes[i].w, s_videoRes[i].h );
-		menu_normal_text[MNT_VIDRES_FIRST + i] = s_videoResText[i];
-		s_videoResNames[i] = MNT_VIDRES_FIRST + i;
-		if ( s_videoRes[i].w == w && s_videoRes[i].h == h )
-			cur = i;
+		qboolean isCurrent = ( s_videoRes[i].w == res.w && s_videoRes[i].h == res.h ) ? qtrue : qfalse;
+		if ( !isCurrent && maxW > 0 && maxH > 0 && ( s_videoRes[i].w > maxW || s_videoRes[i].h > maxH ) )
+			continue;	// larger than the screen
+		if ( isCurrent )
+			cur = n;
+		s_videoResShown[n++] = s_videoRes[i];
 	}
-	n = NUM_VIDEO_RES;
-
-	s_videoResCustom.w = w;
-	s_videoResCustom.h = h;
 	if ( cur < 0 )
 	{
-		Com_sprintf( s_videoResText[n], sizeof( s_videoResText[n] ), "%dx%d", w, h );
-		menu_normal_text[MNT_VIDRES_FIRST + n] = s_videoResText[n];
-		s_videoResNames[n] = MNT_VIDRES_FIRST + n;
-		cur = n++;
+		cur = n;
+		s_videoResShown[n++] = res;
+	}
+
+	for ( i = 0; i < n; i++ )
+	{
+		Com_sprintf( s_videoResText[i], sizeof( s_videoResText[i] ), "%dx%d", s_videoResShown[i].w, s_videoResShown[i].h );
+		menu_normal_text[MNT_VIDRES_FIRST + i] = s_videoResText[i];
+		s_videoResNames[i] = MNT_VIDRES_FIRST + i;
 	}
 	s_videoResNames[n] = MNT_NONE;
 
@@ -1584,11 +1622,11 @@ static void VideoData_MenuInit( void )
 	menu_button_text[MBT_VIDEOMODE][1] = "ASPECT RATIO";
 #ifdef UI_DESKTOP_VIDEO
 	menu_button_text[MBT_VIDEORESOLUTION][0] = "WINDOW SIZE";
-	menu_button_text[MBT_VIDEORESOLUTION][1] = "WINDOW SIZE WHEN NOT FULLSCREEN";
+	menu_button_text[MBT_VIDEORESOLUTION][1] = "ON-SCREEN WINDOW SIZE WHEN NOT FULLSCREEN";
 	menu_button_text[MBT_VIDEOFULLSCREEN][0] = "FULLSCREEN";
-	menu_button_text[MBT_VIDEOFULLSCREEN][1] = "BORDERLESS FULLSCREEN AT DESKTOP RESOLUTION";
+	menu_button_text[MBT_VIDEOFULLSCREEN][1] = "FULLSCREEN, ALSO ALT+ENTER / GREEN BUTTON";
 	menu_button_text[MBT_VIDEOHIGHDPI][0] = "HIGH-DPI";
-	menu_button_text[MBT_VIDEOHIGHDPI][1] = "RENDER AT NATIVE RETINA RESOLUTION";
+	menu_button_text[MBT_VIDEOHIGHDPI][1] = "RENDER AT FULL RETINA RESOLUTION";
 #endif
 
 	Menu_AddItem( &s_video_menu, ( void * )&s_video_mode_option_list);
