@@ -812,11 +812,22 @@ Sys_ShowIP
 ==================
 */
 void Sys_ShowIP(void) {
-	// Local interface addresses are intentionally NOT logged. Enumerating them
-	// prints every LAN, VPN/tunnel, and public IPv6 address the device holds,
-	// which is personally identifying and was leaking into user-shared crash
-	// logs. The addresses are still gathered (numIP/localIP) for binding; this
-	// only suppresses echoing them to the console.
+	// Local interface addresses are NOT logged at startup: enumerating them prints
+	// every LAN, VPN/tunnel, and public IPv6 address the device holds, which is
+	// personally identifying and was leaking into user-shared crash logs. In
+	// Holomatch the showip command still lists the IPv4 ones on request, so a
+	// host can find the address to give LAN players.
+	int i;
+	char addrbuf[NET_ADDRSTRMAXLEN];
+
+	if ( !Com_Holomatch() || !Cmd_Argc() || Q_stricmp( Cmd_Argv( 0 ), "showip" ) )
+		return;
+	for ( i = 0; i < numIP; i++ ) {
+		if ( localIP[i].type != NA_IP )
+			continue;
+		Sys_SockaddrToString( addrbuf, sizeof( addrbuf ), (struct sockaddr *) &localIP[i].addr );
+		Com_Printf( "IP: %s\n", addrbuf );
+	}
 }
 
 

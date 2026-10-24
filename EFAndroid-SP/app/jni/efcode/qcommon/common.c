@@ -2969,7 +2969,8 @@ void Com_Init( char *commandLine ) {
 
 	Cvar_Get( "com_novmcompat", "1", CVAR_ROM); // set to 1 to indicate VMs are run by the new engine.
 
-	s = va("%s %s %s", Q3_VERSION, PLATFORM_STRING, PRODUCT_DATE );
+	// Holomatch reports itself like lilium-voyager ("Lilium Voyager HM"), not as SP
+	s = va("%s %s %s", Com_Holomatch() ? "Lilium Voyager HM " PRODUCT_VERSION : Q3_VERSION, PLATFORM_STRING, PRODUCT_DATE );
 	com_version = Cvar_Get ("version", s, CVAR_ROM | CVAR_SERVERINFO );
 	com_gamename = Cvar_Get("com_gamename", GAMENAME_FOR_MASTER, CVAR_SERVERINFO | CVAR_INIT);
 	com_protocol = Cvar_Get("com_protocol", va("%i", PROTOCOL_VERSION), CVAR_SERVERINFO | CVAR_INIT);
@@ -3017,7 +3018,7 @@ void Com_Init( char *commandLine ) {
 		// if the user didn't give any commands, run default action
 		if ( !com_dedicated->integer ) {
 #ifdef CINEMATICS_LOGO
-			// the SP boot logo; Holomatch's ui.qvm plays its own intro
+			// the SP boot logo; retail Holomatch has none
 			if ( !Com_Holomatch() )
 				Cbuf_AddText ("cinematic " CINEMATICS_LOGO "\n");
 #endif

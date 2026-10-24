@@ -606,7 +606,9 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 	// positional sound, so SP cinematic/dialog VO (e.g. the Tuvok tutorial narration, played 3D at
 	// the NPC) faded with distance — retail plays CHAN_VOICE at full volume regardless of position.
 	// Force full volume on channel 3 to match retail; CHAN_VOICE_ATTEN (4) still attenuates normally.
-	if ( entchannel == 3 /*CHAN_VOICE*/ && !fullVolume ) {
+	// Single player only: Holomatch keeps Q3's channels, where 3 is every player's positional
+	// pain/death/jump/taunt voice.
+	if ( !Com_Holomatch() && entchannel == 3 /*CHAN_VOICE*/ && !fullVolume ) {
 		fullVolume = qtrue;
 	}
 #endif

@@ -618,7 +618,7 @@ static int CL_GetUIScreenPlacement( void ) {
 	// menu touch/mouse hit-testing AND the soft-keyboard IME rect (CL_AdjustFromUI) aligned with the
 	// pillarboxed draw. Off (default) -> falls through to the existing "16:9 FILL" stretch. The same engine
 	// cvar drives the draw side, so the two can't disagree. Overrides the cl_viewmode placement on purpose.
-	if ( Cvar_VariableIntegerValue( "cg_forceAspect" ) ) {
+	if ( !Com_Holomatch() && Cvar_VariableIntegerValue( "cg_forceAspect" ) ) {	// an SP cvar
 		return SCR_VERT_CENTER | SCR_HOR_CENTER;
 	}
 
@@ -633,7 +633,8 @@ static int CL_GetUIScreenPlacement( void ) {
 		}
 	} else if ( cl_viewmode->integer == 5 ) {
 		placement = SCR_VERT_STRETCH | SCR_HOR_STRETCH;
-	} else if ( cl_viewmode->integer >= 4 ) {
+	} else if ( cl_viewmode->integer >= 4 && !Com_Holomatch() ) {
+		// (Holomatch keeps lilium's 4:3 menu here, below.)
 		// modes 4+ = the stretch family ("16:9 FILL" on the EF Android port):
 		// the menu stretches to fill like the in-game HUD already does at
 		// mode >= 4 (EF's ui.qvm has no ui_new, so the old check left it

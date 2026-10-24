@@ -3277,6 +3277,10 @@ static void CL_RecoverDeviceLost( void ) {
 	// exactly in the situation that provokes the loss (a heavy transition).
 	if ( SP_IsActive() ) {
 		Cbuf_AddText( "load auto\n" );
+	} else if ( Com_Holomatch() ) {
+		// Holomatch's cgame and ui hold handles from the lost device: restart
+		// them like a vid_restart does
+		Cbuf_AddText( "vid_restart\n" );
 	}
 
 	recovering = qfalse;
