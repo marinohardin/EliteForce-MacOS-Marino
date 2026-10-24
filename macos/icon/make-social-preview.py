@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render the GitHub social preview image (1280x640) to docs/social-preview.png:
-the app icon and the project's name on a dark starfield. No game artwork or
-trademarked logos.
+the app icon and the game's name in plain text on a dark starfield. No game
+artwork or logos.
 
     python3 macos/icon/make-social-preview.py      (needs Pillow; macOS for the Avenir Next font)
 
@@ -74,14 +74,16 @@ def main():
     over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(over)
     x = 560
-    d.text((x, 150), "Elite Force", font=font(HEAVY, 104), fill=WHITE)
-    d.text((x + 4, 268), "for Mac", font=font(DEMI, 54), fill=GOLD)
-    d.rectangle((x + 4, 348, x + 120, 352), fill=GOLD)
-    d.text((x + 4, 378), "Single player + Holomatch multiplayer", font=font(MEDIUM, 34), fill=SOFT)
-    px = x + 4
-    for t in ("Apple Silicon", "LAN & internet servers", "Retina"):
-        px = pill(d, px, 436, t, font(MEDIUM, 24))
-    d.text((x + 4, 540), "Marino's Build  ·  unofficial fan port",
+    d.text((x + 4, 104), "Star Trek: Voyager", font=font(DEMI, 32), fill=SOFT)
+    d.text((x, 136), "Elite Force", font=font(HEAVY, 104), fill=WHITE)
+    d.text((x + 4, 254), "for Mac", font=font(DEMI, 54), fill=GOLD)
+    d.rectangle((x + 4, 334, x + 120, 338), fill=GOLD)
+    d.text((x + 4, 358), "Single player + Holomatch multiplayer", font=font(MEDIUM, 34), fill=SOFT)
+    for row, tags in ((414, ("Apple Silicon", "Modern Networking")), (470, ("Dedicated Hosting", "Retina"))):
+        px = x + 4
+        for t in tags:
+            px = pill(d, px, row, t, font(MEDIUM, 24))
+    d.text((x + 4, 552), "Marino's Build  ·  unofficial fan port",
         font=font(REGULAR, 22), fill=DIM)
     img.alpha_composite(over)
     img.convert("RGB").save(OUT, optimize=True)
