@@ -277,7 +277,8 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
 - **App menu during the launcher.** SDL's About/Hide/Quit items did nothing during the modal
   sessions. They are now retargeted to an object that works when modal while the launcher or
   the server window is up.
-- **Open points.** Until dedicated mode is headless, the child also opens a game window. A
-  non-DEDICATED build's dedicated server reads and writes `hmconfig.cfg` (`Q3CONFIG_CFG`), the
-  same file as the Holomatch client, and so can overwrite a running client's settings when it
-  quits.
+- **With the headless server** (srv-engine): the server window reads its "Server ready: map …
+  port …" line (after every map load; the port is the one bound, which Play on This Mac uses),
+  and explains exit 1 (no game data) and 3 (bad `fs_basepath`). The server keeps its own
+  `hmconfig_server.cfg`, so it no longer clashes with a local game. Holomatch's LAN search only
+  probes ports 27960–27963; other ports work by address only, and the launcher warns about them.

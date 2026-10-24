@@ -871,9 +871,11 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		[players appendString: @" · no bots"];
 	[srvPlayers setStringValue: players];
 
-	[srvNetwork setStringValue: [NSString stringWithFormat: @"%@ · port %ld%@",
+	[srvNetwork setStringValue: [NSString stringWithFormat: @"%@ · port %ld%@%@",
 		server.internet ? @"Internet" : @"Local network only", (long)server.port,
+		server.port < 27960 || server.port > 27963 ? @" (not listed in the Join menu)" : @"",
 		[server.password length] ? @" · password" : @""]];
+	[srvNetwork setTextColor: server.port < 27960 || server.port > 27963 ? [NSColor systemOrangeColor] : [NSColor labelColor]];
 	[srvAddress setStringValue: [NSString stringWithFormat: @"%@:%ld", VSP_LANAddress() ? VSP_LANAddress() : @"127.0.0.1",
 		(long)server.port]];
 }

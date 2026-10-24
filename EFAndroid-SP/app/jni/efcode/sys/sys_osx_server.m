@@ -22,9 +22,14 @@ It is compiled with ARC (see the macOS CMakeLists.txt).
 The child is started as
 	<app>/Contents/MacOS/<exe> +set com_holomatch 1 +set dedicated 1|2
 		+set net_port <port> [+set fs_basepath <folder>] +exec vsp_server.cfg
-and is expected to run headless, read console commands from stdin, print
-"Server ready: <hostname> map <map> port <port>" once up, and quit on "quit"
-or SIGTERM. Until then, the first "status" answer with a map counts as ready.
+and runs headless: console commands are read from stdin, output is plain
+text on stdout, and after every map load it prints
+	Server ready: map <map> port <bound port> gametype <n> maxclients <n>
+		dedicated <1|2> hostname <name>
+("quit" or SIGTERM exit 0; no game data exits 1, a bad fs_basepath 3). The
+bound port can be up to 9 above net_port when that is taken. A "status"
+answer with a map also counts as ready. Holomatch's LAN search only probes
+ports 27960-27963: other ports work, but only by address.
 
 Retail rules (from the Holomatch ui.qvm's Create Server menu):
   g_gametype 0 Free For All, 1 Tournament, 3 Team Holomatch, 4 Capture the
@@ -74,6 +79,11 @@ With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 #define KEY_SERVERSETTINGS	@"ServerSettings"
 #define SERVER_CFG			@"vsp_server.cfg"
 #define DEFAULT_PORT		27960
+// Holomatch's LAN search (localservers) only probes these
+#define LAN_PORT_FIRST		27960
+#define LAN_PORT_LAST		27963
+
+static BOOL LANDiscoverable( NSInteger port )	{ return port >= LAN_PORT_FIRST && port <= LAN_PORT_LAST; }
 
 static BOOL TestEnvSet( const char *name )
 {
@@ -1567,7 +1577,7 @@ static NSView *Boxed( NSView *v )
 		@[ VSP_Label( @"Max players:", Body(), nil ), maxPlayers.view ],
 		@[ VSP_Label( @"Network:", Body(), nil ), lanButton ],
 		@[ [NSGridCell emptyContentView], internetButton ],
-		@[ VSP_Label( @"Port:", Body(), nil ), HStack( @[ port.view, VSP_Label( @"UDP · LAN players see 27960–27963 in the server browser", Small(), [NSColor secondaryLabelColor] ) ], 8 ) ],
+		@[ VSP_Label( @"Port:", Body(), nil ), HStack( @[ port.view, VSP_Label( @"UDP · 27960–27963 show up in the Join menu", Small(), [NSColor secondaryLabelColor] ) ], 8 ) ],
 		@[ [NSGridCell emptyContentView], networkHint ],
 		@[ VSP_Label( @"Downloads:", Body(), nil ), downloads ],
 		@[ [NSGridCell emptyContentView], Hint( @"Add-on maps only: the retail and Expansion Pack files are never sent.", 400 ) ],
@@ -1590,9 +1600,14 @@ static NSView *Boxed( NSView *v )
 {
 	[lanButton setState: edit.internet ? NSControlStateValueOff : NSControlStateValueOn];
 	[internetButton setState: edit.internet ? NSControlStateValueOn : NSControlStateValueOff];
-	[networkHint setStringValue: edit.internet ?
-		[NSString stringWithFormat: @"Players outside your network need UDP port %ld forwarded to this Mac on your router.", (long)edit.port] :
-		@"Players on your network find it in Holomatch's Join menu."];
+	if( !LANDiscoverable( edit.port ) )
+		[networkHint setStringValue: @"Outside 27960–27963, Holomatch's Join menu won't find the server on your network: "
+			@"players have to connect by address."];
+	else
+		[networkHint setStringValue: edit.internet ?
+			[NSString stringWithFormat: @"Players outside your network need UDP port %ld forwarded to this Mac on your router.", (long)edit.port] :
+			@"Players on your network find it in Holomatch's Join menu."];
+	[networkHint setTextColor: LANDiscoverable( edit.port ) ? [NSColor secondaryLabelColor] : [NSColor systemOrangeColor]];
 }
 
 - (void)showAll
@@ -2056,11 +2071,16 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[address setStringValue: [self addressString]];
 	if( !lanAddress )
 		[addressHint setStringValue: @"This Mac isn't on a network: only Play on This Mac can join."];
+	else if( !LANDiscoverable( port ) )
+		[addressHint setStringValue: [NSString stringWithFormat: @"Port %ld is outside 27960–27963, so Holomatch's Join menu "
+			@"won't list it on your network: players connect to this address.%@", (long)port,
+			settings.internet ? @" From the internet: your public address, with the port forwarded." : @""]];
 	else if( settings.internet )
 		[addressHint setStringValue: [NSString stringWithFormat: @"On your network, players find it in Holomatch's Join menu. "
 			@"From the internet they connect to your public address, with UDP port %ld forwarded to this Mac.", (long)port]];
 	else
 		[addressHint setStringValue: @"Players on your network find it in Holomatch's Join menu, or connect to this address."];
+	[addressHint setTextColor: LANDiscoverable( port ) || !lanAddress ? [NSColor secondaryLabelColor] : [NSColor systemOrangeColor]];
 	[addressHint setToolTip: [addressHint stringValue]];
 
 	if( m )
@@ -2247,7 +2267,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	if( !rowRE )
 	{
 		rowRE = [NSRegularExpression regularExpressionWithPattern: @"^\\s*(\\d+)\\s+(-?\\d+)\\s+(\\d+|CON|ZMB)\\s(.*)$" options: 0 error: NULL];
-		readyRE = [NSRegularExpression regularExpressionWithPattern: @"^Server ready: (.*) map (\\S+) port (\\d+)" options: 0 error: NULL];
+		readyRE = [NSRegularExpression regularExpressionWithPattern: @"^Server ready: map (\\S+) port (\\d+)" options: 0 error: NULL];
 		portRE = [NSRegularExpression regularExpressionWithPattern: @"^Opening IP socket: [^ ]*:(\\d+)" options: 0 error: NULL];
 	}
 	if( echo )
@@ -2304,8 +2324,11 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	}
 	else if( ( m = [readyRE firstMatchInString: line options: 0 range: NSMakeRange( 0, [line length] )] ) )
 	{
-		currentMap = [line substringWithRange: [m rangeAtIndex: 2]];
-		port = [[line substringWithRange: [m rangeAtIndex: 3]] integerValue];
+		currentMap = [line substringWithRange: [m rangeAtIndex: 1]];
+		port = [[line substringWithRange: [m rangeAtIndex: 2]] integerValue];
+		if( port != settings.port )
+			[self appendLog: [NSString stringWithFormat: @"Port %ld is in use; the server took %ld.", (long)settings.port, (long)port]
+				color: [NSColor systemOrangeColor]];
 		[self showState: SRV_RUNNING detail: nil];
 		[self becameReady];
 		[self showInfo];
@@ -2313,9 +2336,6 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	else if( ( m = [portRE firstMatchInString: line options: 0 range: NSMakeRange( 0, [line length] )] ) )
 	{
 		port = [[line substringWithRange: [m rangeAtIndex: 1]] integerValue];
-		if( port != settings.port )
-			[self appendLog: [NSString stringWithFormat: @"Port %ld is in use; the server took %ld.", (long)settings.port, (long)port]
-				color: [NSColor systemOrangeColor]];
 		[self showInfo];
 	}
 	// the dedicated console's prompt
@@ -2352,8 +2372,11 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		return;
 	}
 	[self appendLog: signaled ? [NSString stringWithFormat: @"The server crashed (signal %d).", code] :
+		code == 1 && !readyLogged ? @"The server found no Elite Force game files (exit code 1)." :
+		code == 3 && !readyLogged ? @"The server couldn't use the game folder (exit code 3)." :
 		[NSString stringWithFormat: @"The server quit (exit code %d).", code] color: [NSColor systemRedColor]];
-	[self showState: SRV_FAILED detail: readyLogged ? @"the server quit unexpectedly" : @"the server didn't start, see the console below"];
+	[self showState: SRV_FAILED detail: readyLogged ? @"the server quit unexpectedly" :
+		code == 1 ? @"no game files" : code == 3 ? @"the game folder can't be used" : @"the server didn't start, see the console below"];
 	[self showInfo];
 }
 
