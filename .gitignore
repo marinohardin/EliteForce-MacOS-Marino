@@ -49,6 +49,8 @@ thirdparty/
 efgame/buildmac/
 # Packaged app / release output (macos/make-app.sh writes dist/EliteForceSP.app)
 /dist/
+# macos/icon/make-icns.sh default output (make-app.sh builds the .icns itself)
+/macos/icon/AppIcon.icns
 # Finder metadata
 .DS_Store
 # Local retail game data used for testing (never commit; not redistributable)

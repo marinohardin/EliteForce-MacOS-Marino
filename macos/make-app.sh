@@ -55,6 +55,7 @@ cp -L "$BREW/lib/libSDL3.0.dylib"      "$FW/libSDL3.dylib"
 cp -L "$BREW/lib/libvulkan.1.dylib"    "$FW/libvulkan.1.dylib"
 cp -L "$BREW/lib/libMoltenVK.dylib"    "$FW/libMoltenVK.dylib"
 cp "$ROOT/macos/MoltenVK_icd.json" "$RES/vulkan/icd.d/MoltenVK_icd.json"
+"$ROOT/macos/icon/make-icns.sh" "$RES/AppIcon.icns"
 chmod u+w "$FW"/*
 
 # ---- 3. copy + relink non-system dependencies -------------------------------
@@ -109,6 +110,8 @@ sed -e "s|@APP_NAME@|$DISPLAY_NAME|g" -e "s|@BUNDLE_ID@|$BUNDLE_ID|g" \
 	"$ROOT/macos/Info.plist.in" > "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 printf 'APPL????' > "$APP/Contents/PkgInfo"
+
+touch "$APP"	# so Finder/Dock pick up a changed icon
 
 # ---- 5. verify + sign ---------------------------------------------------------
 bad=0

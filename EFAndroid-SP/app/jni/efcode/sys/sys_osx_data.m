@@ -18,8 +18,9 @@ BaseEF folder). By default the .pk3 files (and old saves) are copied into (b);
 the "Use BaseEF files in place rather than copy" checkbox instead remembers
 the chosen folder and uses it as fs_basepath.
 
-Sys_MacFrame adds Show Saves Folder / Show Game Folder / Change Game Folder /
-Delete Saves & Settings to the application menu once SDL has created it.
+Sys_MacFrame adds a File menu (Show Saves Folder, Show Game Folder, Change
+Game Folder…, Delete Saves & Settings…) after the application menu once SDL
+has created the menu bar.
 The same actions are console commands (macos_showsaves, macos_showgamefolder,
 macos_changegamefolder, macos_deletesettings).
 
@@ -32,6 +33,7 @@ Test hooks (environment variables, for automated tests without clicking):
   VOYAGERSP_TEST_INPLACE=1     ...with the "in place" checkbox ticked
   VOYAGERSP_TEST_CONFIRM=1     answer confirmation alerts with the first button
   VOYAGERSP_TEST_NOTRASH=1     log instead of moving to the Trash
+  VOYAGERSP_TEST_PANEL_TIMEOUT=<s>  log the open panel's size and cancel it after <s> s
 ===========================================================================
 */
 
@@ -58,16 +60,16 @@ Test hooks (environment variables, for automated tests without clicking):
 #endif
 
 #ifndef MACOS_HOMEPATH_NAME
-#define MACOS_HOMEPATH_NAME "VoyagerSP-macOS"
+#define MACOS_HOMEPATH_NAME "VoyagerSP-MacOS"
 #endif
 
 #define KEY_GAMEFOLDER	@"GameFolder"
+#define KEY_PANELSIZERESET	@"ChooserPanelSizeReset"
 #define MSG_PAK0_ON_CD	@"pak0.pk3 is missing — minimum CD installs leave it on the CD; copy it from BaseEF on the CD into this BaseEF folder, or choose a full installation."
 
 extern NSString *Sys_MacAppBundlePath( void );
 
 static NSMutableString *earlyLog;	// messages from before Com_Init, replayed into the console
-static qboolean menusAdded;
 static qboolean pendingDelete;
 
 /* ------------------------------------------------------------------------ */
@@ -448,6 +450,84 @@ static BOOL CopyGameFiles( NSString *srcBase )
    Chooser
    ------------------------------------------------------------------------ */
 
+#define CHOOSER_TEXT_WIDTH	480
+
+// Accessory view of the game folder open panel: an explanation, the
+// "in place" checkbox and a line saying what the current choice will do.
+@interface VSPChooserOptions : NSObject
+{
+	NSView *view;
+	NSButton *check;
+	NSTextField *status;
+}
+- (NSView *)view;
+- (BOOL)inPlace;
+- (void)toggled: (id)sender;
+@end
+
+@implementation VSPChooserOptions
+static NSTextField *WrappingLabel( NSString *text, NSFont *font )
+{
+	NSTextField *l = [NSTextField wrappingLabelWithString: text];
+
+	[l setFont: font];
+	[l setSelectable: NO];
+	[l setPreferredMaxLayoutWidth: CHOOSER_TEXT_WIDTH];
+	[l setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[[[l widthAnchor] constraintEqualToConstant: CHOOSER_TEXT_WIDTH] setActive: YES];
+	return l;
+}
+
+- (id)init
+{
+	NSStackView *stack;
+	NSTextField *info;	// all autoreleased; view retains them
+	NSSize size;
+
+	if( !( self = [super init] ) )
+		return nil;
+	info = WrappingLabel( @"Select the folder where Star Trek: Voyager – Elite Force is installed "
+		"(the one containing BaseEF with pak0.pk3), or the BaseEF folder itself. "
+		"By default the game files are copied into the app's own folder in Application Support, "
+		"so the original folder or CD is no longer needed.",
+		[NSFont systemFontOfSize: [NSFont smallSystemFontSize]] );
+	check = [NSButton checkboxWithTitle: @"Use BaseEF files in place rather than copy" target: self action: @selector(toggled:)];
+	[check setState: NSControlStateValueOff];
+	status = WrappingLabel( @"", [NSFont systemFontOfSize: [NSFont smallSystemFontSize]] );
+	[status setTextColor: [NSColor secondaryLabelColor]];
+	[self toggled: nil];
+
+	stack = [NSStackView stackViewWithViews: @[ info, check, status ]];
+	[stack setOrientation: NSUserInterfaceLayoutOrientationVertical];
+	[stack setAlignment: NSLayoutAttributeLeading];
+	[stack setSpacing: 8];
+	[stack setCustomSpacing: 4 afterView: check];
+	[stack setEdgeInsets: NSEdgeInsetsMake( 12, 20, 12, 20 )];
+	[stack setTranslatesAutoresizingMaskIntoConstraints: NO];
+	size = [stack fittingSize];
+
+	// The panel stretches its accessory view to its own width; keep the
+	// fixed-width block centred in it.
+	view = [[NSView alloc] initWithFrame: NSMakeRect( 0, 0, size.width, size.height )];
+	[view addSubview: stack];
+	[[[stack centerXAnchor] constraintEqualToAnchor: [view centerXAnchor]] setActive: YES];
+	[[[stack topAnchor] constraintEqualToAnchor: [view topAnchor]] setActive: YES];
+	[[[stack bottomAnchor] constraintEqualToAnchor: [view bottomAnchor]] setActive: YES];
+	return self;
+}
+
+- (void)dealloc { [view release]; [super dealloc]; }
+- (NSView *)view { return view; }
+- (BOOL)inPlace { return [check state] == NSControlStateValueOn; }
+
+- (void)toggled: (id)sender
+{
+	[status setStringValue: [self inPlace]
+		? @"Files will be read from this folder; nothing is copied."
+		: @"Files will be copied into the app's data folder (about 600 MB for a standard install)."];
+}
+@end
+
 // Ask for the install (or BaseEF) folder until a valid one is chosen.
 // Returns NO on cancel. On success either *outBasepath is set (in place) or
 // the files were copied into the homepath (*outBasepath = nil).
@@ -469,32 +549,50 @@ static BOOL RunChooser( NSString **outBasepath )
 		}
 		else
 		{
-			NSOpenPanel *op = [NSOpenPanel openPanel];
-			NSButton *check = [NSButton checkboxWithTitle: @"Use BaseEF files in place rather than copy" target: nil action: nil];
-			NSView *acc = [[[NSView alloc] initWithFrame: NSMakeRect( 0, 0, 420, 36 )] autorelease];
+			NSOpenPanel *op;
+			VSPChooserOptions *opts;
+			NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
 
-			[check setState: NSControlStateValueOff];
-			[check setFrame: NSMakeRect( 16, 8, 400, 20 )];
-			[acc addSubview: check];
+			// Older builds had a one-line message that stretched the panel, and
+			// AppKit remembers the panel size; forget it once so the panel
+			// opens at its normal size. Later resizes by the user are kept.
+			if( ![ud boolForKey: KEY_PANELSIZERESET] )
+			{
+				[ud removeObjectForKey: @"NSNavPanelExpandedSizeForOpenMode"];
+				[ud setBool: YES forKey: KEY_PANELSIZERESET];
+				[ud synchronize];
+			}
+			op = [NSOpenPanel openPanel];
+			opts = [[[VSPChooserOptions alloc] init] autorelease];
+
 			[op setCanChooseDirectories: YES];
 			[op setCanChooseFiles: NO];
 			[op setAllowsMultipleSelection: NO];
 			[op setPrompt: @"Choose"];
-			[op setMessage: @"Choose the folder where Star Trek: Voyager – Elite Force is installed "
-				"(it contains a BaseEF folder with pak0.pk3). By default the game files are copied "
-				"into the app's own folder in Application Support."];
-			[op setAccessoryView: acc];
+			[op setMessage: @"Choose your Elite Force folder"];
+			[op setAccessoryView: [opts view]];
 			if( [op respondsToSelector: @selector(setAccessoryViewDisclosed:)] )
 				[op setAccessoryViewDisclosed: YES];
-			MacLog( @"[dialog] Choose the Elite Force game folder (open panel)" );
+			MacLog( @"[dialog] Choose your Elite Force folder (open panel, options %.0fx%.0f pt)",
+				[[opts view] frame].size.width, [[opts view] frame].size.height );
 			[NSApp activateIgnoringOtherApps: YES];
+			if( getenv( "VOYAGERSP_TEST_PANEL_TIMEOUT" ) )
+			{
+				NSTimer *t = [NSTimer timerWithTimeInterval: atof( getenv( "VOYAGERSP_TEST_PANEL_TIMEOUT" ) ) repeats: NO block: ^( NSTimer *timer ) {
+					MacLog( @"[test] open panel %.0fx%.0f pt, options %.0fx%.0f pt, message \"%@\"; cancelling",
+						[op frame].size.width, [op frame].size.height,
+						[[opts view] frame].size.width, [[opts view] frame].size.height, [op message] );
+					[op cancel: nil];
+				}];
+				[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
+			}
 			if( [op runModal] != NSModalResponseOK || ![[op URLs] count] )
 			{
 				MacLog( @"Game folder selection cancelled" );
 				return NO;
 			}
 			chosen = [[[op URLs] objectAtIndex: 0] path];
-			inPlace = [check state] == NSControlStateValueOn;
+			inPlace = [opts inPlace];
 			MacLog( @"Chosen game folder \"%@\" (in place: %d)", chosen, inPlace );
 		}
 
@@ -658,7 +756,8 @@ static NSString *ExternalGameBase( void )
 {
 	NSString *base = CurrentGameBase();
 
-	if( base && ![[base stringByStandardizingPath] hasPrefix: [[HomeRoot() stringByStandardizingPath] stringByAppendingString: @"/"]] )
+	if( base && ![[[base stringByStandardizingPath] lowercaseString]
+			hasPrefix: [[[HomeRoot() stringByStandardizingPath] lowercaseString] stringByAppendingString: @"/"]] )
 		return base;
 	return nil;
 }
@@ -709,11 +808,16 @@ static unsigned long long FolderSize( NSString *dir, int *files )
 }
 
 // HomeRoot() if it is a real directory exactly where expected (no symlink
-// escapes), else nil.
+// escapes), else nil. realpath() reports the on-disk case, and the default
+// macOS filesystem is case-insensitive, so a folder created under an older
+// spelling ("VoyagerSP-macOS") is the same folder: only the last component
+// is compared case-insensitively; its parent must match exactly.
 static NSString *SafeHomeRoot( void )
 {
 	NSString *root = HomeRoot();
-	char parentReal[PATH_MAX], rootReal[PATH_MAX], expected[PATH_MAX];
+	char parentReal[PATH_MAX], rootReal[PATH_MAX];
+	const char *slash;
+	size_t plen;
 	struct stat st;
 
 	if( lstat( [root fileSystemRepresentation], &st ) || !S_ISDIR( st.st_mode ) )
@@ -721,8 +825,11 @@ static NSString *SafeHomeRoot( void )
 	if( !realpath( [[root stringByDeletingLastPathComponent] fileSystemRepresentation], parentReal ) ||
 		!realpath( [root fileSystemRepresentation], rootReal ) )
 		return nil;
-	Com_sprintf( expected, sizeof( expected ), "%s/%s", parentReal, MACOS_HOMEPATH_NAME );
-	if( strcmp( rootReal, expected ) )
+	plen = strlen( parentReal );
+	slash = strrchr( rootReal, '/' );
+	if( !slash || (size_t)( slash - rootReal ) != plen || strncmp( rootReal, parentReal, plen ) )
+		return nil;		// not directly inside Application Support
+	if( strcasecmp( slash + 1, MACOS_HOMEPATH_NAME ) )
 		return nil;
 	return [NSString stringWithUTF8String: rootReal];
 }
@@ -847,54 +954,79 @@ void Sys_MacDataPostInit( void )
 	}
 }
 
+// Top-level File menu with the game folder actions.
+static NSMenuItem *BuildFileMenu( id target )
+{
+	NSMenu *menu = [[[NSMenu alloc] initWithTitle: @"File"] autorelease];
+	NSMenuItem *top = [[[NSMenuItem alloc] initWithTitle: @"File" action: nil keyEquivalent: @""] autorelease];
+	struct { NSString *title; SEL sel; } items[] = {
+		{ @"Show Saves Folder", @selector(showSaves:) },
+		{ @"Show Game Folder", @selector(showGame:) },
+		{ nil, NULL },
+		{ @"Change Game Folder…", @selector(changeGame:) },
+		{ nil, NULL },
+		{ @"Delete Saves & Settings…", @selector(deleteSettings:) },
+	};
+	size_t i;
+
+	for( i = 0; i < ARRAY_LEN( items ); i++ )
+	{
+		NSMenuItem *item;
+
+		if( !items[i].title )
+		{
+			[menu addItem: [NSMenuItem separatorItem]];
+			continue;
+		}
+		item = [[[NSMenuItem alloc] initWithTitle: items[i].title action: items[i].sel keyEquivalent: @""] autorelease];
+		[item setTarget: target];
+		[menu addItem: item];
+	}
+	[top setSubmenu: menu];
+	return top;
+}
+
 /*
 =================
 Sys_MacFrame
 
-Called every frame; once SDL has built the menu bar, add our items to the
-application menu (bundle only).
+Called every frame. Every 16th frame, check that the menu bar SDL built has
+our File menu (right after the application menu) and add it if not: once at
+startup, and again should SDL ever rebuild the menu bar (bundle only).
 =================
 */
 void Sys_MacFrame( void )
 {
 	static VSPMenuTarget *target;
+	static NSMenuItem *fileItem;
+	static qboolean notBundle, logged;
 	static int checks;
 
-	if( menusAdded || ( ++checks & 15 ) )
+	if( notBundle || ( ++checks & 15 ) )
 		return;
 
 	@autoreleasepool {
-		NSMenu *appMenu;
-		NSInteger at;
-		NSMenuItem *item;
-		struct { NSString *title; SEL sel; } items[] = {
-			{ @"Show Saves Folder", @selector(showSaves:) },
-			{ @"Show Game Folder", @selector(showGame:) },
-			{ @"Change Game Folder…", @selector(changeGame:) },
-			{ @"Delete Saves & Settings…", @selector(deleteSettings:) },
-		};
-		int i;
+		NSMenu *bar;
 
 		if( !Sys_MacAppBundlePath() )
 		{
-			menusAdded = qtrue;
+			notBundle = qtrue;
 			return;
 		}
-		if( !NSApp || ![NSApp mainMenu] || [[NSApp mainMenu] numberOfItems] < 1 ||
-			!( appMenu = [[[NSApp mainMenu] itemAtIndex: 0] submenu] ) )
-			return;
+		if( !NSApp || !( bar = [NSApp mainMenu] ) || [bar numberOfItems] < 1 || ![[bar itemAtIndex: 0] submenu] )
+			return;		// SDL has not built the menu bar yet
+		if( fileItem && [bar indexOfItem: fileItem] >= 0 )
+			return;		// already there
 
-		target = [[VSPMenuTarget alloc] init];
-		// after "About …" and its separator, if present
-		at = [appMenu numberOfItems] >= 2 && [[appMenu itemAtIndex: 1] isSeparatorItem] ? 2 : 0;
-		for( i = 0; i < 4; i++ )
-		{
-			item = [[[NSMenuItem alloc] initWithTitle: items[i].title action: items[i].sel keyEquivalent: @""] autorelease];
-			[item setTarget: target];
-			[appMenu insertItem: item atIndex: at + i];
-		}
-		[appMenu insertItem: [NSMenuItem separatorItem] atIndex: at + 4];
-		menusAdded = qtrue;
-		Com_Printf( "macOS: added game folder items to the application menu\n" );
+		if( !target )
+			target = [[VSPMenuTarget alloc] init];
+		if( !fileItem )
+			fileItem = [BuildFileMenu( target ) retain];
+		if( [fileItem menu] )
+			[[fileItem menu] removeItem: fileItem];		// attached to an old menu bar
+		[bar insertItem: fileItem atIndex: 1];
+		Com_Printf( "macOS: %s the File menu (%s)\n", logged ? "re-added" : "added",
+			[[[[bar itemArray] valueForKey: @"title"] componentsJoinedByString: @" | "] UTF8String] );
+		logged = qtrue;
 	}
 }
