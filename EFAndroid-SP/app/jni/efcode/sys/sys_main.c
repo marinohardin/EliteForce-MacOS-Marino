@@ -173,11 +173,37 @@ char *Sys_GetClipboardData(void)
 #endif
 }
 
+#define PID_FILENAME_SERVER PRODUCT_NAME "_server.pid"
 #ifdef DEDICATED
-#	define PID_FILENAME PRODUCT_NAME "_server.pid"
+#	define PID_FILENAME PID_FILENAME_SERVER
 #else
-#	define PID_FILENAME PRODUCT_NAME ".pid"
+// a dedicated server run from the game binary has its own PID file, so a
+// server and a game on the same Mac don't take each other for a crash
+#	define PID_FILENAME ( sys_headless ? PID_FILENAME_SERVER : PRODUCT_NAME ".pid" )
 #endif
+
+/*
+=================
+sys_headless
+
++set dedicated 1|2 on the command line: a dedicated server with no window,
+renderer, sound or client (common.c skips CL_Init), no launcher or dialogs,
+and console I/O on stdin/stdout. Set at the top of main().
+=================
+*/
+qboolean sys_headless = qfalse;
+
+static qboolean Sys_ArgsWantDedicated( int argc, char **argv )
+{
+	int i;
+	qboolean dedicated = qfalse;
+
+	// the last "dedicated <n>" wins, as with +set
+	for( i = 1; i < argc - 1; i++ )
+		if( !Q_stricmp( argv[i], "dedicated" ) )
+			dedicated = atoi( argv[i + 1] ) != 0;
+	return dedicated;
+}
 
 /*
 =================
@@ -263,7 +289,7 @@ Sys_InitPIDFile
 =================
 */
 void Sys_InitPIDFile( const char *gamedir ) {
-	if( Sys_WritePIDFile( gamedir ) ) {
+	if( Sys_WritePIDFile( gamedir ) && !sys_headless ) {
 #if !defined(DEDICATED) && !defined(__ANDROID__)
 		// On Android a stale PID is NORMAL (the OS kills backgrounded apps and
 		// users swipe the app away), so the "Abnormal Exit / safe video
@@ -813,6 +839,8 @@ int main( int argc, char **argv )
 
 	Sys_CommandLineInit( &argc, &argv );
 
+	sys_headless = Sys_ArgsWantDedicated( argc, argv );
+
 	extern void Sys_LaunchAutoupdater(int argc, char **argv);
 	Sys_LaunchAutoupdater(argc, argv);
 
@@ -868,8 +896,14 @@ int main( int argc, char **argv )
 		// Inside the .app: the launcher picks the mode, graphics and game folder
 		// (sys_osx_launcher.m). When the command line already names the mode
 		// (a relaunch from the File menu), find the game data, or ask for it
-		// (sys_osx_data.m).
-		{
+		// (sys_osx_data.m). A dedicated server shows no UI at all: it finds
+		// the data the same way or exits with an error.
+		if ( sys_headless ) {
+			extern const char *Sys_MacHeadlessGameData( int argc, char **argv );
+			const char *basepath = Sys_MacHeadlessGameData( argc, argv );
+			if ( basepath )
+				Q_strcat( commandLine, sizeof( commandLine ), va( "+set fs_basepath \"%s\" ", basepath ) );
+		} else {
 			extern qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size );
 			extern const char *Sys_MacResolveGameData( int argc, char **argv );
 			if ( !Sys_MacLauncher( argc, argv, commandLine, sizeof( commandLine ) ) ) {
@@ -880,6 +914,14 @@ int main( int argc, char **argv )
 		}
 	}
 #endif
+
+	if ( sys_headless ) {
+		// the parent (a terminal, or an app reading pipes) sees each line as
+		// it is printed (con_tty.c prints to stdout); a closed pipe is an
+		// error to notice, not a signal that kills the server
+		setvbuf( stdout, NULL, _IOLBF, 0 );
+		signal( SIGPIPE, SIG_IGN );
+	}
 
 	Sys_ParseArgs( argc, argv );
 	Sys_SetBinaryPath( Sys_Dirname( argv[ 0 ] ) );
@@ -914,6 +956,11 @@ int main( int argc, char **argv )
 
 		Q_strcat( commandLine, sizeof( commandLine ), " " );
 	}
+
+	// a dedicated server is always Holomatch (single player has no server
+	// mode); after the arguments, so it wins over a com_holomatch 0
+	if ( sys_headless )
+		Q_strcat( commandLine, sizeof( commandLine ), "+set com_holomatch 1 " );
 
 #ifdef PROTOCOL_HANDLER
 	if ( protocolCommand != NULL )
@@ -960,6 +1007,7 @@ int main( int argc, char **argv )
 			Com_Quit_f( );
 		}
 #ifdef __APPLE__
+		if ( !sys_headless )
 		{
 			extern void Sys_MacFrame( void );
 			Sys_MacFrame( );	// adds the File menu once SDL made the menu bar

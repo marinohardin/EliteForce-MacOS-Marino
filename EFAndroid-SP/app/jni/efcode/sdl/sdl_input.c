@@ -481,6 +481,171 @@ static void IN_GobbleMotionEvents( void )
 		Com_Printf( "IN_GobbleMotionEvents failed: %s\n", SDL_GetError( ) );
 }
 
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+#include <dlfcn.h>
+#include <stdbool.h>
+#include <mach-o/dyld.h>
+#include <objc/runtime.h>
+#include <objc/message.h>
+#include <ApplicationServices/ApplicationServices.h>
+
+/*
+===============
+IN_MouseState_f / IN_DebugMouse
+
+in_mousestate prints what the engine and SDL think the pointer is doing; with
+in_debugMouse 1 every capture/release is logged with that state. sdl2-compat's
+SDL_GetRelativeMouseMode only reports its own flag, so SDL3 is asked directly
+for the window's relative mode and grab, and CoreGraphics whether the system
+cursor is visible (relative mode hides it).
+===============
+*/
+static cvar_t *in_debugMouse;
+
+static void *IN_SDL3Symbol( const char *name )
+{
+	static void *sdl3;
+	static qboolean looked;
+
+	if ( !looked ) {
+		uint32_t i, n = _dyld_image_count( );
+		looked = qtrue;
+		for ( i = 0; i < n; i++ ) {
+			const char *img = _dyld_get_image_name( i );
+			if ( img && strstr( img, "libSDL3" ) ) {
+				sdl3 = dlopen( img, RTLD_LAZY | RTLD_NOLOAD );
+				break;
+			}
+		}
+	}
+	return sdl3 ? dlsym( sdl3, name ) : NULL;
+}
+
+/*
+SDL3's Cocoa window listener (SDL_cocoawindow.m) holds relative mode and the
+grab back while it thinks the window is being dragged (isMoving, from
+windowWillMove until a left mouse-up reaches the window) or a click on the
+title bar is pending (focusClickPending, from a mouse-down outside the content
+view until its mouse-up reaches NSApp). Meanwhile Cocoa_SetRelativeMouseMode
+returns early without CGAssociateMouseAndMouseCursorPosition(NO) and the grab
+sets no mouseConfinementRect, yet SDL reports relative mode and grab as on and
+keeps sending deltas: mouse look works, but the hidden pointer moves freely and
+clicks land on whatever is under it, outside the window.
+
+A title-bar click or window drag is tracked by AppKit / the window server,
+which can swallow that mouse-up, and then the state never clears (only a
+resize or minimize resets focusClickPending). IN_CocoaListener finds the
+listener, IN_CocoaMovePending reports the state (in_mousestate) and
+IN_CocoaClearStalePointerState clears it once no mouse button is down, with
+SDL's own methods, so relative mode and the grab apply again.
+*/
+static id IN_CocoaListener( void )
+{
+	Uint32 ( *props3 )( void * ) = IN_SDL3Symbol( "SDL_GetWindowProperties" );
+	void *( *ptr3 )( Uint32, const char *, void * ) = IN_SDL3Symbol( "SDL_GetPointerProperty" );
+	id nswindow;
+
+	if ( !SDL_window || !props3 || !ptr3 )
+		return nil;
+	nswindow = (id)ptr3( props3( SDL_window ), "SDL.window.cocoa.window", NULL );
+	if ( !nswindow )
+		return nil;
+	return ( (id (*)( id, SEL ))objc_msgSend )( nswindow, sel_registerName( "delegate" ) );
+}
+
+static qboolean IN_CocoaResponds( id obj, const char *name )
+{
+	return obj && class_respondsToSelector( object_getClass( obj ), sel_registerName( name ) );
+}
+
+// 1: SDL holds relative mode / grab back, 0: not, -1: unknown
+static int IN_CocoaMovePending( void )
+{
+	id listener = IN_CocoaListener( );
+
+	if ( !IN_CocoaResponds( listener, "isMovingOrFocusClickPending" ) )
+		return -1;
+	return ( (BOOL (*)( id, SEL ))objc_msgSend )( listener, sel_registerName( "isMovingOrFocusClickPending" ) ) ? 1 : 0;
+}
+
+// qtrue when it cleared a stale state (the caller then re-applies the capture)
+static qboolean IN_CocoaClearStalePointerState( void )
+{
+	id listener;
+	int b;
+
+	if ( IN_CocoaMovePending( ) != 1 )
+		return qfalse;
+	// a drag or title-bar click still in progress is real
+	for ( b = 0; b < 32; b++ )
+		if ( CGEventSourceButtonState( kCGEventSourceStateCombinedSessionState, (CGMouseButton)b ) )
+			return qfalse;
+
+	listener = IN_CocoaListener( );
+	if ( IN_CocoaResponds( listener, "isMoving" ) && IN_CocoaResponds( listener, "windowDidFinishMoving" ) &&
+		( (BOOL (*)( id, SEL ))objc_msgSend )( listener, sel_registerName( "isMoving" ) ) )
+		( (void (*)( id, SEL ))objc_msgSend )( listener, sel_registerName( "windowDidFinishMoving" ) );
+	if ( IN_CocoaResponds( listener, "clearFocusClickPending:" ) )
+		for ( b = 0; b < 32; b++ )
+			( (void (*)( id, SEL, long ))objc_msgSend )( listener, sel_registerName( "clearFocusClickPending:" ), b );
+
+	Com_DPrintf( "IN: cleared a stale window drag / title-bar click state (%d)\n", IN_CocoaMovePending( ) );
+	return qtrue;
+}
+
+// the window's mouseConfinementRect width (the grab), -1 when unknown
+static int IN_CocoaConfinementWidth( void )
+{
+	Uint32 ( *props3 )( void * ) = IN_SDL3Symbol( "SDL_GetWindowProperties" );
+	void *( *ptr3 )( Uint32, const char *, void * ) = IN_SDL3Symbol( "SDL_GetPointerProperty" );
+	id nswindow;
+	CGRect r;
+
+	if ( !SDL_window || !props3 || !ptr3 )
+		return -1;
+	nswindow = (id)ptr3( props3( SDL_window ), "SDL.window.cocoa.window", NULL );
+	if ( !IN_CocoaResponds( nswindow, "mouseConfinementRect" ) )
+		return -1;
+	r = ( (CGRect (*)( id, SEL ))objc_msgSend )( nswindow, sel_registerName( "mouseConfinementRect" ) );
+	return (int)r.size.width;
+}
+
+static const char *IN_MouseStateString( void )
+{
+	static char buf[256];
+	bool ( *relative3 )( void * ) = IN_SDL3Symbol( "SDL_GetWindowRelativeMouseMode" );
+	bool ( *grab3 )( void * ) = IN_SDL3Symbol( "SDL_GetWindowMouseGrab" );
+	void *( *focus3 )( void ) = IN_SDL3Symbol( "SDL_GetKeyboardFocus" );
+	Uint32 flags = SDL_window ? SDL_GetWindowFlags( SDL_window ) : 0;
+
+	Com_sprintf( buf, sizeof( buf ), "mouseActive %d, catcher 0x%x, state %d, fullscreen %d | "
+		"SDL2 relative %d grab %d | SDL3 relative %d grab %d keyfocus %d | "
+		"inputfocus %d mousefocus %d | cursor visible %d | cocoa moving/focusclick %d confinement width %d",
+		mouseActive, Key_GetCatcher( ), clc.state, Cvar_VariableIntegerValue( "r_fullscreen" ),
+		(int)SDL_GetRelativeMouseMode( ), SDL_window ? (int)SDL_GetWindowGrab( SDL_window ) : -1,
+		( relative3 && SDL_window ) ? (int)relative3( SDL_window ) : -1,
+		( grab3 && SDL_window ) ? (int)grab3( SDL_window ) : -1,
+		focus3 ? ( focus3( ) == (void *)SDL_window ) : -1,
+		( flags & SDL_WINDOW_INPUT_FOCUS ) != 0, ( flags & SDL_WINDOW_MOUSE_FOCUS ) != 0,
+		(int)CGCursorIsVisible( ), IN_CocoaMovePending( ), IN_CocoaConfinementWidth( ) );
+	return buf;
+}
+
+static void IN_MouseState_f( void )
+{
+	Com_Printf( "in_mousestate: %s\n", IN_MouseStateString( ) );
+}
+
+static void IN_DebugMouse( const char *what )
+{
+	if ( in_debugMouse && in_debugMouse->integer )
+		Com_Printf( "[mouse] %s: %s\n", what, IN_MouseStateString( ) );
+}
+#else
+static void IN_DebugMouse( const char *what ) { (void)what; }
+static qboolean IN_CocoaClearStalePointerState( void ) { return qfalse; }
+#endif
+
 /*
 ===============
 IN_ActivateMouse
@@ -490,6 +655,18 @@ static void IN_ActivateMouse( qboolean isFullscreen )
 {
 	if (!mouseAvailable || !SDL_WasInit( SDL_INIT_VIDEO ) )
 		return;
+
+	// macOS: SDL can be left believing a window drag or title-bar click is
+	// still going on, and then it never really captures the pointer (see
+	// IN_CocoaClearStalePointerState). Clear that, and capture again if SDL
+	// already took the capture as done.
+	if( IN_CocoaClearStalePointerState( ) && mouseActive )
+	{
+		SDL_SetWindowGrab( SDL_window, SDL_FALSE );
+		SDL_SetRelativeMouseMode( SDL_FALSE );
+		mouseActive = qfalse;
+		IN_DebugMouse( "re-capturing after a stale drag / title-bar click" );
+	}
 
 	if( !mouseActive )
 	{
@@ -516,7 +693,10 @@ static void IN_ActivateMouse( qboolean isFullscreen )
 		}
 	}
 
-	mouseActive = qtrue;
+	if ( !mouseActive ) {
+		mouseActive = qtrue;
+		IN_DebugMouse( "captured" );
+	}
 }
 
 /*
@@ -567,6 +747,7 @@ static void IN_DeactivateMouse( qboolean isFullscreen, qboolean showSystemCursor
 		}
 
 		mouseActive = qfalse;
+		IN_DebugMouse( "released" );
 	}
 }
 
@@ -2299,6 +2480,11 @@ void IN_Init( void *windowData )
 	SDL_StartTextInput( );
 #endif
 
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+	in_debugMouse = Cvar_Get( "in_debugMouse", "0", CVAR_TEMP );
+	Cmd_AddCommand( "in_mousestate", IN_MouseState_f );
+#endif
+
 	mouseAvailable = ( in_mouse->value != 0 );
 	IN_DeactivateMouse( Cvar_VariableIntegerValue( "r_fullscreen" ) != 0, qtrue );
 
@@ -2327,6 +2513,10 @@ void IN_Shutdown( void )
 	mouseAvailable = qfalse;
 
 	IN_ShutdownJoystick( );
+
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+	Cmd_RemoveCommand( "in_mousestate" );
+#endif
 
 	SDL_window = NULL;
 }

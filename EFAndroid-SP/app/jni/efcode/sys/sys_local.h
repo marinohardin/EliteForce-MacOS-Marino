@@ -63,6 +63,8 @@ void Sys_SigHandler( int signal ) __attribute__ ((noreturn));
 void Sys_ErrorDialog( const char *error );
 void Sys_AnsiColorPrint( const char *msg );
 
+extern qboolean sys_headless;	// dedicated server from the game binary (sys_main.c)
+
 int Sys_PID( void );
 qboolean Sys_PIDIsRunning( int pid );
 

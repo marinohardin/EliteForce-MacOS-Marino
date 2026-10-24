@@ -166,6 +166,78 @@ not a second engine:
   server sends several rounds of blocks per pass and the client acknowledges every 10 ms.
   A 3.3 MB map takes about 2 s. Single player keeps `net_enabled 0`.
 
+### Dedicated server (2026-10-24)
+
+`+set dedicated 1` (LAN) or `+set dedicated 2` (internet: heartbeats to `sv_master1..5`)
+runs a headless Holomatch server from the same executable. Contract for a parent app
+(the launcher drives it through `NSTask` pipes):
+
+```
+"Elite Force.app/Contents/MacOS/Elite Force" +set dedicated 1|2 +set net_port N
+    +set sv_hostname "..." +set g_gametype N +set sv_maxclients N +set g_password "..."
+    [+set fs_basepath <folder holding baseEF>] [+exec <rotation.cfg>] +map <map>
+```
+
+- `dedicated` implies Holomatch: `+set com_holomatch 1` is added after the arguments
+  (a `com_holomatch 0` is overridden; single player has no server mode). Passing it
+  anyway is harmless. Single player without `dedicated` keeps `net_enabled 0`.
+- Headless: `sys_headless` (`sys_main.c`) is set from the arguments at the top of `main()`.
+  `CL_Init` is skipped (`cl_running` stays 0), so there is no SDL video, window,
+  renderer, sound, input or local client, and the process never registers with
+  LaunchServices (no Dock icon). No launcher, game-folder chooser, File menu or
+  `Sys_MacFrame`; `Sys_Dialog` prints to stderr and answers No/Cancel.
+- Game data: from the .app it is found as for the game (remembered game folder, the
+  homepath copy, next to the app; `Sys_MacHeadlessGameData`), or set with
+  `fs_basepath`. With none, one `ERROR: no Elite Force game data: ...` line goes to
+  stderr and the exit status is 1; other fatal errors (e.g. a bad `fs_basepath`)
+  print to stderr and exit non-zero (3). Never a dialog.
+- Console: commands are read line by line from stdin, a TTY or a pipe (`con_tty.c`
+  buffers partial reads and splits several lines per read). Output is plain text
+  (color codes stripped) on stdout, line buffered. Server commands work as usual
+  (`status`, `map ctf_voy1`, `addbot munro 3`, `kick munro`, `say hello`,
+  `vstr nextmap`, `quit`...). EOF on stdin just stops reading.
+- Ready line, printed after every map load (first `+map`, map changes, rotation):
+  `Server ready: map <map> port <udp port> gametype <n> maxclients <n> dedicated <1|2> hostname <name>`.
+  The hostname is last (it may hold spaces; color codes stripped). The port is the
+  one bound: if `net_port` is taken the engine moves up to 9 ports and reports that.
+  IPv6 uses `net_port6`, which defaults to `net_port` on a dedicated server.
+- Quit: `quit`, SIGTERM or SIGINT (the `Sys_MacQuitSignals` dispatch sources) shut the
+  server down cleanly (`Received signal 15, quitting`, exit 0). SIGPIPE is ignored; a
+  write to a closed stdout pipe (the parent is gone) quits the same way.
+- Files: the server reads and writes `hmconfig_server.cfg` (not the player's
+  `hmconfig.cfg`) and does not write the CD key. Its PID file is
+  `Lilium Voyager SP_server.pid`, so a server and a game in the same homepath don't
+  show each other the "abnormal exit" dialog (a headless server never shows it).
+- LAN discovery (`localservers`, the Holomatch server browser) only probes ports
+  27960–27963 (`NUM_SERVER_PORTS`); a server on another port is reached with
+  `connect <ip>:<port>`. Discovery also needs the Local Network permission.
+- Tested with two scratch HOMEs on one Mac: a server on 29960 and a client connecting
+  to the en0 address; `localservers` finds a server on 27962; `+exec` map rotation with
+  `vstr nextmap`; `dedicated 2` heartbeats; SIGTERM; no game data.
+
+### Pointer capture in a window (2026-10-24)
+
+Symptom: in game, windowed, the pointer left the window and clicked on the desktop
+while mouse look still worked. The engine side was right in every transition
+(`in_debugMouse 1` logs each capture/release; game/menu/console/vid_restart/focus
+loss all captured and released as they should). The cause is in SDL 3.4's Cocoa
+backend (sdl2-compat): a mouse-down outside the content view (title bar) sets the
+window listener's `focusClickPending`, and `windowWillMove` sets `isMoving`; both are
+cleared only when the matching mouse-up reaches NSApp / the window, which AppKit's
+title-bar and window-drag tracking can swallow. While either is set,
+`Cocoa_SetRelativeMouseMode` returns early (no
+`CGAssociateMouseAndMouseCursorPosition(NO)`, no cursor hide) and the grab sets no
+`mouseConfinementRect`, but SDL still reports relative mode and grab as on and keeps
+sending deltas. Reproduced by setting `focusClickPending` on a captured window: SDL
+said relative 1 / grab 1, but the cursor was visible and the confinement rect empty.
+
+Fix (`sdl_input.c`, `IN_CocoaClearStalePointerState`): whenever the game wants the
+pointer captured and SDL's listener reports a drag / title-bar click pending while no
+mouse button is down, clear it with SDL's own `windowDidFinishMoving` /
+`clearFocusClickPending:` and capture again. `in_mousestate` prints the engine and
+SDL2/SDL3 state, the pending flag, the confinement width and whether the system
+cursor is visible.
+
 ### Host a Server (2026-10-24)
 
 The launcher's third card, **Host a Server**, runs a Holomatch dedicated server from the app
@@ -205,7 +277,8 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
 - **App menu during the launcher.** SDL's About/Hide/Quit items did nothing during the modal
   sessions. They are now retargeted to an object that works when modal while the launcher or
   the server window is up.
-- **Open points.** Until dedicated mode is headless, the child also opens a game window. A
-  non-DEDICATED build's dedicated server reads and writes `hmconfig.cfg` (`Q3CONFIG_CFG`), the
-  same file as the Holomatch client, and so can overwrite a running client's settings when it
-  quits.
+- **With the headless server** (srv-engine): the server window reads its "Server ready: map …
+  port …" line (after every map load; the port is the one bound, which Play on This Mac uses),
+  and explains exit 1 (no game data) and 3 (bad `fs_basepath`). The server keeps its own
+  `hmconfig_server.cfg`, so it no longer clashes with a local game. Holomatch's LAN search only
+  probes ports 27960–27963; other ports work by address only, and the launcher warns about them.

@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <termios.h>
 #include <fcntl.h>
 #include <sys/time.h>
+#include <errno.h>
 
 /*
 =============================================================
@@ -475,27 +476,48 @@ char *CON_Input( void )
 	}
 	else if (stdin_active)
 	{
-		int     len;
-		fd_set  fdset;
-		struct timeval timeout;
+		// stdin is a pipe or file (e.g. a parent app driving a dedicated
+		// server): collect what arrives and hand out one complete line at a
+		// time. A single read can hold several lines, or end in the middle
+		// of one.
+		static char pending[MAX_EDIT_LINE * 4];
+		static int pendingLen;
+		char *nl;
+		int len;
 
-		FD_ZERO(&fdset);
-		FD_SET(STDIN_FILENO, &fdset); // stdin
-		timeout.tv_sec = 0;
-		timeout.tv_usec = 0;
-		if(select (STDIN_FILENO + 1, &fdset, NULL, NULL, &timeout) == -1 || !FD_ISSET(STDIN_FILENO, &fdset))
-			return NULL;
+		for ( ;; )
+		{
+			nl = memchr( pending, '\n', pendingLen );
+			if ( nl || pendingLen == sizeof( pending ) - 1 )
+				break;
 
-		len = read(STDIN_FILENO, text, sizeof(text));
-		if (len == 0)
-		{ // eof!
-			stdin_active = qfalse;
-			return NULL;
+			len = read( STDIN_FILENO, pending + pendingLen, sizeof( pending ) - 1 - pendingLen );
+			if ( len == 0 )
+			{ // eof: run what is left, then stop reading
+				stdin_active = qfalse;
+				if ( !pendingLen )
+					return NULL;
+				nl = pending + pendingLen;
+				break;
+			}
+			if ( len < 0 )
+				return NULL;	// EAGAIN: no complete line yet
+			pendingLen += len;
 		}
 
-		if (len < 1)
-			return NULL;
-		text[len-1] = 0;    // rip off the /n and terminate
+		if ( !nl )
+			nl = pending + pendingLen;	// overlong line: take it as it is
+		len = nl - pending;
+		if ( len > 0 && pending[len - 1] == '\r' )
+			len--;
+		if ( len > (int)sizeof( text ) - 1 )
+			len = sizeof( text ) - 1;
+		memcpy( text, pending, len );
+		text[len] = 0;
+
+		len = nl - pending + ( nl < pending + pendingLen ? 1 : 0 );
+		pendingLen -= len;
+		memmove( pending, pending + len, pendingLen );
 
 		return text;
 	}
@@ -514,7 +536,30 @@ void CON_Print( const char *msg )
 
 	CON_Hide( );
 
-	if( com_ansiColor && com_ansiColor->integer )
+	if( sys_headless )
+	{
+		// dedicated server: plain text on stdout (line buffered, see main),
+		// for a terminal or a parent app reading a pipe. A closed pipe means
+		// that parent is gone: quit normally from the main loop.
+		extern volatile sig_atomic_t sys_quitSignal;
+		char buf[MAXPRINTMSG];
+		const char *p;
+		int n = 0;
+
+		for( p = msg; *p && n < (int)sizeof( buf ) - 1; p++ )
+		{
+			if( Q_IsColorString( p ) )
+			{
+				p++;
+				continue;
+			}
+			buf[n++] = *p;
+		}
+		buf[n] = 0;
+		if( ( fputs( buf, stdout ) == EOF || fflush( stdout ) == EOF ) && errno == EPIPE && !sys_quitSignal )
+			sys_quitSignal = SIGPIPE;
+	}
+	else if( com_ansiColor && com_ansiColor->integer )
 		Sys_AnsiColorPrint( msg );
 	else
 		fputs( msg, stderr );
