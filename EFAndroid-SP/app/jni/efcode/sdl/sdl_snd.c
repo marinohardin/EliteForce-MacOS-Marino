@@ -317,6 +317,23 @@ qboolean SNDDMA_Init(void)
 	return qtrue;
 }
 
+#ifdef __APPLE__
+/*
+===============
+SNDDMA_PauseOutput
+
+macOS: the game loop stops while a menu-bar menu is open (AppKit tracks it in
+its own run loop). Pause the device meanwhile, or the callback keeps replaying
+the unchanged DMA ring as a loop.
+===============
+*/
+void SNDDMA_PauseOutput( qboolean pause )
+{
+	if ( snd_inited && sdlPlaybackDevice )
+		SDL_PauseAudioDevice( sdlPlaybackDevice, pause ? 1 : 0 );
+}
+#endif
+
 /*
 ===============
 SNDDMA_GetDMAPos

@@ -53,6 +53,8 @@ Test hooks (environment variables, for automated tests without clicking):
 #include <limits.h>
 #include <dlfcn.h>
 
+void SNDDMA_PauseOutput( qboolean pause );	// sdl_snd.c
+
 #ifdef USE_LOCAL_HEADERS
 #	include "SDL.h"
 #else
@@ -944,6 +946,18 @@ void Sys_MacDataPostInit( void )
 			Com_Printf( "%s", [earlyLog UTF8String] );
 			[earlyLog release];
 			earlyLog = nil;
+		}
+		// Opening a menu-bar menu stops the game loop until it closes: pause
+		// the sound meanwhile instead of looping the last buffer.
+		static BOOL menuObservers;
+		if( !menuObservers )
+		{
+			NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+			[nc addObserverForName: NSMenuDidBeginTrackingNotification object: nil queue: nil
+				usingBlock: ^( NSNotification *n ) { SNDDMA_PauseOutput( qtrue ); }];
+			[nc addObserverForName: NSMenuDidEndTrackingNotification object: nil queue: nil
+				usingBlock: ^( NSNotification *n ) { SNDDMA_PauseOutput( qfalse ); }];
+			menuObservers = YES;
 		}
 		if( !Sys_MacAppBundlePath() )
 			return;
