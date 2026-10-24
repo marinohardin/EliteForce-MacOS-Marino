@@ -1,4 +1,5 @@
 # VoyagerSP-MacOS
+<img width="256" height="256" alt="VoyagerSP-MacOS Single Player Non-Starfleet App Icon" src="https://github.com/user-attachments/assets/28507cf3-8a2c-4235-b226-77997731af62" />
 
 A native macOS (Apple Silicon) port of *Star Trek: Voyager — Elite Force*: the
 **single-player campaign** (Raven Software, 2000).
@@ -15,9 +16,9 @@ Elite Force SP source, built as native modules.
 
 ## Screenshots
 
-<img width="1926" height="1232" alt="Screenshot 2026-10-23 at 6 46 38 PM" src="https://github.com/user-attachments/assets/11f67934-a3fe-44d7-b852-6be0d98eb6f4" />
-<img width="1920" height="1235" alt="Screenshot 2026-10-23 at 6 46 28 PM" src="https://github.com/user-attachments/assets/57a616ef-73a7-4cae-9b86-c3f2ad308839" />
-<img width="1920" height="1110" alt="Screenshot 2026-10-23 at 6 56 43 PM" src="https://github.com/user-attachments/assets/432dfc63-aa8a-47c1-8b60-8f94f99087e2" />
+<img width="1926" height="1232" alt="Elite Force Mac: Borg Approach" src="https://github.com/user-attachments/assets/11f67934-a3fe-44d7-b852-6be0d98eb6f4" />
+<img width="1920" height="1235" alt="Elite Force Mac: Borg Lighting" src="https://github.com/user-attachments/assets/57a616ef-73a7-4cae-9b86-c3f2ad308839" />
+<img width="1920" height="1110" alt="Elite Force Mac: Borg Holodeck" src="https://github.com/user-attachments/assets/432dfc63-aa8a-47c1-8b60-8f94f99087e2" />
 
 ## Features
 
