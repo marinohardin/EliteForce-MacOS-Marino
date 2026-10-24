@@ -81,6 +81,8 @@ by macos/build-ffmpeg.sh in the project's source repository, which holds the exa
 configure options. You may replace them with your own build of the same version.
 EOF_FF
 cp "$ROOT/THIRD_PARTY_LICENSES.md" "$ROOT/LICENSE" "$RES/licenses/"
+# Raven's license for the game modules must ship with them
+cp "$ROOT/efgame/STEF Game Source License.doc" "$RES/licenses/"
 cp "$ROOT/macos/MoltenVK_icd.json" "$RES/vulkan/icd.d/MoltenVK_icd.json"
 cp "$ROOT/macos/Credits.html" "$RES/Credits.html"	# the About panel shows it
 "$ROOT/macos/icon/make-icns.sh" "$RES/AppIcon.icns"
