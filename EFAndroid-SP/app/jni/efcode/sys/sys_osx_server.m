@@ -57,6 +57,7 @@ Test hooks (environment variables, see also sys_osx_launcher.m):
   VOYAGERSP_TEST_SERVER_INTERNET=1        an internet server opening its port
   VOYAGERSP_TEST_SERVER_NOMASTER=1        ... without listing it on the masters
   VOYAGERSP_TEST_NAT=<ipv4>|fail          fake the router's answer
+  VOYAGERSP_TEST_LIST_FAST=1              check the internet list every 2 s, twice
 With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 "[server] ..." and each status poll is logged as "[test] status: ...".
 ===========================================================================
@@ -77,6 +78,9 @@ With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 #include <arpa/inet.h>
 #include <signal.h>
 #include <dns_sd.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "sys_osx_launcher.h"
 
@@ -1836,6 +1840,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 @interface VSPServerWindowController : NSObject <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @property (nonatomic, readonly) NSWindow *window;
 - (void)natResult: (DNSServiceErrorType)err address: (uint32_t)externalAddress port: (uint16_t)externalPort;
+- (void)foundPublicAddress: (uint32_t)externalAddress;
 @end
 
 @implementation VSPServerWindowController
@@ -1863,13 +1868,21 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	NSString *publicAddress, *natProblem;
 	NSInteger publicPort;
 	BOOL natOpening;
+	// is it on the internet server list (the masters)?
+	DNSServiceRef addrRef;				// public address lookup when the port isn't mapped
+	NSString *lookupAddress;			// public address from that lookup
+	NSTimer *listTimer;
+	int listChecks;
+	BOOL listChecking, listFound, listMasterDown;
+	NSString *listedOn;
 	BOOL echo, readyLogged;
 	NSDate *lastPoll;
 
 	NSImageView *dot;
 	NSTextField *title, *stateText, *address, *addressHint, *mapValue, *gameValue, *playersValue;
-	NSTextField *internetValue, *internetHint;
-	NSImageView *internetIcon;
+	NSTextField *internetValue, *internetHint, *listValue, *listHint;
+	NSImageView *internetIcon, *listIcon;
+	NSButton *checkAgainButton;
 	NSButton *copyButton, *copyInternetButton, *playButton, *stopButton, *sendButton;
 	NSTableView *playerTable;
 	NSTextView *logView;
@@ -1913,7 +1926,8 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	NSView *playersBox, *logBox, *infoGroup;
 	NSFont *f = Body();
 
-	_window = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 720, 680 )
+	// taller for an internet server: its Internet and Listed rows
+	_window = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 720, settings.internet ? 800 : 680 )
 		styleMask: NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
 			NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView
 		backing: NSBackingStoreBuffered defer: NO];
@@ -1958,6 +1972,13 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[copyInternetButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
 	internetHint = Hint( @"", 480 );
 	[internetHint setLineBreakMode: NSLineBreakByWordWrapping];
+	listIcon = [[NSImageView alloc] init];
+	listValue = VSP_Label( @"", [NSFont systemFontOfSize: 13], nil );
+	checkAgainButton = [NSButton buttonWithTitle: @"Check Again" target: self action: @selector(checkListAgain:)];
+	[checkAgainButton setControlSize: NSControlSizeSmall];
+	[checkAgainButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+	listHint = Hint( @"", 480 );
+	[listHint setLineBreakMode: NSLineBreakByWordWrapping];
 	mapValue = VSP_Label( @"", f, nil );
 	gameValue = VSP_Label( @"", f, nil );
 	playersValue = VSP_Label( @"", f, nil );
@@ -1971,6 +1992,8 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		@[ [NSGridCell emptyContentView], addressHint ],
 		@[ VSP_Label( @"Internet:", f, nil ), HStack( @[ internetIcon, internetValue, copyInternetButton ], 8 ) ],
 		@[ [NSGridCell emptyContentView], internetHint ],
+		@[ VSP_Label( @"Listed:", f, nil ), HStack( @[ listIcon, listValue, checkAgainButton ], 8 ) ],
+		@[ [NSGridCell emptyContentView], listHint ],
 		@[ VSP_Label( @"Map:", f, nil ), mapValue ],
 		@[ VSP_Label( @"Game:", f, nil ), gameValue ],
 		@[ VSP_Label( @"Players:", f, nil ), playersValue ],
@@ -1980,9 +2003,11 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[[info rowAtIndex: 2] setTopPadding: 6];
 	[[info rowAtIndex: 3] setTopPadding: -2];
 	[[info rowAtIndex: 4] setTopPadding: 6];
+	[[info rowAtIndex: 5] setTopPadding: -2];
+	[[info rowAtIndex: 6] setTopPadding: 6];
 	// only for internet servers
-	[[info rowAtIndex: 2] setHidden: !settings.internet];
-	[[info rowAtIndex: 3] setHidden: !settings.internet];
+	for( int r = 2; r <= 5; r++ )
+		[[info rowAtIndex: r] setHidden: !settings.internet];
 	infoGroup = VSP_Group( @"Server", info );
 
 	// players and the console log
@@ -2029,9 +2054,13 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	{
 		[[[col views][1] widthAnchor] constraintEqualToAnchor: [col widthAnchor]].active = YES;
 		[[col bottomAnchor] constraintEqualToAnchor: [middle bottomAnchor]].active = YES;
-		[[[col views][1] heightAnchor] constraintGreaterThanOrEqualToConstant: 160].active = YES;
+		// the log shrinks (and scrolls) before anything else gives way
+		NSLayoutConstraint *minHeight = [[[col views][1] heightAnchor] constraintGreaterThanOrEqualToConstant: 160];
+		[minHeight setPriority: NSLayoutPriorityDefaultHigh];
+		minHeight.active = YES;
 	}
 	[[[middle views][0] widthAnchor] constraintEqualToConstant: 230].active = YES;
+	[[[middle views][1] widthAnchor] constraintEqualToAnchor: [middle widthAnchor] constant: -( 230 + 14 )].active = YES;
 
 	command = [NSTextField textFieldWithString: @""];
 	[command setPlaceholderString: @"Console command, such as say Hello, map hm_borg1 or kick <name>"];
@@ -2127,6 +2156,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[addressHint setTextColor: LANDiscoverable( port ) || !lanAddress ? [NSColor secondaryLabelColor] : [NSColor systemOrangeColor]];
 	[addressHint setToolTip: [addressHint stringValue]];
 	[self showInternet];
+	[self showList];
 
 	if( m )
 		[mapValue setStringValue: [m.displayName isEqualToString: m.name] ? m.name :
@@ -2445,10 +2475,235 @@ static BOOL PrivateIPv4( uint32_t a )
 	[internetHint setTextColor: natProblem ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor]];
 }
 
+// --- is the server on the internet server list? ---
+// A master only lists a server after it reached it from the internet (it answers the
+// heartbeat with a getinfo to the public address), so being listed proves the port is
+// open. The check asks the masters for their list, like Holomatch's browser does.
+
+#define LIST_FIRST_CHECK	( TestEnvSet( "VOYAGERSP_TEST_LIST_FAST" ) ? 2 : 8 )		// s after the server is ready
+#define LIST_INTERVAL		( TestEnvSet( "VOYAGERSP_TEST_LIST_FAST" ) ? 2 : 20 )	// s between checks
+#define LIST_MAX_CHECKS		( TestEnvSet( "VOYAGERSP_TEST_LIST_FAST" ) ? 2 : 9 )		// then give up (about 3 minutes)
+
+static NSArray<NSString *> *MasterNames( void )
+{
+	return @[ @"efmaster.tjps.eu", @"master.stef1.ravensoft.com" ];
+}
+
+// Ask one master for its protocol-24 list (blocking, a few seconds); nil if it didn't answer.
+static NSSet<NSString *> *QueryMaster( NSString *host )
+{
+	struct addrinfo hints = { 0 }, *res = NULL;
+	struct timeval tv = { 2, 0 };
+	NSMutableSet *list = nil;
+	unsigned char buf[16384];
+	static const char q[] = "\xff\xff\xff\xffgetservers 24 full empty";
+	int fd;
+
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_DGRAM;
+	if( getaddrinfo( [host UTF8String], "27953", &hints, &res ) || !res )
+		return nil;
+	if( ( fd = socket( AF_INET, SOCK_DGRAM, 0 ) ) < 0 )
+	{
+		freeaddrinfo( res );
+		return nil;
+	}
+	setsockopt( fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof( tv ) );
+	sendto( fd, q, sizeof( q ) - 1, 0, res->ai_addr, res->ai_addrlen );
+	freeaddrinfo( res );
+	for( ;; )
+	{
+		ssize_t n = recv( fd, buf, sizeof( buf ), 0 ), i;
+		if( n <= 0 )
+			break;		// timeout: the list is complete
+		if( !list )
+			list = [NSMutableSet set];
+		// "\xff\xff\xff\xffgetserversResponse" then \<4 byte ip><2 byte port> ... \EOT
+		for( i = 0; i + 7 <= n; i++ )
+		{
+			if( buf[i] != '\\' )
+				continue;
+			if( !memcmp( buf + i + 1, "EOT", 3 ) )
+				break;
+			[list addObject: [NSString stringWithFormat: @"%u.%u.%u.%u:%u", buf[i+1], buf[i+2], buf[i+3], buf[i+4],
+				( buf[i+5] << 8 ) | buf[i+6]]];
+			i += 6;
+		}
+	}
+	close( fd );
+	return list;
+}
+
+static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifIndex, DNSServiceErrorType err,
+	uint32_t externalAddress, DNSServiceProtocol protocol, uint16_t internalPort, uint16_t externalPort,
+	uint32_t ttl, void *context )
+{
+	if( err == kDNSServiceErr_NoError && externalAddress )
+		[(__bridge VSPServerWindowController *)context foundPublicAddress: externalAddress];
+}
+
+- (void)foundPublicAddress: (uint32_t)externalAddress
+{
+	char buf[INET_ADDRSTRLEN];
+	lookupAddress = @( inet_ntop( AF_INET, &externalAddress, buf, sizeof( buf ) ) );
+}
+
+- (NSString *)publicIP	{ return publicAddress ? publicAddress : lookupAddress; }
+
+- (void)startListCheck
+{
+	[self stopListCheck];
+	listChecks = 0;
+	listFound = listMasterDown = NO;
+	listedOn = nil;
+	listChecking = YES;
+	// the public address, to find in the lists (the port mapping reports it too)
+	if( !addrRef && DNSServiceNATPortMappingCreate( &addrRef, 0, 0, 0, 0, 0, 0, AddrCallback, (__bridge void *)self ) == kDNSServiceErr_NoError )
+		DNSServiceSetDispatchQueue( addrRef, dispatch_get_main_queue() );
+	listTimer = [NSTimer timerWithTimeInterval: LIST_FIRST_CHECK repeats: NO block: ^( NSTimer *t ) { [self checkList]; }];
+	[[NSRunLoop currentRunLoop] addTimer: listTimer forMode: NSRunLoopCommonModes];
+	[self showList];
+}
+
+- (void)stopListCheck
+{
+	[listTimer invalidate];
+	listTimer = nil;
+	listChecking = NO;
+	if( addrRef )
+	{
+		DNSServiceRefDeallocate( addrRef );
+		addrRef = NULL;
+	}
+	[self showList];
+}
+
+- (void)checkList
+{
+	NSString *ip = [self publicIP];
+	NSString *want = ip ? [NSString stringWithFormat: @"%@:%ld", ip, (long)( publicAddress ? publicPort : port )] : nil;
+	NSString *wantIP = ip ? [ip stringByAppendingString: @":"] : nil;
+
+	listTimer = nil;
+	if( !task || !listChecking )
+		return;
+	listChecks++;
+	dispatch_async( dispatch_get_global_queue( QOS_CLASS_UTILITY, 0 ), ^{
+		NSString *found = nil;
+		BOOL anyAnswer = NO;
+		for( NSString *m in MasterNames() )
+		{
+			NSSet *list = QueryMaster( m );
+			if( !list )
+				continue;
+			anyAnswer = YES;
+			for( NSString *e in list )
+				if( want && ( [e isEqualToString: want] || [e hasPrefix: wantIP] ) )
+					found = m;
+			if( found )
+				break;
+		}
+		dispatch_async( dispatch_get_main_queue(), ^{ [self listResult: found anyAnswer: anyAnswer]; } );
+	} );
+}
+
+- (void)listResult: (NSString *)master anyAnswer: (BOOL)anyAnswer
+{
+	if( !task || !listChecking )
+		return;
+	LLog( @"Server: internet list check %d: %@", listChecks, master ? [@"listed on " stringByAppendingString: master] :
+		anyAnswer ? @"not listed" : @"no master answered" );
+	if( master )
+	{
+		listFound = YES;
+		listedOn = master;
+		listChecking = NO;
+		[self appendLog: [NSString stringWithFormat: @"Internet: listed on %@, so players anywhere can reach it.", master]
+			color: [NSColor systemGreenColor]];
+		[self showList];
+		return;
+	}
+	listMasterDown = !anyAnswer;
+	if( listChecks >= LIST_MAX_CHECKS )
+	{
+		listChecking = NO;
+		[self appendLog: listMasterDown ? @"Internet: no master server answered, so the listing couldn't be checked." :
+			@"Internet: not on the server list. The master server couldn't reach this server from the internet."
+			color: [NSColor systemOrangeColor]];
+		[self showList];
+		return;
+	}
+	listTimer = [NSTimer timerWithTimeInterval: LIST_INTERVAL repeats: NO block: ^( NSTimer *t ) { [self checkList]; }];
+	[[NSRunLoop currentRunLoop] addTimer: listTimer forMode: NSRunLoopCommonModes];
+	[self showList];
+}
+
+- (void)checkListAgain: (id)sender
+{
+	if( !task )
+		return;
+	[self send: @"heartbeat"];		// announce again, then look
+	[self startListCheck];
+}
+
+- (void)showList
+{
+	NSString *symbol = nil, *value, *hint = @"";
+	NSColor *tint = [NSColor secondaryLabelColor];
+
+	if( !listValue || !settings.internet )
+		return;
+	if( listFound )
+	{
+		value = [NSString stringWithFormat: @"Yes, on %@", listedOn];
+		hint = @"The master server reached your server from the internet: players anywhere find it in "
+			@"Holomatch's internet list (Internet2 for this master).";
+		symbol = @"checkmark.circle.fill";
+		tint = [NSColor systemGreenColor];
+	}
+	else if( listChecking )
+	{
+		value = listChecks ? [NSString stringWithFormat: @"Not yet, checking again… (%d of %d)", listChecks, LIST_MAX_CHECKS] :
+			@"Checking the internet server list…";
+		hint = @"Your Mac can't test its own public address (most routers don't loop it back), so this asks the "
+			@"master server whether it reached your server.";
+		symbol = @"arrow.triangle.2.circlepath";
+	}
+	else if( listChecks && listMasterDown )
+	{
+		value = @"Couldn't check";
+		hint = @"No master server answered. Players can still connect by your public address if the port is open.";
+		symbol = @"questionmark.circle";
+	}
+	else if( listChecks )
+	{
+		value = @"Not listed";
+		hint = [NSString stringWithFormat: @"The master server couldn't reach your server, so players outside your network "
+			@"can't either%@. Forward UDP %ld to %@ in your router's settings, or use Tailscale (see the README).",
+			publicAddress ? @" (your router accepted the port request but doesn't forward it)" : @"",
+			(long)port, lanAddress ? lanAddress : @"this Mac"];
+		symbol = @"exclamationmark.triangle.fill";
+		tint = [NSColor systemOrangeColor];
+	}
+	else
+		value = task ? @"Waiting for the server…" : @"—";
+	[listValue setStringValue: value];
+	[listIcon setImage: symbol ? [NSImage imageWithSystemSymbolName: symbol accessibilityDescription: nil] : nil];
+	[listIcon setHidden: !symbol];
+	[listIcon setContentTintColor: tint];
+	[checkAgainButton setHidden: !task || listChecking || listFound];
+	[listHint setStringValue: hint];
+	[listHint setHidden: ![hint length]];
+	[listHint setTextColor: ( listChecks && !listFound && !listChecking && !listMasterDown ) ?
+		[NSColor systemOrangeColor] : [NSColor secondaryLabelColor]];
+}
+
 - (void)dealloc
 {
 	if( natRef )
 		DNSServiceRefDeallocate( natRef );
+	if( addrRef )
+		DNSServiceRefDeallocate( addrRef );
 }
 
 - (void)becameReady
@@ -2459,6 +2714,8 @@ static BOOL PrivateIPv4( uint32_t a )
 	LLog( @"Server: ready on %@ (map %@)", [self addressString], currentMap );
 	if( settings.internet && settings.openPort )
 		[self openRouterPort];
+	if( settings.internet )
+		[self startListCheck];
 	if( getenv( "VOYAGERSP_TEST_SERVER_COMMAND" ) )
 	{
 		NSString *c = @( getenv( "VOYAGERSP_TEST_SERVER_COMMAND" ) );
@@ -2588,6 +2845,7 @@ static BOOL PrivateIPv4( uint32_t a )
 	serverPid = 0;
 	task = nil;
 	[self closeRouterPort];
+	[self stopListCheck];
 	[pollTimer invalidate];
 	[killTimer invalidate];
 	pollTimer = killTimer = nil;
