@@ -2,7 +2,7 @@
 <img width="256" height="256" alt="EliteForce-MacOS Non-Starfleet App Icon" src="macos/icon/AppIcon-1024.png" />
 
 My family didn't let me play M rated games like Quake growing up, so I played Elite Force as a kid! 
-And now, I wanted to create an easily accessible way to play it again, especially in LAN parties.
+With this project, I wanted to create an easily accessible way to play it again, especially in LAN parties.
 
 ## What This Is
 
@@ -289,7 +289,7 @@ under their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 
 ## Personal Note
 
-Thanks for checking this out!  This was a project I learned a lot on.  As a disclosure, AI was
-utilized in building tools and code. I hope you enjoy playing!
+Thanks for checking this out!  This was a project I learned a lot on. I hope you enjoy playing!
+Qapla'!
 
 - Marino
