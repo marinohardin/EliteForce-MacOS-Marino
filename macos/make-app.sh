@@ -23,8 +23,8 @@ ENGINE_BUILD="$ROOT/build-macos"
 GAME_BUILD="$ROOT/efgame/buildmac"
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
-VERSION="$(sed -n 's/.*versionName "\(.*\)".*/\1/p' "$ROOT/EFAndroid-SP/app/build.gradle" | head -1)"
-VERSION="${VERSION:-1.0}"
+# the macOS port's own version (not the Android app's versionName)
+VERSION="${VERSION:-1.0.0}"
 BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 # ---- 1. build ---------------------------------------------------------------
