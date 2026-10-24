@@ -6,7 +6,8 @@
 #   NO_BUILD=1 macos/make-app.sh    bundle the existing build outputs only
 #
 # Needs Xcode command line tools, cmake, pkg-config and the Homebrew packages
-# used by the dev build: sdl2-compat (+ sdl3), ffmpeg, molten-vk, vulkan-loader.
+# used by the dev build: sdl2-compat (+ sdl3), molten-vk, vulkan-loader.
+# FFmpeg is the minimal LGPL build from macos/build-ffmpeg.sh (run on demand).
 # Every non-system dylib (and its transitive deps) is copied into
 # Contents/Frameworks and relinked to @rpath, so the .app runs without Homebrew.
 # The game data is NOT bundled (see Sys_MacCheckGameData in efcode/sys/sys_osx.m).
@@ -28,10 +29,12 @@ VERSION="${VERSION:-1.0.0}"
 BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 # ---- 1. build ---------------------------------------------------------------
+FFMPEG="$ROOT/build-ffmpeg/install"
 if [ -z "${NO_BUILD:-}" ]; then
+	[ -f "$FFMPEG/lib/pkgconfig/libavcodec.pc" ] || "$ROOT/macos/build-ffmpeg.sh"
 	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64
 	cmake --build "$GAME_BUILD" -j"$(sysctl -n hw.ncpu)"
-	cmake -S "$ROOT/EFAndroid-SP/app/jni/macos" -B "$ENGINE_BUILD"
+	cmake -S "$ROOT/EFAndroid-SP/app/jni/macos" -B "$ENGINE_BUILD" -DEF_FFMPEG_PREFIX="$FFMPEG"
 	cmake --build "$ENGINE_BUILD" -j"$(sysctl -n hw.ncpu)"
 fi
 
@@ -54,6 +57,25 @@ cp "$GAME_BUILD/libefgame.dylib" "$GAME_BUILD/libefui.dylib" "$MACOS/"
 cp -L "$BREW/lib/libSDL3.0.dylib"      "$FW/libSDL3.dylib"
 cp -L "$BREW/lib/libvulkan.1.dylib"    "$FW/libvulkan.1.dylib"
 cp -L "$BREW/lib/libMoltenVK.dylib"    "$FW/libMoltenVK.dylib"
+# The LGPL FFmpeg's install names are already @rpath/..., so the relink pass
+# below skips them: copy them explicitly (whatever efsp links, nothing more).
+for dep in $(otool -L "$MACOS/efsp" | awk '/@rpath\/lib(av|sw)/{print $1}'); do
+	base="${dep#@rpath/}"
+	[ -e "$FFMPEG/lib/$base" ] || { echo "efsp links $dep but $FFMPEG/lib has no $base" >&2; exit 1; }
+	cp -L "$FFMPEG/lib/$base" "$FW/$base"
+done
+# LGPL: FFmpeg's license text, plus where its exact source and build options are
+FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/macos/build-ffmpeg.sh")"
+mkdir -p "$RES/licenses"
+cp "$ROOT/build-ffmpeg/ffmpeg-$FF_VERSION/COPYING.LGPLv2.1" "$RES/licenses/FFmpeg-LGPL-2.1.txt"
+cat > "$RES/licenses/FFmpeg-README.txt" <<EOF_FF
+The libav*/libsw* libraries in Contents/Frameworks are FFmpeg $FF_VERSION
+(https://ffmpeg.org), licensed under the GNU LGPL 2.1 or later (FFmpeg-LGPL-2.1.txt).
+They are unmodified and built from https://ffmpeg.org/releases/ffmpeg-$FF_VERSION.tar.xz
+by macos/build-ffmpeg.sh in the project's source repository, which holds the exact
+configure options. You may replace them with your own build of the same version.
+EOF_FF
+cp "$ROOT/THIRD_PARTY_LICENSES.md" "$ROOT/LICENSE" "$RES/licenses/"
 cp "$ROOT/macos/MoltenVK_icd.json" "$RES/vulkan/icd.d/MoltenVK_icd.json"
 "$ROOT/macos/icon/make-icns.sh" "$RES/AppIcon.icns"
 chmod u+w "$FW"/*
@@ -94,6 +116,10 @@ done
 # Install names (ids) of the bundled libraries, and rpaths.
 for lib in "$FW"/*.dylib; do
 	install_name_tool -id "@rpath/$(basename "$lib")" "$lib" 2>/dev/null
+done
+# drop build-tree rpaths (e.g. build-ffmpeg/install/lib) CMake left in efsp
+for rp in $(otool -l "$MACOS/efsp" | awk '/cmd LC_RPATH/{getline; getline; print $2}'); do
+	case "$rp" in /*) install_name_tool -delete_rpath "$rp" "$MACOS/efsp" ;; esac
 done
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS/efsp"
 for lib in "$FW"/*.dylib; do

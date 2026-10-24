@@ -118,9 +118,8 @@ The macOS release bundles these libraries as shared libraries. See
 - **Vulkan-Loader** — The Khronos Group, LunarG, Valve (Apache-2.0).
   <https://github.com/KhronosGroup/Vulkan-Loader>
 - **SDL** — sdl2-compat and SDL3 (zlib license). <https://libsdl.org>
-- **FFmpeg** — the FFmpeg developers. The bundled build comes from Homebrew, which configures FFmpeg
-  with `--enable-gpl --enable-version3`, so **the bundled FFmpeg is licensed under the GPL version 3 or
-  later** (not LGPL). It also pulls in its own GPL dependencies (x264, x265). Source:
+- **FFmpeg** — the FFmpeg developers (LGPL-2.1-or-later). The app bundles a minimal build (Bink
+  decoding only) made by `macos/build-ffmpeg.sh` from the unmodified release source:
   <https://ffmpeg.org/download.html>.
 
 ---

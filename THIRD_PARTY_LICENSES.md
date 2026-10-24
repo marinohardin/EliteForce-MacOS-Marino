@@ -9,7 +9,7 @@ of the [README](README.md).
 The versions below are the ones used for the first macOS builds (Homebrew, October 2026). Update them
 when the release toolchain changes.
 Checked against `dist/EliteForceSP.app/Contents/Frameworks` as produced by `macos/make-app.sh`
-(20 dylibs: SDL3, sdl2-compat, Vulkan loader, MoltenVK, 5 FFmpeg libraries and their 11 dependencies).
+(8 dylibs: SDL3, sdl2-compat, Vulkan loader, MoltenVK and 4 FFmpeg libraries).
 Re-check with `ls` / `otool -L` whenever the toolchain changes.
 
 ## 1. Project code
@@ -45,46 +45,29 @@ and loaded at runtime from the system `OpenAL.framework`; it is not bundled.
 | sdl2-compat (SDL2 API on SDL3) | 2.32.74 | Zlib | <https://github.com/libsdl-org/sdl2-compat/blob/main/LICENSE.txt> |
 | Vulkan-Loader (Khronos) | 1.4.363 | Apache-2.0 | <https://github.com/KhronosGroup/Vulkan-Loader/blob/main/LICENSE.txt> |
 | MoltenVK (Khronos / Brenwill) | 1.4.2 | Apache-2.0 | <https://github.com/KhronosGroup/MoltenVK/blob/main/LICENSE> |
-| FFmpeg (`libavformat`, `libavcodec`, `libavutil`, `libswscale`, `libswresample`) | 9.0.2 | **GPL-3.0-or-later** (see below) | <https://ffmpeg.org/legal.html>; source: <https://ffmpeg.org/releases/>; GPLv3 text: <https://www.gnu.org/licenses/gpl-3.0.txt> |
+| FFmpeg (`libavformat`, `libavcodec`, `libavutil`, `libswscale`), minimal build | 9.0.2 | LGPL-2.1-or-later (see below) | <https://ffmpeg.org/legal.html>; source: <https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz>; text: `Contents/Resources/licenses/FFmpeg-LGPL-2.1.txt` in the app |
 
 The Apache-2.0 text is at <https://www.apache.org/licenses/LICENSE-2.0.txt>. Apache-2.0 also requires
 redistributing any `NOTICE` files these projects ship.
 
-### FFmpeg licensing (important for redistribution)
+### FFmpeg licensing
 
-FFmpeg itself is LGPL-2.1-or-later **unless** it is configured with GPL or version-3 options.
-Homebrew's `ffmpeg` 9.0.2 bottle is configured with:
+The app bundles a minimal FFmpeg built by [`macos/build-ffmpeg.sh`](macos/build-ffmpeg.sh) from the
+unmodified FFmpeg 9.0.2 release tarball (SHA-256 pinned in the script). It is configured without
+`--enable-gpl` / `--enable-version3` and with `--disable-autodetect --disable-everything`, enabling only
+the `bink` demuxer, the `bink` / `binkaudio_rdft` / `binkaudio_dct` decoders and `swscale`, so it is
+**LGPL-2.1-or-later** (the script refuses any other license) and links only against system libraries.
 
-```
---enable-gpl --enable-version3 --enable-libx264 --enable-libx265 --enable-libsvtav1
---enable-libdav1d --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libvmaf
---enable-openssl --enable-videotoolbox --enable-audiotoolbox ...
-```
+The LGPL obligations are met by:
 
-Homebrew labels the result **GPL-3.0-or-later**. Bundling it as-is means:
+- dynamic linking: the FFmpeg libraries are separate dylibs in `Contents/Frameworks` that users can
+  replace with their own build of the same version;
+- the LGPL text and a note naming the version, the source tarball and the build script, in
+  `Contents/Resources/licenses/` inside the app;
+- the exact configure options, in `macos/build-ffmpeg.sh` in this repository.
 
-- the `.app` contains GPLv3 code, so the combined engine binary has to be distributed under GPLv3 terms
-  (the engine is GPL-2.0-*or-later*, so that is compatible);
-- the corresponding source for FFmpeg and its libraries must be offered with the binaries;
-- the FFmpeg dylibs pull in these additional Homebrew libraries, which must be bundled and listed too:
-
-| Dependency (pulled in by FFmpeg) | Version | License |
-|---|---|---|
-| x264 | r3108 | GPL-2.0-or-later |
-| x265 | 4.1 | GPL-2.0-or-later |
-| SVT-AV1 | 2.3.0 | BSD-3-Clause (+ AOM patent license) |
-| dav1d | 1.5.1 | BSD-2-Clause |
-| libvpx | 1.15.0 | BSD-3-Clause |
-| Opus | 1.5.2 | BSD-3-Clause |
-| LAME (`libmp3lame`) | 3.100 | LGPL-2.0-or-later |
-| mpg123 (via LAME) | 1.32.10 | LGPL-2.1-only |
-| OpenSSL (`libssl`, `libcrypto`) | 4.0.3 | Apache-2.0 |
-| xz (`liblzma`) | 5.8.4 | 0BSD (liblzma) |
-
-**Recommendation:** the game only *decodes* Bink video, so a minimal FFmpeg build is enough. Build
-it LGPL-only, with no `--enable-gpl` or `--enable-version3` and no external libraries, enabling only
-the `bink`/`binkaudio_*` decoders, the `bink` demuxer, `swscale` and `swresample`. That gives a small,
-LGPL-2.1 FFmpeg with no x264/x265/OpenSSL baggage. See [docs/PUBLISHING.md](docs/PUBLISHING.md).
+Homebrew's `ffmpeg` (GPL-3.0-or-later, plus x264, x265, OpenSSL and others) is no longer used by the
+app; the dev build only falls back to it when `build-ffmpeg/install` does not exist.
 
 ## 4. Not included
 

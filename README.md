@@ -111,10 +111,14 @@ Everything needed to build is in the repository. Game data is only needed to run
 - [Homebrew](https://brew.sh) packages:
 
   ```sh
-  brew install cmake pkg-config sdl2 ffmpeg molten-vk vulkan-loader
+  brew install cmake pkg-config sdl2 molten-vk vulkan-loader
   ```
 
   (`sdl2` is provided by `sdl2-compat` on top of SDL3 in current Homebrew. That's fine.)
+- FFmpeg for the cinematics: `macos/build-ffmpeg.sh` downloads FFmpeg 9.0.2 and builds a
+  minimal LGPL version (Bink only) into `build-ffmpeg/install`. `make-app.sh` runs it when
+  needed; the engine CMake uses it automatically, and falls back to a Homebrew `ffmpeg` if
+  it hasn't been built.
 
 ### Build
 
@@ -125,7 +129,7 @@ The game modules and the engine are two separate CMake projects:
 cmake -S efgame -B efgame/buildmac -DCMAKE_OSX_ARCHITECTURES=arm64
 cmake --build efgame/buildmac -j
 
-# 2. Engine executable -> build-macos/efsp
+# 2. Engine executable -> build-macos/efsp  (run macos/build-ffmpeg.sh once first)
 cmake -S EFAndroid-SP/app/jni/macos -B build-macos
 cmake --build build-macos -j
 ```
@@ -151,12 +155,13 @@ NO_BUILD=1 macos/make-app.sh  # re-bundle only
 ```
 
 The script copies `efsp` and the two game modules into `Contents/MacOS`, and SDL3 +
-sdl2-compat, FFmpeg (and its dependencies), the Vulkan loader and MoltenVK into
-`Contents/Frameworks`, rewrites their install names to `@rpath`, and fails if anything still
+sdl2-compat, the LGPL FFmpeg libraries, the Vulkan loader and MoltenVK into
+`Contents/Frameworks` (license texts go in `Contents/Resources/licenses`), rewrites their install names to `@rpath`, and fails if anything still
 points outside the bundle or the system. `APP_NAME`, `DISPLAY_NAME`, `BUNDLE_ID` and `BREW`
 can be overridden.
 
-Build options (engine CMake): `-DEF_BINK=OFF` builds without FFmpeg (no cinematics).
+Build options (engine CMake): `-DEF_BINK=OFF` builds without FFmpeg (no cinematics);
+`-DEF_FFMPEG_PREFIX=/path` uses another FFmpeg install (empty: pkg-config's default).
 `-DEF_VM_JIT=ON` enables the experimental aarch64 QVM JIT; it is off by default and not
 needed, because the SP game runs natively.
 

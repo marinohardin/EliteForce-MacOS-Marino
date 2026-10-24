@@ -67,23 +67,10 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
       corresponding source. Simplest: tag the commit the `.app` was built from, and say in the
       release notes and in an About/README file inside the zip that "source is at
       <repo>/tree/<tag>". Keep the tag forever. Include `LICENSE` (GPL text) in the zip.
-- [ ] **FFmpeg is GPL-3.0+ when taken from Homebrew.** Homebrew builds it with `--enable-gpl
-      --enable-version3` and links x264, x265, OpenSSL, LAME, SVT-AV1, libvpx, dav1d, Opus and
-      xz (see THIRD_PARTY_LICENSES.md). Bundling that means shipping roughly ten extra dylibs,
-      GPLv3 obligations, and offering the source of all of them. **Strongly recommended
-      instead:** build a minimal FFmpeg for the bundle:
-      ```sh
-      ./configure --prefix=$PWD/../ffmpeg-min --arch=arm64 --enable-shared --disable-static \
-        --disable-everything --disable-programs --disable-doc --disable-network \
-        --disable-autodetect --enable-avformat --enable-avcodec --enable-swscale --enable-swresample \
-        --enable-demuxer=bink --enable-decoder=bink,binkaudio_rdft,binkaudio_dct \
-        --enable-protocol=file
-      ```
-      This is LGPL-2.1+ with no external dependencies. Add `--enable-demuxer=roq
-      --enable-decoder=roq,roq_dpcm` if RoQ is ever routed through FFmpeg. Point the engine CMake
-      at it via `PKG_CONFIG_PATH`. LGPL still requires: dynamic linking (or relinkable objects),
-      the LGPL text, a link to the exact FFmpeg source/version, and the configure line. Record all
-      of this in THIRD_PARTY_LICENSES.md. Verify that cinematics still play.
+- [x] **FFmpeg is LGPL.** `macos/build-ffmpeg.sh` builds a minimal LGPL-2.1+ FFmpeg (Bink only,
+      no external libraries) and `make-app.sh` bundles it with its license text and source note in
+      `Contents/Resources/licenses`. When bumping `FFMPEG_VERSION`, update the SHA-256, the version
+      in THIRD_PARTY_LICENSES.md, and check that cinematics still play.
 - [ ] **The `efgame/` (Raven) license terms.** Free of charge, non-commercial, electronic
       distribution only, include the license document with each copy, for use with the full
       retail game. So: no donations or Patreon gating for downloads, no ads, no app-store
@@ -146,6 +133,5 @@ Run `git grep -n 'TODO('` for the current list. At the time of writing:
 - `TODO(verify-homepath)`: README saves, the config/save path if `HOMEPATH_NAME` changes.
 - `TODO(verify-make-app)`: README build and reporting, `make-app.sh` usage and the bundle executable name.
 - `TODO(credits-merge)`: CREDITS macOS section, describe the .app, video-settings and cleanup work.
-- `TODO(verify-bundle)`: THIRD_PARTY_LICENSES, match the list to what the bundle actually contains
-  (and switch the FFmpeg entry to LGPL if the minimal build is adopted).
+- `TODO(verify-bundle)`: THIRD_PARTY_LICENSES, match the list to what the bundle actually contains.
 - `.gitignore`: "make-app.sh output dir: TODO verify".

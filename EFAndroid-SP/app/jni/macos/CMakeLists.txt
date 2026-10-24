@@ -23,7 +23,24 @@ set(EFG ${JNI}/../../../efgame)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 if(EF_BINK)
+  # Prefer the minimal LGPL FFmpeg from macos/build-ffmpeg.sh over Homebrew's
+  # (GPL-3.0) one; make-app.sh bundles whichever was linked.
+  set(_ef_ffmpeg_default "${CMAKE_CURRENT_SOURCE_DIR}/../../../../build-ffmpeg/install")
+  if(NOT EXISTS "${_ef_ffmpeg_default}/lib/pkgconfig/libavcodec.pc")
+    set(_ef_ffmpeg_default "")
+  endif()
+  set(EF_FFMPEG_PREFIX "${_ef_ffmpeg_default}" CACHE PATH "FFmpeg install prefix (empty = pkg-config default, e.g. Homebrew)")
+  if(EF_FFMPEG_PREFIX)
+    get_filename_component(EF_FFMPEG_PREFIX "${EF_FFMPEG_PREFIX}" ABSOLUTE)
+    set(ENV{PKG_CONFIG_PATH} "${EF_FFMPEG_PREFIX}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+  endif()
+  # re-resolve on every configure, so a changed prefix takes effect
+  unset(__pkg_config_checked_FFMPEG CACHE)
+  foreach(_lib avformat avcodec swscale avutil)
+    unset(pkgcfg_lib_FFMPEG_${_lib} CACHE)
+  endforeach()
   pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libswscale libavutil)
+  message(STATUS "FFmpeg: ${FFMPEG_LINK_LIBRARIES}")
 endif()
 
 set(CLIENT_SRC

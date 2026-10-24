@@ -46,6 +46,7 @@ thirdparty/
 # Build trees
 /build-macos/
 /build-macos-*/
+/build-ffmpeg/
 efgame/buildmac/
 # Packaged app / release output (macos/make-app.sh writes dist/EliteForceSP.app)
 /dist/
