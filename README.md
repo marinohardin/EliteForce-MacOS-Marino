@@ -10,15 +10,14 @@ Elite Force SP source, built as native modules.
 
 **No game data is included.** You need your own copy of the retail game.
 
-> Status: **alpha.** The campaign is playable, but it has not been played through end to
-> end on macOS yet. Please [report issues](#reporting-issues).
+> Status: **beta.** The campaign is playable, my old PC savegames load, but it has not been played 
+> through end to end on macOS yet. Please [report issues](#reporting-issues).
 
 ## Screenshots
 
-<!-- TODO(screenshots): add 2-3 screenshots (main menu, first mission, Retina fullscreen).
-     Use your own captures. Don't use official promo art or Star Trek logos. -->
-
-*Screenshots coming soon.*
+<img width="1926" height="1232" alt="Screenshot 2026-10-23 at 6 46 38 PM" src="https://github.com/user-attachments/assets/11f67934-a3fe-44d7-b852-6be0d98eb6f4" />
+<img width="1920" height="1235" alt="Screenshot 2026-10-23 at 6 46 28 PM" src="https://github.com/user-attachments/assets/57a616ef-73a7-4cae-9b86-c3f2ad308839" />
+<img width="1920" height="1110" alt="Screenshot 2026-10-23 at 6 56 43 PM" src="https://github.com/user-attachments/assets/432dfc63-aa8a-47c1-8b60-8f94f99087e2" />
 
 ## Features
 
