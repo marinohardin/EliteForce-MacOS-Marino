@@ -58,6 +58,8 @@ Test hooks (environment variables, see also sys_osx_launcher.m):
   VOYAGERSP_TEST_SERVER_NOMASTER=1        ... without listing it on the masters
   VOYAGERSP_TEST_NAT=<ipv4>|fail          fake the router's answer
   VOYAGERSP_TEST_LIST_FAST=1              check the internet list every 2 s, twice
+  VOYAGERSP_TEST_SERVER_ACTIONS=a,b,...   press controls 4 s apart once ready: next, restart,
+                                         slot<N>, map:<name>, addbot, removebots, kick<row>
 With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 "[server] ..." and each status poll is logged as "[test] status: ...".
 ===========================================================================
@@ -1837,7 +1839,7 @@ static BOOL WriteServerConfig( VSPServerSettings *s, NSArray<VSPMapInfo *> *maps
 
 typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, SRV_FAILED } srvState_t;
 
-@interface VSPServerWindowController : NSObject <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate>
+@interface VSPServerWindowController : NSObject <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate>
 @property (nonatomic, readonly) NSWindow *window;
 - (void)natResult: (DNSServiceErrorType)err address: (uint32_t)externalAddress port: (uint16_t)externalPort;
 - (void)foundPublicAddress: (uint32_t)externalAddress;
@@ -1884,6 +1886,8 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	NSImageView *internetIcon, *listIcon;
 	NSButton *checkAgainButton;
 	NSButton *copyButton, *copyInternetButton, *playButton, *stopButton, *sendButton;
+	NSButton *nextMapButton, *restartMapButton, *addBotButton, *removeBotsButton, *messageButton, *kickButton;
+	NSPopUpButton *changeMapButton;
 	NSTableView *playerTable;
 	NSTextView *logView;
 	NSTextField *command;
@@ -1919,7 +1923,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 - (void)build
 {
 	NSView *content;
-	NSStackView *root, *header, *headerText, *stateRow, *addressRow, *middle, *commandRow, *footer;
+	NSStackView *root, *header, *headerText, *stateRow, *addressRow, *middle, *commandRow, *footer, *controls, *playersHeader;
 	NSGridView *info;
 	NSImageView *icon;
 	NSScrollView *logScroll;
@@ -1927,7 +1931,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	NSFont *f = Body();
 
 	// taller for an internet server: its Internet and Listed rows
-	_window = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 720, settings.internet ? 800 : 680 )
+	_window = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 720, settings.internet ? 840 : 720 )
 		styleMask: NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
 			NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView
 		backing: NSBackingStoreBuffered defer: NO];
@@ -2010,6 +2014,25 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		[[info rowAtIndex: r] setHidden: !settings.internet];
 	infoGroup = VSP_Group( @"Server", info );
 
+	// server controls, under the Server box
+	nextMapButton = [self controlButton: @"Next Map" symbol: @"forward.end.fill" action: @selector(nextMap:)
+		tip: @"Go to the next map in the rotation"];
+	restartMapButton = [self controlButton: @"Restart Map" symbol: @"arrow.counterclockwise" action: @selector(restartMap:)
+		tip: @"Restart the current map; scores start over"];
+	changeMapButton = [[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: YES];
+	[changeMapButton addItemWithTitle: @"Change Map"];
+	[[changeMapButton itemAtIndex: 0] setImage: Symbol( @"map", 13 )];
+	[changeMapButton setToolTip: @"Switch to another map now"];
+	[[changeMapButton menu] setDelegate: self];
+	addBotButton = [self controlButton: @"Add Bot" symbol: @"person.badge.plus" action: @selector(addBot:)
+		tip: @"Add one bot at the skill set in Config…"];
+	removeBotsButton = [self controlButton: @"Remove Bots" symbol: @"person.2.slash" action: @selector(removeBots:)
+		tip: @"Kick all bots (and stop filling the game with bots)"];
+	messageButton = [self controlButton: @"Message…" symbol: @"text.bubble" action: @selector(messagePlayers:)
+		tip: @"Send a message to everyone on the server"];
+	controls = HStack( @[ nextMapButton, restartMapButton, changeMapButton, addBotButton, removeBotsButton, messageButton ], 8 );
+	[controls setDistribution: NSStackViewDistributionFillProportionally];
+
 	// players and the console log
 	playerTable = [[NSTableView alloc] init];
 	for( NSArray *c in @[ @[ @"name", @"Player", @104 ], @[ @"score", @"Score", @42 ], @[ @"ping", @"Ping", @38 ] ] )
@@ -2044,8 +2067,20 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	logScroll = Scrolled( logView );
 	[logScroll setHasVerticalScroller: YES];
 	logBox = Boxed( logScroll );
-	middle = [NSStackView stackViewWithViews: @[ VStack( @[ VSP_Label( @"PLAYERS", [NSFont systemFontOfSize: 11 weight: NSFontWeightSemibold],
-			[NSColor secondaryLabelColor] ), playersBox ], 6 ),
+	kickButton = [NSButton buttonWithTitle: @"Kick" target: self action: @selector(kickPlayer:)];
+	[kickButton setControlSize: NSControlSizeSmall];
+	[kickButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+	[kickButton setToolTip: @"Kick the selected player or bot"];
+	playersHeader = HStack( @[ VSP_Label( @"PLAYERS", [NSFont systemFontOfSize: 11 weight: NSFontWeightSemibold],
+		[NSColor secondaryLabelColor] ), [NSView new], kickButton ], 6 );
+	[[playersHeader views][1] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	{
+		NSMenu *m = [[NSMenu alloc] init];
+		[m addItemWithTitle: @"Kick" action: @selector(kickPlayer:) keyEquivalent: @""];
+		[[[m itemArray] firstObject] setTarget: self];
+		[playerTable setMenu: m];
+	}
+	middle = [NSStackView stackViewWithViews: @[ VStack( @[ playersHeader, playersBox ], 6 ),
 		VStack( @[ VSP_Label( @"CONSOLE", [NSFont systemFontOfSize: 11 weight: NSFontWeightSemibold],
 			[NSColor secondaryLabelColor] ), logBox ], 6 ) ]];
 	[middle setSpacing: 14];
@@ -2083,7 +2118,9 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[[footer views][1] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
 	[footer setSpacing: 10];
 
-	root = VStack( @[ header, infoGroup, middle, commandRow, footer ], 16 );
+	root = VStack( @[ header, infoGroup, controls, middle, commandRow, footer ], 16 );
+	[root setCustomSpacing: 12 afterView: infoGroup];
+	[[playersHeader widthAnchor] constraintEqualToAnchor: [playersBox widthAnchor]].active = YES;
 	[root setCustomSpacing: 20 afterView: header];
 	[root setCustomSpacing: 10 afterView: middle];
 	[root setCustomSpacing: 20 afterView: commandRow];
@@ -2129,6 +2166,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[sendButton setEnabled: [command isEnabled]];
 	[stopButton setTitle: s == SRV_STOPPED || s == SRV_FAILED ? @"Back to Launcher" : @"Stop Server"];
 	[stopButton setEnabled: s != SRV_STOPPING];
+	[self updateControls];
 }
 
 - (NSString *)addressString
@@ -2157,6 +2195,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[addressHint setToolTip: [addressHint stringValue]];
 	[self showInternet];
 	[self showList];
+	[self updateControls];
 
 	if( m )
 		[mapValue setStringValue: [m.displayName isEqualToString: m.name] ? m.name :
@@ -2262,6 +2301,180 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	pollTimer = [NSTimer timerWithTimeInterval: 2 target: self selector: @selector(poll:) userInfo: nil repeats: YES];
 	[[NSRunLoop currentRunLoop] addTimer: pollTimer forMode: NSRunLoopCommonModes];
 	return YES;
+}
+
+// --- server controls ---
+
+- (NSButton *)controlButton: (NSString *)title symbol: (NSString *)symbol action: (SEL)action tip: (NSString *)tip
+{
+	NSButton *b = [NSButton buttonWithTitle: title image: Symbol( symbol, 13 ) target: self action: action];
+	[b setImagePosition: NSImageLeading];
+	[b setToolTip: tip];
+	return b;
+}
+
+// a console command from a button: shown in the log like a typed one
+- (void)run: (NSString *)cmd
+{
+	[self appendLog: [@"] " stringByAppendingString: cmd] color: [NSColor controlAccentColor]];
+	[self send: cmd];
+}
+
+- (void)updateControls
+{
+	BOOL running = task && state == SRV_RUNNING;
+	NSInteger row = [playerTable selectedRow];
+
+	for( NSControl *c in @[ nextMapButton, restartMapButton, changeMapButton, addBotButton, removeBotsButton, messageButton ] )
+		[c setEnabled: running];
+	[kickButton setEnabled: running && row >= 0 && row < (NSInteger)[players count]];
+}
+
+- (void)tableViewSelectionDidChange: (NSNotification *)n	{ [self updateControls]; }
+
+- (void)nextMap: (id)sender
+{
+	[self run: @"vstr nextmap"];
+}
+
+- (void)restartMap: (id)sender
+{
+	[self run: @"map_restart"];
+}
+
+// Change Map's menu: the rotation first, then the other maps for this game type.
+- (void)menuNeedsUpdate: (NSMenu *)menu
+{
+	NSArray<NSString *> *rot = settings.rotation;
+	NSMutableArray<VSPMapInfo *> *others = [NSMutableArray array];
+	NSMenuItem *item;
+
+	while( [menu numberOfItems] > 1 )
+		[menu removeItemAtIndex: 1];
+	if( [rot count] )
+	{
+		[[menu addItemWithTitle: @"Rotation" action: nil keyEquivalent: @""] setEnabled: NO];
+		for( NSUInteger i = 0; i < [rot count]; i++ )
+		{
+			VSPMapInfo *m = VSP_FindMap( maps, rot[i] );
+			item = [menu addItemWithTitle: m ? [NSString stringWithFormat: @"%@ (%@)", m.displayName, m.name] : rot[i]
+				action: @selector(changeMap:) keyEquivalent: @""];
+			[item setTarget: self];
+			[item setRepresentedObject: @{ @"map": rot[i], @"slot": @( i + 1 ) }];
+			[item setState: [rot[i] isEqualToString: currentMap] ? NSControlStateValueOn : NSControlStateValueOff];
+			[item setIndentationLevel: 1];
+		}
+	}
+	for( VSPMapInfo *m in maps )
+		if( ![rot containsObject: m.name] && [m supportsGametype: settings.gametype] )
+			[others addObject: m];
+	[others sortUsingComparator: ^NSComparisonResult( VSPMapInfo *a, VSPMapInfo *b ) {
+		return [a.displayName localizedCaseInsensitiveCompare: b.displayName];
+	}];
+	if( [others count] )
+	{
+		if( [rot count] )
+			[menu addItem: [NSMenuItem separatorItem]];
+		[[menu addItemWithTitle: @"Other maps" action: nil keyEquivalent: @""] setEnabled: NO];
+		for( VSPMapInfo *m in others )
+		{
+			item = [menu addItemWithTitle: [NSString stringWithFormat: @"%@ (%@)%@", m.displayName, m.name,
+				m.expansion ? @" · Expansion Pack" : @""] action: @selector(changeMap:) keyEquivalent: @""];
+			[item setTarget: self];
+			[item setRepresentedObject: @{ @"map": m.name }];
+			[item setState: [m.name isEqualToString: currentMap] ? NSControlStateValueOn : NSControlStateValueOff];
+			[item setIndentationLevel: 1];
+		}
+	}
+}
+
+- (void)changeMap: (NSMenuItem *)item
+{
+	NSDictionary *d = [item representedObject];
+
+	// a rotation map continues the rotation from there; any other map leaves it where it was
+	if( d[@"slot"] )
+		[self run: [NSString stringWithFormat: @"vstr vsp_map%@", d[@"slot"]]];
+	else
+		[self run: [NSString stringWithFormat: @"map %@", d[@"map"]]];
+}
+
+- (void)addBot: (id)sender
+{
+	static NSArray *names;
+	NSMutableArray *free;
+	NSString *bot;
+
+	if( !names )
+		names = @[ @"Munro", @"Janeway", @"Chakotay", @"Tuvok", @"Paris", @"Torres", @"Kim", @"Seven", @"Doctor",
+			@"Neelix", @"Biessman", @"Chang", @"Chell", @"Foster", @"Jurot", @"Telsia", @"Gowron", @"Kahless", @"Sela",
+			@"Alexandria", @"Laird", @"Oviedo", @"Nelson", @"Odell", @"Jaworski", @"Csatlos", @"Vorik", @"BorgQueen" ];
+	free = [names mutableCopy];
+	for( NSDictionary *p in players )
+		for( NSString *n in names )
+			if( [p[@"name"] caseInsensitiveCompare: n] == NSOrderedSame )
+				[free removeObject: n];
+	if( ![free count] )
+		free = [names mutableCopy];
+	bot = free[arc4random_uniform( (uint32_t)[free count] )];
+	[self run: [NSString stringWithFormat: @"addbot %@ %ld", bot, (long)settings.botSkill]];
+}
+
+- (void)removeBots: (id)sender
+{
+	// otherwise bot_minplayers adds them right back
+	[self run: @"set bot_minplayers 0"];
+	[self run: @"kick allbots"];
+	[self appendLog: @"Bots won't refill this game; Add Bot still adds them." color: [NSColor secondaryLabelColor]];
+}
+
+- (void)kickPlayer: (id)sender
+{
+	NSInteger row = [playerTable clickedRow] >= 0 ? [playerTable clickedRow] : [playerTable selectedRow];
+	NSDictionary *p;
+
+	if( row < 0 || row >= (NSInteger)[players count] || !task )
+		return;
+	p = players[row];
+	if( ![p[@"bot"] boolValue] )
+	{
+		NSAlert *a = [[NSAlert alloc] init];
+		[a setMessageText: [NSString stringWithFormat: @"Kick %@?", p[@"name"]]];
+		[a setInformativeText: @"They're disconnected from the server, but can join again."];
+		[a addButtonWithTitle: @"Kick"];
+		[a addButtonWithTitle: @"Cancel"];
+		if( [[a buttons][0] respondsToSelector: @selector(setHasDestructiveAction:)] )
+			[[a buttons][0] setHasDestructiveAction: YES];
+		if( [a runModal] != NSAlertFirstButtonReturn )
+			return;
+	}
+	[self run: [NSString stringWithFormat: @"clientkick %@", p[@"num"]]];
+}
+
+- (void)messagePlayers: (id)sender
+{
+	NSAlert *a = [[NSAlert alloc] init];
+	NSTextField *f = [NSTextField textFieldWithString: @""];
+	NSString *text;
+
+	[f setFrame: NSMakeRect( 0, 0, 300, 24 )];
+	[f setPlaceholderString: @"Message"];
+	[a setMessageText: @"Message everyone on the server"];
+	[a setInformativeText: @"Shown in the game's chat area as coming from the server."];
+	[a setAccessoryView: f];
+	[a addButtonWithTitle: @"Send"];
+	[a addButtonWithTitle: @"Cancel"];
+	[[a window] setInitialFirstResponder: f];
+	if( [a runModal] != NSAlertFirstButtonReturn )
+		return;
+	// no quotes or semicolons: they would end the command
+	text = [[[[f stringValue] stringByReplacingOccurrencesOfString: @"\"" withString: @"'"]
+		stringByReplacingOccurrencesOfString: @";" withString: @","]
+		stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if( [text length] > 150 )
+		text = [text substringToIndex: 150];
+	if( [text length] )
+		[self run: [NSString stringWithFormat: @"say \"%@\"", text]];
 }
 
 - (void)send: (NSString *)cmd
@@ -2750,6 +2963,37 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 		[self openRouterPort];
 	if( settings.internet )
 		[self startListCheck];
+	if( getenv( "VOYAGERSP_TEST_SERVER_ACTIONS" ) )
+	{
+		NSArray *actions = [@( getenv( "VOYAGERSP_TEST_SERVER_ACTIONS" ) ) componentsSeparatedByString: @","];
+		[actions enumerateObjectsUsingBlock: ^( NSString *act, NSUInteger i, BOOL *stop ) {
+			dispatch_after( dispatch_time( DISPATCH_TIME_NOW, (int64_t)( 4 * ( i + 1 ) ) * NSEC_PER_SEC ), dispatch_get_main_queue(), ^{
+				NSMenuItem *item = [[NSMenuItem alloc] init];
+				LLog( @"[test] control: %@", act );
+				if( [act isEqualToString: @"next"] )				[self nextMap: nil];
+				else if( [act isEqualToString: @"restart"] )		[self restartMap: nil];
+				else if( [act isEqualToString: @"addbot"] )			[self addBot: nil];
+				else if( [act isEqualToString: @"removebots"] )		[self removeBots: nil];
+				else if( [act hasPrefix: @"slot"] )
+				{
+					NSInteger n = [[act substringFromIndex: 4] integerValue];
+					[item setRepresentedObject: @{ @"map": self->settings.rotation[n - 1], @"slot": @( n ) }];
+					[self changeMap: item];
+				}
+				else if( [act hasPrefix: @"map:"] )
+				{
+					[item setRepresentedObject: @{ @"map": [act substringFromIndex: 4] }];
+					[self changeMap: item];
+				}
+				else if( [act hasPrefix: @"kick"] )
+				{
+					[self->playerTable selectRowIndexes: [NSIndexSet indexSetWithIndex: [[act substringFromIndex: 4] integerValue]]
+						byExtendingSelection: NO];
+					[self kickPlayer: nil];
+				}
+			} );
+		}];
+	}
 	if( getenv( "VOYAGERSP_TEST_SERVER_COMMAND" ) )
 	{
 		NSString *c = @( getenv( "VOYAGERSP_TEST_SERVER_COMMAND" ) );
@@ -2814,7 +3058,8 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 			[statusRows addObject: @{ @"name": [StripColors( name ) stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceCharacterSet]],
 				@"score": [raw substringWithRange: [m rangeAtIndex: 2]],
 				@"ping": bot ? @"bot" : [ping isEqualToString: @"CON"] ? @"…" : ping,
-				@"bot": @( bot ), @"address": addr ? addr : @"" }];
+				@"bot": @( bot ), @"address": addr ? addr : @"",
+				@"num": [raw substringWithRange: [m rangeAtIndex: 1]] }];
 		}
 	}
 	else if( [line hasPrefix: @"map: "] )
