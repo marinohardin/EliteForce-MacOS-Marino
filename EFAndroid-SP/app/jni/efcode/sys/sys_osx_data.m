@@ -18,11 +18,19 @@ BaseEF folder). By default the .pk3 files (and old saves) are copied into (b);
 the "Use BaseEF files in place rather than copy" checkbox instead remembers
 the chosen folder and uses it as fs_basepath.
 
-Sys_MacFrame adds a File menu (Show Saves Folder, Show Game Folder, Change
-Game Folder…, Delete Saves & Settings…) after the application menu once SDL
-has created the menu bar.
-The same actions are console commands (macos_showsaves, macos_showgamefolder,
-macos_changegamefolder, macos_deletesettings).
+Normally the launcher (sys_osx_launcher.m) runs first: it shows where the
+game data was found (VSP_FindGameData, the same lookup) and offers the
+chooser (VSP_ChooseGameData). Sys_MacResolveGameData is the path without it,
+when the mode is on the command line (a relaunch from the File menu, tests).
+
+Sys_MacFrame adds a File menu (Return to Launcher…, Switch to Holomatch /
+Single Player, Show Saves Folder, Show Game Folder, Change Game Folder…,
+Delete Saves & Settings…) after the application menu once SDL has created
+the menu bar. Those that change the mode or folder relaunch the app
+(open -n, after this process has exited).
+The same actions are console commands (macos_launcher, macos_switchmode,
+macos_showsaves, macos_showgamefolder, macos_changegamefolder,
+macos_deletesettings).
 
 Delete Saves & Settings only ever moves ~/Library/Application Support/
 <MACOS_HOMEPATH_NAME> to the Trash, after the engine has shut down. It never
@@ -33,6 +41,7 @@ Test hooks (environment variables, for automated tests without clicking):
   VOYAGERSP_TEST_INPLACE=1     ...with the "in place" checkbox ticked
   VOYAGERSP_TEST_CONFIRM=1     answer confirmation alerts with the first button
   VOYAGERSP_TEST_NOTRASH=1     log instead of moving to the Trash
+  VOYAGERSP_TEST_NORELAUNCH=1  log instead of relaunching the app
   VOYAGERSP_TEST_PANEL_TIMEOUT=<s>  log the open panel's size and cancel it after <s> s
 ===========================================================================
 */
@@ -52,6 +61,10 @@ Test hooks (environment variables, for automated tests without clicking):
 #include <unistd.h>
 #include <limits.h>
 #include <dlfcn.h>
+#include <spawn.h>
+#include <sys/wait.h>
+
+extern char **environ;
 
 void SNDDMA_PauseOutput( qboolean pause );	// sdl_snd.c
 
@@ -73,6 +86,7 @@ extern NSString *Sys_MacAppBundlePath( void );
 
 static NSMutableString *earlyLog;	// messages from before Com_Init, replayed into the console
 static qboolean pendingDelete;
+static int pendingRelaunch = -2;	// mode to relaunch in at exit: 0 SP, 1 Holomatch, -1 launcher
 
 /* ------------------------------------------------------------------------ */
 
@@ -660,52 +674,119 @@ directory to use as fs_basepath, or NULL to keep the default. Quits when
 the user cancels the chooser.
 =================
 */
-const char *Sys_MacResolveGameData( int argc, char **argv )
+/*
+=================
+VSP_DataOverridden
+
+qtrue when the command line sets the data paths itself (no lookup, no UI).
+=================
+*/
+qboolean VSP_DataOverridden( int argc, char **argv )
 {
 	static const char *overrides[] = { "fs_basepath", "fs_homepath", "com_homepath",
 		"fs_cdpath", "fs_steampath", "fs_gogpath", "com_basegame", NULL };
-	static char result[MAX_OSPATH];
 	int i, j;
 
 	for( i = 1; i < argc; i++ )
 		for( j = 0; overrides[j]; j++ )
 			if( !Q_stricmp( argv[i], overrides[j] ) )
-				return NULL;
+				return qtrue;
+	return qfalse;
+}
+
+/*
+=================
+VSP_FindGameData
+
+Looks for BaseEF/pak0.pk3 without any UI (a, b, c above). Returns NO if
+none has it. On success *outBasepath is the fs_basepath to use (nil: the
+homepath copy, the default) and *outBase the BaseEF folder found.
+=================
+*/
+BOOL VSP_FindGameData( NSString **outBasepath, NSString **outBase )
+{
+	NSString *bundle = Sys_MacAppBundlePath();
+	NSString *remembered, *base;
+
+	*outBasepath = nil;
+	*outBase = nil;
+
+	// a) remembered in-place folder
+	remembered = [[NSUserDefaults standardUserDefaults] stringForKey: KEY_GAMEFOLDER];
+	if( remembered )
+	{
+		if( ( base = BaseIn( remembered ) ) && Pak0In( base ) )
+		{
+			MacLog( @"Game data: remembered game folder \"%@\"", base );
+			*outBasepath = remembered;
+			*outBase = base;
+			return YES;
+		}
+		MacLog( @"Game data: remembered game folder \"%@\" no longer has %s/pak0.pk3", remembered, BASEGAME );
+	}
+
+	// b) copied into the homepath
+	if( Pak0In( HomeBase() ) )
+	{
+		MacLog( @"Game data: \"%@\"", HomeBase() );
+		*outBase = HomeBase();
+		return YES;
+	}
+
+	// c) next to the app, unless translocated
+	if( !bundle )
+		return NO;
+	if( IsTranslocated( bundle ) )
+		MacLog( @"Game data: app is translocated (%@), not looking next to it", bundle );
+	else if( ( base = BaseIn( [bundle stringByDeletingLastPathComponent] ) ) && Pak0In( base ) )
+	{
+		MacLog( @"Game data: next to the app, \"%@\"", base );
+		*outBasepath = [bundle stringByDeletingLastPathComponent];
+		*outBase = base;
+		return YES;
+	}
+	return NO;
+}
+
+// The chooser for the launcher: same results as RunChooser.
+BOOL VSP_ChooseGameData( NSString **outBasepath )
+{
+	return RunChooser( outBasepath );
+}
+
+NSString *VSP_HomeBase( void )
+{
+	return HomeBase();
+}
+
+void VSP_RevealFolder( NSString *path )
+{
+	MacLog( @"Showing \"%@\" in Finder", path );
+	[[NSWorkspace sharedWorkspace] openURL: [NSURL fileURLWithPath: path isDirectory: YES]];
+}
+
+void VSP_Log( NSString *msg )
+{
+	MacLog( @"%@", msg );
+}
+
+const char *Sys_MacResolveGameData( int argc, char **argv )
+{
+	static char result[MAX_OSPATH];
+
+	if( VSP_DataOverridden( argc, argv ) )
+		return NULL;
 
 	@autoreleasepool {
-		NSString *bundle = Sys_MacAppBundlePath();
-		NSString *remembered, *base, *chosen = nil;
+		NSString *found, *base, *chosen = nil;
 
-		if( !bundle )
+		if( !Sys_MacAppBundlePath() )
 			return NULL;
-
-		// a) remembered in-place folder
-		remembered = [[NSUserDefaults standardUserDefaults] stringForKey: KEY_GAMEFOLDER];
-		if( remembered )
+		if( VSP_FindGameData( &found, &base ) )
 		{
-			if( ( base = BaseIn( remembered ) ) && Pak0In( base ) )
-			{
-				MacLog( @"Game data: remembered game folder \"%@\"", base );
-				Q_strncpyz( result, [remembered fileSystemRepresentation], sizeof( result ) );
-				return result;
-			}
-			MacLog( @"Game data: remembered game folder \"%@\" no longer has %s/pak0.pk3", remembered, BASEGAME );
-		}
-
-		// b) copied into the homepath
-		if( Pak0In( HomeBase() ) )
-		{
-			MacLog( @"Game data: \"%@\"", HomeBase() );
-			return NULL;
-		}
-
-		// c) next to the app, unless translocated
-		if( IsTranslocated( bundle ) )
-			MacLog( @"Game data: app is translocated (%@), not looking next to it", bundle );
-		else if( ( base = BaseIn( [bundle stringByDeletingLastPathComponent] ) ) && Pak0In( base ) )
-		{
-			MacLog( @"Game data: next to the app, \"%@\"", base );
-			Q_strncpyz( result, [[bundle stringByDeletingLastPathComponent] fileSystemRepresentation], sizeof( result ) );
+			if( !found )
+				return NULL;
+			Q_strncpyz( result, [found fileSystemRepresentation], sizeof( result ) );
 			return result;
 		}
 
@@ -736,8 +817,63 @@ const char *Sys_MacResolveGameData( int argc, char **argv )
 
 static void RevealFolder( NSString *path )
 {
-	MacLog( @"Showing \"%@\" in Finder", path );
-	[[NSWorkspace sharedWorkspace] openURL: [NSURL fileURLWithPath: path isDirectory: YES]];
+	VSP_RevealFolder( path );
+}
+
+// After this process has exited (atexit, so the config is written and the
+// PID file gone): start a new instance in mode (0 SP, 1 Holomatch) or, for
+// -1, showing the launcher.
+static void DoRelaunch( void )
+{
+	@autoreleasepool {
+		NSString *bundle = Sys_MacAppBundlePath();
+		const char *mode = pendingRelaunch ? "1" : "0";
+		char *args[] = { "open", "-n", "-a", NULL, "--args", "+set", "com_holomatch", (char *)mode, NULL };
+		pid_t pid;
+		int status;
+
+		if( pendingRelaunch < -1 || !bundle )
+			return;
+		args[3] = (char *)[bundle fileSystemRepresentation];
+		if( pendingRelaunch < 0 )
+			args[4] = NULL;		// no mode: the launcher
+		fprintf( stderr, "Relaunching: open -n -a \"%s\"%s%s\n", args[3],
+			args[4] ? " --args +set com_holomatch " : "", args[4] ? mode : "" );
+		if( TestEnv( "VOYAGERSP_TEST_NORELAUNCH" ) )
+			return;
+		if( posix_spawn( &pid, "/usr/bin/open", NULL, NULL, args, environ ) == 0 )
+			waitpid( pid, &status, 0 );	// open returns once Launch Services has it
+		else
+			fprintf( stderr, "Relaunch failed\n" );
+	}
+}
+
+// Quit and come back in mode (see DoRelaunch).
+static void RelaunchIn( int mode )
+{
+	if( pendingRelaunch == -2 )
+		atexit( DoRelaunch );
+	pendingRelaunch = mode;
+	Cbuf_ExecuteText( EXEC_APPEND, "quit\n" );
+}
+
+static void ReturnToLauncher_f( void )
+{
+	if( Alert( NSAlertStyleInformational, @"Return to the launcher?",
+			Com_Holomatch() ? @"This leaves the current game and restarts Elite Force at the launcher."
+				: @"This restarts Elite Force at the launcher. Progress since your last save is lost.",
+			@[ @"Return to Launcher", @"Cancel" ], NO ) == 0 )
+		RelaunchIn( -1 );
+}
+
+static void SwitchMode_f( void )
+{
+	if( Alert( NSAlertStyleInformational,
+			Com_Holomatch() ? @"Switch to Single Player?" : @"Switch to Holomatch?",
+			Com_Holomatch() ? @"This leaves the current game and restarts Elite Force in single player."
+				: @"This restarts Elite Force in Holomatch. Progress since your last save is lost.",
+			@[ @"Switch", @"Cancel" ], NO ) == 0 )
+		RelaunchIn( Com_Holomatch() ? 0 : 1 );
 }
 
 // The BaseEF folder whose pak0.pk3 the engine is using.
@@ -789,8 +925,8 @@ static void ChangeGameFolder_f( void )
 		return;
 	if( Alert( NSAlertStyleInformational, @"Game folder changed",
 			@"The new game folder will be used the next time you start the game.",
-			@[ @"Quit Now", @"Later" ], NO ) == 0 )
-		Cbuf_ExecuteText( EXEC_APPEND, "quit\n" );
+			@[ @"Restart Now", @"Later" ], NO ) == 0 )
+		RelaunchIn( Com_Holomatch() ? 1 : 0 );
 }
 
 static unsigned long long FolderSize( NSString *dir, int *files )
@@ -895,7 +1031,7 @@ static void DeleteSettings_f( void )
 	msg = [NSString stringWithFormat:
 		@"This quits the game and moves this folder to the Trash:\n%@\n\n"
 		"• saved games (%d files)\n"
-		"• settings and key bindings (efspconfig.cfg, keys, console history)\n"
+		"• settings and key bindings (efspconfig.cfg, hmconfig.cfg, keys, console history)\n"
 		"%@"
 		"\nTotal: %d files, %@.\n\n%@",
 		root, saves,
@@ -919,12 +1055,16 @@ static void DeleteSettings_f( void )
 @end
 
 @implementation VSPMenuTarget
+- (void)toLauncher: (id)sender		{ @autoreleasepool { ReturnToLauncher_f(); } }
+- (void)switchMode: (id)sender		{ @autoreleasepool { SwitchMode_f(); } }
 - (void)showSaves: (id)sender		{ @autoreleasepool { ShowSaves_f(); } }
 - (void)showGame: (id)sender		{ @autoreleasepool { ShowGameFolder_f(); } }
 - (void)changeGame: (id)sender		{ @autoreleasepool { ChangeGameFolder_f(); } }
 - (void)deleteSettings: (id)sender	{ @autoreleasepool { DeleteSettings_f(); } }
 @end
 
+static void Cmd_ToLauncher( void )		{ @autoreleasepool { ReturnToLauncher_f(); } }
+static void Cmd_SwitchMode( void )		{ @autoreleasepool { SwitchMode_f(); } }
 static void Cmd_ShowSaves( void )		{ @autoreleasepool { ShowSaves_f(); } }
 static void Cmd_ShowGame( void )		{ @autoreleasepool { ShowGameFolder_f(); } }
 static void Cmd_ChangeGame( void )		{ @autoreleasepool { ChangeGameFolder_f(); } }
@@ -961,6 +1101,8 @@ void Sys_MacDataPostInit( void )
 		}
 		if( !Sys_MacAppBundlePath() )
 			return;
+		Cmd_AddCommand( "macos_launcher", Cmd_ToLauncher );
+		Cmd_AddCommand( "macos_switchmode", Cmd_SwitchMode );
 		Cmd_AddCommand( "macos_showsaves", Cmd_ShowSaves );
 		Cmd_AddCommand( "macos_showgamefolder", Cmd_ShowGame );
 		Cmd_AddCommand( "macos_changegamefolder", Cmd_ChangeGame );
@@ -974,6 +1116,9 @@ static NSMenuItem *BuildFileMenu( id target )
 	NSMenu *menu = [[[NSMenu alloc] initWithTitle: @"File"] autorelease];
 	NSMenuItem *top = [[[NSMenuItem alloc] initWithTitle: @"File" action: nil keyEquivalent: @""] autorelease];
 	struct { NSString *title; SEL sel; } items[] = {
+		{ @"Return to Launcher…", @selector(toLauncher:) },
+		{ Com_Holomatch() ? @"Switch to Single Player" : @"Switch to Holomatch", @selector(switchMode:) },
+		{ nil, NULL },
 		{ @"Show Saves Folder", @selector(showSaves:) },
 		{ @"Show Game Folder", @selector(showGame:) },
 		{ nil, NULL },

@@ -865,12 +865,18 @@ int main( int argc, char **argv )
 		// Own homepath (saves/config), migrated once from the Lilium Voyager one.
 		if ( Sys_MacPrepareHomepath( argc, argv ) )
 			Q_strcat( commandLine, sizeof( commandLine ), "+set com_homepath " MACOS_HOMEPATH_NAME " " );
-		// Inside the .app: find the game data, or ask for it (sys_osx_data.m).
+		// Inside the .app: the launcher picks the mode, graphics and game folder
+		// (sys_osx_launcher.m). When the command line already names the mode
+		// (a relaunch from the File menu), find the game data, or ask for it
+		// (sys_osx_data.m).
 		{
+			extern qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size );
 			extern const char *Sys_MacResolveGameData( int argc, char **argv );
-			const char *basepath = Sys_MacResolveGameData( argc, argv );
-			if ( basepath )
-				Q_strcat( commandLine, sizeof( commandLine ), va( "+set fs_basepath \"%s\" ", basepath ) );
+			if ( !Sys_MacLauncher( argc, argv, commandLine, sizeof( commandLine ) ) ) {
+				const char *basepath = Sys_MacResolveGameData( argc, argv );
+				if ( basepath )
+					Q_strcat( commandLine, sizeof( commandLine ), va( "+set fs_basepath \"%s\" ", basepath ) );
+			}
 		}
 	}
 #endif
