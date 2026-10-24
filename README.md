@@ -58,7 +58,7 @@ Elite Force SP source, built as native modules.
 ## Install (players)
 
 1. Download `VoyagerSP-MacOS.zip` from the
-   [Releases page](https://github.com/OWNER/VoyagerSP-MacOS/releases). <!-- TODO(release-link): real owner/URL -->
+   [Releases page](https://github.com/marinohardin/VoyagerSP-MacOS/releases).
 2. Unzip it and move **EliteForceSP.app** to `/Applications` (or anywhere you like).
 3. Open the app. On first launch it looks for your game data, and if it can't find it, it
    asks you to **choose the folder where Elite Force is installed** (the folder that
