@@ -1,7 +1,8 @@
 # EliteForce-MacOS (Marino's Build)
 <img width="256" height="256" alt="EliteForce-MacOS Non-Starfleet App Icon" src="macos/icon/AppIcon-1024.png" />
 
-My family didn't let me play M rated games like Quake growing up, so I played Elite Force!  I wanted to create an easily accessible way to play it again.
+My family didn't let me play M rated games like Quake growing up, so I played Elite Force as a kid! 
+And now, I wanted to create an easily accessible way to play it again, especially in LAN parties.
 
 ## What This Is
 
