@@ -4179,15 +4179,10 @@ static void vk_destroy_attachments( void );
 static void vk_destroy_render_passes( void );
 static void vk_destroy_pipelines( qboolean resetCount );
 
-static void vk_restart_swapchain( const char *funcname, VkResult res )
+// tear down everything built on the swapchain (device, textures, models, shaders stay)
+static void vk_destroy_swapchain_objects( void )
 {
 	uint32_t i;
-
-#ifdef _DEBUG
-	ri.Printf( PRINT_WARNING, "%s(%s): restarting swapchain...\n", funcname, vk_result_string( res ) );
-#else
-	ri.Printf(PRINT_WARNING, "%s(): restarting swapchain...\n", funcname );
-#endif
 
 	vk_wait_idle();
 
@@ -4205,20 +4200,11 @@ static void vk_restart_swapchain( const char *funcname, VkResult res )
 	vk_destroy_attachments();
 	vk_destroy_swapchain();
 	vk_destroy_sync_primitives();
+}
 
-#ifdef __ANDROID__
-	// On Android the ANativeWindow is destroyed when the app is backgrounded (sleep / app
-	// switch); the old VkSurfaceKHR becomes invalid. Recreate it from the (new) SDL window
-	// before rebuilding the swapchain so the game resumes instead of crashing.
-	if ( vk_surface != VK_NULL_HANDLE && qvkDestroySurfaceKHR != NULL ) {
-		qvkDestroySurfaceKHR( vk_instance, vk_surface, NULL );
-		vk_surface = VK_NULL_HANDLE;
-	}
-	if ( !ri.VK_CreateSurface( vk_instance, &vk_surface ) ) {
-		ri.Error( ERR_FATAL, "vk_restart_swapchain: VK_CreateSurface failed on resume" );
-	}
-#endif
-
+// rebuild the swapchain and everything on it for vk_surface at the glConfig size
+static void vk_create_swapchain_objects( void )
+{
 	vk_select_surface_format( vk.physical_device, vk_surface );
 	setup_surface_formats( vk.physical_device );
 
@@ -4236,6 +4222,32 @@ static void vk_restart_swapchain( const char *funcname, VkResult res )
 	// now against the warm in-memory pipeline cache instead of hitching on
 	// lazy regeneration over the next few seconds of gameplay
 	vk_prewarm_pipelines();
+}
+
+static void vk_restart_swapchain( const char *funcname, VkResult res )
+{
+#ifdef _DEBUG
+	ri.Printf( PRINT_WARNING, "%s(%s): restarting swapchain...\n", funcname, vk_result_string( res ) );
+#else
+	ri.Printf(PRINT_WARNING, "%s(): restarting swapchain...\n", funcname );
+#endif
+
+	vk_destroy_swapchain_objects();
+
+#ifdef __ANDROID__
+	// On Android the ANativeWindow is destroyed when the app is backgrounded (sleep / app
+	// switch); the old VkSurfaceKHR becomes invalid. Recreate it from the (new) SDL window
+	// before rebuilding the swapchain so the game resumes instead of crashing.
+	if ( vk_surface != VK_NULL_HANDLE && qvkDestroySurfaceKHR != NULL ) {
+		qvkDestroySurfaceKHR( vk_instance, vk_surface, NULL );
+		vk_surface = VK_NULL_HANDLE;
+	}
+	if ( !ri.VK_CreateSurface( vk_instance, &vk_surface ) ) {
+		ri.Error( ERR_FATAL, "vk_restart_swapchain: VK_CreateSurface failed on resume" );
+	}
+#endif
+
+	vk_create_swapchain_objects();
 }
 
 
@@ -4257,6 +4269,59 @@ void vk_resize_swapchain( void )
 
 	vk_restart_swapchain( __func__, VK_SUCCESS );
 }
+
+
+#if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
+/*
+Desktop r_highdpi switch: the platform layer replaces the window with one of the
+same on-screen size that does (or doesn't) render at the Retina backing scale.
+The window's VkSurfaceKHR goes away with it, so destroy the swapchain and the
+surface, let the platform swap the window (it updates glConfig to the new
+drawable size), then create a surface for the new window and rebuild everything
+sized from it. The device and every loaded texture, model and shader stay, so
+in-game handles stay valid. Returns qfalse if the window couldn't be replaced
+(the old one is kept and rendering continues on it).
+*/
+qboolean vk_replace_window( void )
+{
+	qboolean replaced;
+	VkBool32 supported = VK_FALSE;
+
+	ri.Printf( PRINT_ALL, "vk_replace_window: new window and surface...\n" );
+
+	vk_destroy_swapchain_objects();
+
+	if ( vk_surface != VK_NULL_HANDLE ) {
+		qvkDestroySurfaceKHR( vk_instance, vk_surface, NULL );
+		vk_surface = VK_NULL_HANDLE;
+	}
+
+	replaced = ri.VKimp_ReplaceWindow( &glConfig );
+
+	gls.windowWidth = glConfig.vidWidth;
+	gls.windowHeight = glConfig.vidHeight;
+	gls.captureWidth = glConfig.vidWidth;
+	gls.captureHeight = glConfig.vidHeight;
+	ri.CL_SetScaling( 1.0, glConfig.vidWidth, glConfig.vidHeight );
+
+	vk.blitFilter = GL_NEAREST;
+	vk.windowAdjusted = qfalse;
+	vk.blitX0 = vk.blitY0 = 0;
+	vk_set_render_scale();
+
+	if ( !ri.VK_CreateSurface( vk_instance, &vk_surface ) ) {
+		ri.Error( ERR_FATAL, "vk_replace_window: VK_CreateSurface failed" );
+	}
+	VK_CHECK( qvkGetPhysicalDeviceSurfaceSupportKHR( vk.physical_device, vk.queue_family_index, vk_surface, &supported ) );
+	if ( !supported ) {
+		ri.Error( ERR_FATAL, "vk_replace_window: the new surface can't be presented to" );
+	}
+
+	vk_create_swapchain_objects();
+
+	return replaced;
+}
+#endif
 
 
 static void vk_set_render_scale( void )

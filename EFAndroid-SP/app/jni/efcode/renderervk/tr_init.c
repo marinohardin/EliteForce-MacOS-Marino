@@ -2126,6 +2126,37 @@ static qboolean RE_ResizeWindow( int width, int height )
 
 	return qtrue;
 }
+
+
+/*
+===============
+RE_ReplaceWindow
+
+Desktop r_highdpi change: the window is replaced by one rendering at the other
+pixel density (same on-screen size). The surface, swapchain and size-dependent
+objects are rebuilt for it; registered media stay (SP cgame handles stay valid).
+Returns qfalse when the caller must fall back to a window-recreating vid_restart
+(nothing was changed then).
+===============
+*/
+static qboolean RE_ReplaceWindow( void )
+{
+	if ( !vk.active || !ri.VKimp_ReplaceWindow )
+		return qfalse;
+
+	// a fixed render size (r_renderScale) or supersampling is set up in R_Init only
+	if ( r_fbo->integer && ( r_renderScale->integer || r_ext_supersample->integer ) )
+		return qfalse;
+
+	// r_smp: the back end must be idle before its swapchain goes away
+	R_SyncRenderThread();
+
+	if ( !vk_replace_window() )
+		return qfalse;
+
+	ri.Printf( PRINT_ALL, "RE_ReplaceWindow: now %dx%d\n", glConfig.vidWidth, glConfig.vidHeight );
+	return qtrue;
+}
 #endif
 
 
@@ -2321,6 +2352,7 @@ refexport_t *GetRefAPI ( int apiVersion, refimport_t *rimp ) {
 	re.GetSaveThumb = RE_GetSaveThumb;
 #if defined( USE_FLEXIBLE_DISPLAY ) && defined( USE_VULKAN ) && !defined( __ANDROID__ )
 	re.ResizeWindow = RE_ResizeWindow;
+	re.ReplaceWindow = RE_ReplaceWindow;
 #endif
 //VKPORT 	re.SetColorMappings = R_SetColorMappings;
 
