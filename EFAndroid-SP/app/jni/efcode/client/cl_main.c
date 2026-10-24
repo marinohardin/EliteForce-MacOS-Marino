@@ -3663,9 +3663,22 @@ static void CL_Stub_SetClipboardBitmap( const byte *bitmap, int size ) { (void)b
 // screenshotJPEG / video JPEG: the JPEG writer from renderercommon/tr_image_jpg.c
 // (linked into the same binary). These used to be stubs, so screenshotJPEG
 // printed "Wrote ..." without writing anything.
-void RE_SaveJPG( char *filename, int quality, int image_width, int image_height, byte *image_buffer, int padding );
+// The output buffer comes from the heap, not the temp hunk like RE_SaveJPG's: the
+// pixels already take w*h*4 of it, and at 5K (5120x2880) a second temp block
+// failed with ERR_DROP in the middle of a frame.
 size_t RE_SaveJPGToBuffer( byte *buffer, size_t bufSize, int quality, int image_width, int image_height, byte *image_buffer, int padding );
-static void CL_SaveJPG( const char *filename, int q, int w, int h, byte *buf, int pad ) { RE_SaveJPG( (char *)filename, q, w, h, buf, pad ); }
+static void CL_SaveJPG( const char *filename, int q, int w, int h, byte *buf, int pad ) {
+	size_t size = (size_t)w * h * 3;
+	byte *out = malloc( size );
+
+	if ( !out ) {
+		Com_Printf( S_COLOR_YELLOW "WARNING: no memory for %s\n", filename );
+		return;
+	}
+	size = RE_SaveJPGToBuffer( out, size, q, w, h, buf, pad );
+	FS_WriteFile( filename, out, size );
+	free( out );
+}
 #ifdef USE_VULKAN
 // translate Quake3e's string-range Cvar_CheckRange to lilium's float-range one
 static void CL_VK_CvarCheckRange( cvar_t *cv, const char *minVal, const char *maxVal, int type ) {
