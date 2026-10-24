@@ -446,8 +446,17 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 		}
 
 		// gamma stuff
+		// Live only through the fbo gamma post-pass (its pipeline is rebuilt by
+		// vk_update_post_process_pipelines below). Without fbo the gamma table is
+		// baked into textures at upload, so rebuilding it here would only make newly
+		// loaded images disagree with the rest; that case waits for a vid_restart.
+#ifdef USE_VULKAN
+		if ( r_gamma->modified && ( vk.fboActive || glConfig.deviceSupportsGamma ) ) {
+#else
 		if ( r_gamma->modified ) {
+#endif
 			R_SetColorMappings();
+			ri.Printf( PRINT_DEVELOPER, "r_gamma %g applied\n", r_gamma->value );
 		}
 
 #ifdef USE_VULKAN
