@@ -25,12 +25,15 @@ Elite Force SP source, built as native modules.
 - **Native arm64.** Built for Apple Silicon, with no Rosetta. The single-player game and UI
   modules are native `.dylib`s, not QVM bytecode.
 - **Vulkan via MoltenVK.** The Quake3e `renderervk` renderer, running on Metal.
-- **Retina / High-DPI.** `r_highdpi 1` renders at the display's native backing resolution
-  (for example 5120×2880 fullscreen on a 5K panel), with menu mouse coordinates mapped
-  correctly.
-- **Windowed or fullscreen, switchable live.** **Alt+Enter** toggles fullscreen at any time,
-  including mid-mission. The in-game **Video** menu has **Window Size**, **Fullscreen** and
-  **High-DPI** options, and the settings are remembered between launches.
+- **Retina / High-DPI.** With **High-DPI** on, the game renders at the display's native
+  resolution (a 1920×1080 window renders at 3840×2160; fullscreen on a 5K panel at 5120×2880).
+  The window stays the same size on screen either way.
+- **Native macOS fullscreen, switchable live.** The green window button, **Alt+Enter**,
+  Ctrl+Cmd+F or Window → Enter Full Screen all toggle fullscreen at any time, including
+  mid-mission; in fullscreen, move the pointer to the top edge for the menu bar. The window
+  can also be resized by dragging. The in-game **Video** menu has **Window Size** (sizes that
+  fit your screen), **Fullscreen** and **High-DPI**, and settings are remembered between
+  launches. The default window is 1920×1080.
 - **Bink cinematics** (intro, logos, in-game movies) decoded with FFmpeg.
 - **Original PC saves load.** Savegames from the Windows version can be loaded.
 - Mac keyboard and mouse: the macOS press-and-hold accent popup is disabled, so holding
@@ -79,7 +82,7 @@ Elite Force SP source, built as native modules.
 
 Config files, saves (and game files the app copied) live in
 `~/Library/Application Support/VoyagerSP-MacOS/baseEF/`. You don't need to find that
-folder yourself: the app's menu (**Elite Force SP** in the menu bar) has
+folder yourself: the app's **File** menu has
 
 - **Show Saves Folder** and **Show Game Folder**: open them in Finder,
 - **Change Game Folder…**: pick a different install (takes effect on the next launch),
@@ -93,7 +96,7 @@ automatically on first launch.
 
 ### Uninstall
 
-Choose **Delete Saves & Settings…** from the app menu (this also removes any game files the
+Choose **File → Delete Saves & Settings…** (this also removes any game files the
 app copied), then drag the app to the Trash.
 
 ## Building from source
