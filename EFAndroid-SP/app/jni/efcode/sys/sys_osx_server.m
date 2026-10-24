@@ -2030,8 +2030,20 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		tip: @"Kick all bots (and stop filling the game with bots)"];
 	messageButton = [self controlButton: @"Message…" symbol: @"text.bubble" action: @selector(messagePlayers:)
 		tip: @"Send a message to everyone on the server"];
-	controls = HStack( @[ nextMapButton, restartMapButton, changeMapButton, addBotButton, removeBotsButton, messageButton ], 8 );
-	[controls setDistribution: NSStackViewDistributionFillProportionally];
+	// two rows, so the window keeps its width: the map, then players
+	{
+		NSStackView *mapRow = HStack( @[ nextMapButton, restartMapButton, changeMapButton ], 8 );
+		NSStackView *playerRow = HStack( @[ addBotButton, removeBotsButton, messageButton ], 8 );
+		for( NSStackView *r in @[ mapRow, playerRow ] )
+		{
+			[r setDistribution: NSStackViewDistributionFillEqually];
+			for( NSView *v in [r views] )
+				[v setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
+		}
+		controls = VStack( @[ mapRow, playerRow ], 8 );
+		[[mapRow widthAnchor] constraintEqualToAnchor: [controls widthAnchor]].active = YES;
+		[[playerRow widthAnchor] constraintEqualToAnchor: [controls widthAnchor]].active = YES;
+	}
 
 	// players and the console log
 	playerTable = [[NSTableView alloc] init];
