@@ -84,6 +84,21 @@ static SDL_Joystick *stick = NULL;
 static qboolean mouseAvailable = qfalse;
 static qboolean mouseActive = qfalse;
 
+/*
+macOS fullscreen is the native one in its own Space (sdl_glimp.c): the menu bar
+drops down when the pointer reaches the top edge and the Dock still works, so
+the pointer is treated as in a window. Whenever the game doesn't need mouse look
+(a menu, the console, loading) it is free and the system cursor is shown outside
+the menu's 4:3 area, instead of the exclusive-fullscreen behaviour (pointer kept
+grabbed in relative mode for the console and loading, system cursor never shown)
+that left no way to reach the menu bar.
+*/
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+#define IN_FULLSCREEN_IS_DESKTOP	1
+#else
+#define IN_FULLSCREEN_IS_DESKTOP	0
+#endif
+
 #ifdef USE_FLEXIBLE_DISPLAY
 static int mouseLastX = 0;
 static int mouseLastY = 0;
@@ -515,14 +530,14 @@ static void IN_DeactivateMouse( qboolean isFullscreen, qboolean showSystemCursor
 		return;
 
 #ifdef USE_FLEXIBLE_DISPLAY
-	if( isFullscreen )
+	if( isFullscreen && !IN_FULLSCREEN_IS_DESKTOP )
 		SDL_ShowCursor( SDL_FALSE );
 	else
 		SDL_ShowCursor( showSystemCursor );
 #else
 	// Always show the cursor when the mouse is disabled,
 	// but not when fullscreen
-	if( !isFullscreen )
+	if( !isFullscreen || IN_FULLSCREEN_IS_DESKTOP )
 		SDL_ShowCursor( SDL_TRUE );
 #endif
 
@@ -2173,14 +2188,14 @@ void IN_Frame( void )
 	// update isFullscreen since it might of changed since the last vid_restart
 	cls.glconfig.isFullscreen = Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
 
-	if( !cls.glconfig.isFullscreen && ( Key_GetCatcher( ) & KEYCATCH_CONSOLE ) )
+	if( ( !cls.glconfig.isFullscreen || IN_FULLSCREEN_IS_DESKTOP ) && ( Key_GetCatcher( ) & KEYCATCH_CONSOLE ) )
 	{
-		// Console is down in windowed mode
+		// Console is down in windowed mode (or macOS fullscreen)
 		IN_DeactivateMouse( cls.glconfig.isFullscreen, qtrue );
 	}
-	else if( !cls.glconfig.isFullscreen && loading )
+	else if( ( !cls.glconfig.isFullscreen || IN_FULLSCREEN_IS_DESKTOP ) && loading )
 	{
-		// Loading in windowed mode
+		// Loading in windowed mode (or macOS fullscreen)
 		IN_DeactivateMouse( cls.glconfig.isFullscreen, qtrue );
 	}
 	else if( !( SDL_GetWindowFlags( SDL_window ) & SDL_WINDOW_INPUT_FOCUS ) )

@@ -3561,7 +3561,7 @@ void CL_InitRenderer( void ) {
 	   CVAR_LATCH so it applies immediately (no vid_restart / stale-config race). */
 	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "4", CVAR_ARCHIVE);
 #else
-	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "1", CVAR_ARCHIVE | CVAR_LATCH);
+	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", Com_Holomatch() ? "2" : "1", CVAR_ARCHIVE | CVAR_LATCH);
 #endif
 #endif
 
@@ -3708,8 +3708,25 @@ static void CL_Stub_InitGamma( glconfig_t *config ) { (void)config; }
 static void CL_Stub_FreeAll( void ) { }
 static void CL_Stub_SetScaling( float factor, int cw, int ch ) { (void)factor;(void)cw;(void)ch; }
 static void CL_Stub_SetClipboardBitmap( const byte *bitmap, int size ) { (void)bitmap;(void)size; }
-static void CL_Stub_SaveJPG( const char *filename, int q, int w, int h, byte *buf, int pad ) { (void)filename;(void)q;(void)w;(void)h;(void)buf;(void)pad; }
-static size_t CL_Stub_SaveJPGToBuffer( byte *b, size_t bs, int q, int w, int h, byte *ib, int pad ) { (void)b;(void)bs;(void)q;(void)w;(void)h;(void)ib;(void)pad; return 0; }
+// screenshotJPEG / video JPEG: the JPEG writer from renderercommon/tr_image_jpg.c
+// (linked into the same binary). These used to be stubs, so screenshotJPEG
+// printed "Wrote ..." without writing anything.
+// The output buffer comes from the heap, not the temp hunk like RE_SaveJPG's: the
+// pixels already take w*h*4 of it, and at 5K (5120x2880) a second temp block
+// failed with ERR_DROP in the middle of a frame.
+size_t RE_SaveJPGToBuffer( byte *buffer, size_t bufSize, int quality, int image_width, int image_height, byte *image_buffer, int padding );
+static void CL_SaveJPG( const char *filename, int q, int w, int h, byte *buf, int pad ) {
+	size_t size = (size_t)w * h * 3;
+	byte *out = malloc( size );
+
+	if ( !out ) {
+		Com_Printf( S_COLOR_YELLOW "WARNING: no memory for %s\n", filename );
+		return;
+	}
+	size = RE_SaveJPGToBuffer( out, size, q, w, h, buf, pad );
+	FS_WriteFile( filename, out, size );
+	free( out );
+}
 #ifdef USE_VULKAN
 // translate Quake3e's string-range Cvar_CheckRange to lilium's float-range one
 static void CL_VK_CvarCheckRange( cvar_t *cv, const char *minVal, const char *maxVal, int type ) {
@@ -3838,8 +3855,8 @@ void CL_InitRef( void ) {
 	ri.GLimp_InitGamma = CL_Stub_InitGamma;
 	ri.CL_SetScaling = CL_Stub_SetScaling;
 	ri.Sys_SetClipboardBitmap = CL_Stub_SetClipboardBitmap;
-	ri.CL_SaveJPG = CL_Stub_SaveJPG;
-	ri.CL_SaveJPGToBuffer = CL_Stub_SaveJPGToBuffer;
+	ri.CL_SaveJPG = CL_SaveJPG;
+	ri.CL_SaveJPGToBuffer = RE_SaveJPGToBuffer;
 #ifdef USE_VULKAN
 	ri.VKimp_Init = VKimp_Init;
 	ri.VKimp_Shutdown = VKimp_Shutdown;
@@ -4344,6 +4361,21 @@ void CL_Init( void ) {
 	   CVAR_LATCH so it applies immediately (no vid_restart / stale-config race). */
 	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "4", CVAR_ARCHIVE);
 #else
+	if ( Com_Holomatch() ) {
+		/* Holomatch: widescreen by default. Mode 2 widens the 3D view (Hor+ fov,
+		   from the retail cgame's cg_fov for 4:3) and keeps the HUD and menus 4:3
+		   centered and unstretched. Mode 1 (lilium-voyager's default) pillarboxes
+		   the whole game. hmconfig.cfg files from before this saved the old default
+		   "1": switch those to 2 once (cl_flexibleDisplayHM marks it done), so an
+		   explicit choice made after that is kept. */
+		cvar_t *migrated = Cvar_Get( "cl_flexibleDisplayHM", "0", CVAR_ARCHIVE );
+		if ( !migrated->integer ) {
+			if ( Cvar_VariableIntegerValue( "cl_flexibleDisplay" ) == 1 )
+				Cvar_Set( "cl_flexibleDisplay", "2" );	// not latched yet: applies now
+			Cvar_Set( "cl_flexibleDisplayHM", "1" );
+		}
+		cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "2", CVAR_ARCHIVE | CVAR_LATCH);
+	} else
 	cl_flexibleDisplay = Cvar_Get ("cl_flexibleDisplay", "1", CVAR_ARCHIVE | CVAR_LATCH);
 #endif
 	cl_viewmode = cl_flexibleDisplay;
