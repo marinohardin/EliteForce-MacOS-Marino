@@ -681,7 +681,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[quit setControlSize: NSControlSizeLarge];
 	[[playButton widthAnchor] constraintGreaterThanOrEqualToConstant: 110].active = YES;
 	footer = [NSStackView stackViewWithViews: @[
-		VSP_Label( version ? [NSString stringWithFormat: @"Version %@", version] : @"", [NSFont systemFontOfSize: 11], [NSColor tertiaryLabelColor] ),
+		VSP_Label( version ? [NSString stringWithFormat: @"Version %@ · Made by Marino Hardin", version] : @"Made by Marino Hardin",
+			[NSFont systemFontOfSize: 11], [NSColor tertiaryLabelColor] ),
 		[NSView new], quit, playButton ]];
 	[[footer views][1] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
 	[footer setSpacing: 10];
