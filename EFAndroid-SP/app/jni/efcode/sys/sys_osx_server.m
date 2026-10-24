@@ -2489,6 +2489,49 @@ static NSArray<NSString *> *MasterNames( void )
 	return @[ @"efmaster.tjps.eu", @"master.stef1.ravensoft.com" ];
 }
 
+static int HexNibble( unsigned char c )
+{
+	return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+// Entries of a getserversResponse, as "a.b.c.d:port". Two encodings exist: Quake 3's
+// "\\" + 4 address bytes + 2 port bytes, and the Elite Force master's older text form,
+// "\\" + 12 hex digits (efmaster.tjps.eu uses this). Both end with "\\EOT".
+static void ParseServerList( const unsigned char *buf, ssize_t n, NSMutableSet *list )
+{
+	const unsigned char *p = memchr( buf, '\\', n ), *end = buf + n;
+	BOOL hex;
+	int i;
+
+	if( !p )
+		return;
+	// text form: 12 hex digits, then the next separator
+	hex = p + 14 <= end && p[13] == '\\';
+	for( i = 1; hex && i <= 12; i++ )
+		hex = HexNibble( p[i] ) >= 0;
+	while( p && p + 7 <= end && memcmp( p + 1, "EOT", 3 ) )
+	{
+		unsigned v[6];
+		if( hex )
+		{
+			if( p + 13 > end )
+				break;
+			for( i = 0; i < 6; i++ )
+				v[i] = HexNibble( p[1 + 2*i] ) << 4 | HexNibble( p[2 + 2*i] );
+			p += 13;
+		}
+		else
+		{
+			for( i = 0; i < 6; i++ )
+				v[i] = p[1 + i];
+			p += 7;
+		}
+		[list addObject: [NSString stringWithFormat: @"%u.%u.%u.%u:%u", v[0], v[1], v[2], v[3], v[4] << 8 | v[5]]];
+		if( p < end && *p != '\\' )
+			p = memchr( p, '\\', end - p );	// tolerate stray bytes
+	}
+}
+
 // Ask one master for its protocol-24 list (blocking, a few seconds); nil if it didn't answer.
 static NSSet<NSString *> *QueryMaster( NSString *host )
 {
@@ -2518,17 +2561,7 @@ static NSSet<NSString *> *QueryMaster( NSString *host )
 			break;		// timeout: the list is complete
 		if( !list )
 			list = [NSMutableSet set];
-		// "\xff\xff\xff\xffgetserversResponse" then \<4 byte ip><2 byte port> ... \EOT
-		for( i = 0; i + 7 <= n; i++ )
-		{
-			if( buf[i] != '\\' )
-				continue;
-			if( !memcmp( buf + i + 1, "EOT", 3 ) )
-				break;
-			[list addObject: [NSString stringWithFormat: @"%u.%u.%u.%u:%u", buf[i+1], buf[i+2], buf[i+3], buf[i+4],
-				( buf[i+5] << 8 ) | buf[i+6]]];
-			i += 6;
-		}
+		ParseServerList( buf, n, list );
 	}
 	close( fd );
 	return list;
@@ -2657,7 +2690,8 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 	{
 		value = [NSString stringWithFormat: @"Yes, on %@", listedOn];
 		hint = @"The master server reached your server from the internet: players anywhere find it in "
-			@"Holomatch's internet list (Internet2 for this master).";
+			@"Holomatch's internet list (Internet2 for this master). This Mac itself won't see it there when "
+			@"your router doesn't loop its public address back: use Play on This Mac.";
 		symbol = @"checkmark.circle.fill";
 		tint = [NSColor systemGreenColor];
 	}
