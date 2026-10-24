@@ -239,6 +239,9 @@ macos/make-app.sh             # builds both parts, then writes and ad-hoc signs 
 NO_BUILD=1 macos/make-app.sh  # re-bundle only
 ```
 
+`macos/make-release.sh` builds the app and packages it for a release as a `.dmg` (with an
+Applications shortcut) and a `.zip` in `dist/`.
+
 The script copies `efsp` and the two game modules into `Contents/MacOS`, and SDL3 +
 sdl2-compat, the LGPL FFmpeg libraries, the Vulkan loader and MoltenVK into
 `Contents/Frameworks` (license texts go in `Contents/Resources/licenses`), rewrites their install names to `@rpath`, and fails if anything still
