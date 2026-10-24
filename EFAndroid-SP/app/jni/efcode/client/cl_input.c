@@ -1018,10 +1018,19 @@ void CL_InitInput( void ) {
 	// BUTTON_ALT_ATTACK=128 (bit 7). CL_CmdButtons packs in_buttons[i] as (1<<i). The old HM layout
 	// (+altattack=bit5, +use=bit6) made the SP game read use-presses as BUTTON_CAREFUL and alt-fire as
 	// BUTTON_USE -> terminals/consoles/turbolifts never responded to use, and alt-fire was wrong.
-	Cmd_AddCommand ("+use", IN_Button5Down);        // bit 5 = SP BUTTON_USE (32)
-	Cmd_AddCommand ("-use", IN_Button5Up);
-	Cmd_AddCommand ("+altattack", IN_Button7Down);  // bit 7 = SP BUTTON_ALT_ATTACK (128)
-	Cmd_AddCommand ("-altattack", IN_Button7Up);
+	// Holomatch's game code keeps the HM layout: +altattack = bit 5 (BUTTON_ALT_ATTACK 32),
+	// +use = bit 6 (BUTTON_USE 64).
+	if ( Com_Holomatch() ) {
+		Cmd_AddCommand ("+altattack", IN_Button5Down);
+		Cmd_AddCommand ("-altattack", IN_Button5Up);
+		Cmd_AddCommand ("+use", IN_Button6Down);
+		Cmd_AddCommand ("-use", IN_Button6Up);
+	} else {
+		Cmd_AddCommand ("+use", IN_Button5Down);        // bit 5 = SP BUTTON_USE (32)
+		Cmd_AddCommand ("-use", IN_Button5Up);
+		Cmd_AddCommand ("+altattack", IN_Button7Down);  // bit 7 = SP BUTTON_ALT_ATTACK (128)
+		Cmd_AddCommand ("-altattack", IN_Button7Up);
+	}
 #endif
 	Cmd_AddCommand ("+button5", IN_Button5Down);
 	Cmd_AddCommand ("-button5", IN_Button5Up);
