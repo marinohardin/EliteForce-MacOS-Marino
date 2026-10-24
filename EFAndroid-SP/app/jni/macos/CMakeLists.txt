@@ -82,8 +82,9 @@ set(SDL_SRC ${EF}/sdl/sdl_input.c ${EF}/sdl/sdl_snd.c ${EF}/sdl/sdl_gamma.c ${EF
 set(SYS_SRC
   ${EF}/sys/con_log.c ${EF}/sys/con_tty.c ${EF}/sys/sys_autoupdater.c
   ${EF}/sys/sys_unix.c ${EF}/sys/sys_main.c ${EF}/sys/sys_osx.m
-  ${EF}/sys/sys_osx_data.m ${EF}/sys/sys_osx_launcher.m)
-set_source_files_properties(${EF}/sys/sys_osx_launcher.m PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+  ${EF}/sys/sys_osx_data.m ${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m)
+set_source_files_properties(${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m
+  PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 
 file(GLOB RENDERCOMMON_SRC ${EF}/renderercommon/*.c)
 file(GLOB RENDERER_SRC ${EF}/renderervk/*.c)
