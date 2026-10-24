@@ -1709,9 +1709,13 @@ void GammaCallback2( void *s, int notification )
 	if (notification != QM_ACTIVATED)
 		return;
 
-	s_video_apply_action2.generic.flags &= ~QMF_GRAYED;
-	s_video_apply_action2.generic.flags |= QMF_BLINK;
-
+	// Brightness only needs Accept (a vid_restart) when the renderer can't apply
+	// r_gamma live; with its gamma post-pass it reports deviceSupportsGamma.
+	if ( !uis.glconfig.deviceSupportsGamma )
+	{
+		s_video_apply_action2.generic.flags &= ~QMF_GRAYED;
+		s_video_apply_action2.generic.flags |= QMF_BLINK;
+	}
 
 	GammaCallback(s,notification );
 
