@@ -107,7 +107,17 @@ Display an OS X dialog box
 dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *title )
 {
 	dialogResult_t result = DR_OK;
-	NSAlert *alert = [NSAlert new];
+	NSAlert *alert;
+
+	// a dedicated server has no UI: say it on stderr and take the default
+	// (No for a question)
+	if( sys_headless )
+	{
+		fprintf( stderr, "%s: %s\n", title, message );
+		return type == DT_YES_NO ? DR_NO : type == DT_OK_CANCEL ? DR_CANCEL : DR_OK;
+	}
+
+	alert = [NSAlert new];
 
 	[alert setMessageText: [NSString stringWithUTF8String: title]];
 	[alert setInformativeText: [NSString stringWithUTF8String: message]];
@@ -151,6 +161,49 @@ dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *t
 	[alert release];
 
 	return result;
+}
+
+/*
+=================
+Sys_MacHeadlessGameData
+
+The dedicated server's version of Sys_MacResolveGameData: the same lookup
+(sys_osx_data.m: remembered game folder, the homepath copy, next to the app),
+but no chooser. Returns the fs_basepath to pass, or NULL for the default or
+when the command line sets the data paths. Exits with an error on stderr when
+the .app finds no game data.
+=================
+*/
+extern qboolean VSP_DataOverridden( int argc, char **argv );	// sys_osx_data.m
+extern BOOL VSP_FindGameData( NSString **outBasepath, NSString **outBase );
+extern NSString *VSP_HomeBase( void );
+NSString *Sys_MacAppBundlePath( void );
+
+const char *Sys_MacHeadlessGameData( int argc, char **argv )
+{
+	static char result[MAX_OSPATH];
+
+	if( VSP_DataOverridden( argc, argv ) )
+		return NULL;
+
+	@autoreleasepool {
+		NSString *found, *base;
+
+		if( !Sys_MacAppBundlePath() )
+			return NULL;
+		if( !VSP_FindGameData( &found, &base ) )
+		{
+			fprintf( stderr, "ERROR: no Elite Force game data: %s/pak0.pk3 was not found in the game folder "
+				"chosen in the launcher, in \"%s\" or next to the app. Run the game once to choose it, "
+				"or pass +set fs_basepath <folder holding %s>.\n",
+				BASEGAME, [VSP_HomeBase() fileSystemRepresentation], BASEGAME );
+			exit( 1 );
+		}
+		if( !found )
+			return NULL;
+		Q_strncpyz( result, [found fileSystemRepresentation], sizeof( result ) );
+		return result;
+	}
 }
 
 /*

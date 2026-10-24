@@ -1485,7 +1485,9 @@ static qboolean NET_GetCvars( void ) {
 	modified += net_port->modified;
 	net_port->modified = qfalse;
 	
-	net_port6 = Cvar_Get( "net_port6", va( "%i", PORT_SERVER ), CVAR_LATCH );
+	// a dedicated server given only net_port uses it for IPv6 too, instead of
+	// taking 27960 from a game running on the same Mac
+	net_port6 = Cvar_Get( "net_port6", Com_DedicatedServer( ) ? net_port->string : va( "%i", PORT_SERVER ), CVAR_LATCH );
 	modified += net_port6->modified;
 	net_port6->modified = qfalse;
 
