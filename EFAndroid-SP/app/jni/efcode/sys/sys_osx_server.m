@@ -1567,7 +1567,7 @@ static NSView *Boxed( NSView *v )
 		@[ VSP_Label( @"Max players:", Body(), nil ), maxPlayers.view ],
 		@[ VSP_Label( @"Network:", Body(), nil ), lanButton ],
 		@[ [NSGridCell emptyContentView], internetButton ],
-		@[ VSP_Label( @"Port:", Body(), nil ), HStack( @[ port.view, VSP_Label( @"UDP · the standard is 27960", Small(), [NSColor secondaryLabelColor] ) ], 8 ) ],
+		@[ VSP_Label( @"Port:", Body(), nil ), HStack( @[ port.view, VSP_Label( @"UDP · LAN players see 27960–27963 in the server browser", Small(), [NSColor secondaryLabelColor] ) ], 8 ) ],
 		@[ [NSGridCell emptyContentView], networkHint ],
 		@[ VSP_Label( @"Downloads:", Body(), nil ), downloads ],
 		@[ [NSGridCell emptyContentView], Hint( @"Add-on maps only: the retail and Expansion Pack files are never sent.", 400 ) ],
