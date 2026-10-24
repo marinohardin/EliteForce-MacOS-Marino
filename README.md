@@ -27,7 +27,8 @@ Elite Force SP source, built as native modules.
 - **Vulkan via MoltenVK.** The Quake3e `renderervk` renderer, running on Metal.
 - **Retina / High-DPI.** With **High-DPI** on, the game renders at the display's native
   resolution (a 1920×1080 window renders at 3840×2160; fullscreen on a 5K panel at 5120×2880).
-  The window stays the same size on screen either way.
+  The window stays the same size on screen either way, and it can be switched at any time
+  from the Video menu, mid-mission too.
 - **Native macOS fullscreen, switchable live.** The green window button, **Alt+Enter**,
   Ctrl+Cmd+F or Window → Enter Full Screen all toggle fullscreen at any time, including
   mid-mission; in fullscreen, move the pointer to the top edge for the menu bar. The window
