@@ -49,7 +49,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #elif defined ELITEFORCE
   #define PRODUCT_NAME				"Lilium Voyager SP"
   #define BASEGAME					"baseEF"
+  #ifdef __APPLE__
+  #define CLIENT_WINDOW_TITLE		"Elite Force SP"	// matches the macOS app name
+  #else
   #define CLIENT_WINDOW_TITLE		"Lilium Voyager SP"
+  #endif
   #define CLIENT_WINDOW_MIN_TITLE	"liliumvoysp"
 
   // GNU/Linux: $HOME/.local/share/homepath-name (lower case and spaces replaced with hyphens)
