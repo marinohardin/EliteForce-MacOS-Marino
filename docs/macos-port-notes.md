@@ -148,3 +148,20 @@ not a second engine:
   server frame is ~0.6 ms and the whole frame ~2.6 ms on an M1 Pro, so the JIT isn't needed.
 - Tested: Mac-to-Mac on one machine over the LAN address (broadcast discovery via
   `localservers`, connect, play). Not yet tested against PC Elite Force 1.2 or lilium-voyager.
+
+### Brightness and map downloads (2026-10-23)
+
+- **Brightness is live.** renderervk applies `r_gamma` in the fbo gamma post-pass. It picks
+  up the change through Quake3e cvar groups, which the client used to stub out (now
+  `CL_CvarSetGroup` / `CL_CvarCheckGroup` / `CL_CvarResetGroup` in `cl_main.c`). The
+  launcher always passes `r_fbo 1`, and `r_fbo` defaults to 1 on macOS. With fbo the
+  renderer reports `deviceSupportsGamma`, so the SP and Holomatch UIs skip their
+  vid_restart. With `r_fbo 0`, gamma is baked into textures and still needs a vid_restart.
+  SDL hardware gamma ramps don't work here: the bundled SDL2 is sdl2-compat 2.32 on SDL3,
+  and `SDL_SetWindowGammaRamp` returns "That operation is not supported". Both UIs write
+  `r_gamma` on every slider change, and SP sliders can now be dragged.
+- **Map downloads (Holomatch).** `cl_allowDownload 1`, `sv_allowDownload 1` and
+  `sv_dlRate 4000` are the defaults. A one-time `com_hmNetDefaults` stamp applies them over
+  configs that archived the old values. Downloads use UDP only (no cURL). On a LAN the
+  server sends several rounds of blocks per pass and the client acknowledges every 10 ms.
+  A 3.3 MB map takes about 2 s. Single player keeps `net_enabled 0`.
