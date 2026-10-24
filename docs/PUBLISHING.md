@@ -5,10 +5,10 @@ Internal notes for turning this fork into its own public repository and shipping
 
 ## 0. Name
 
-The repository is **`EliteForce-MacOS`** (renamed from `VoyagerSP-MacOS` once Holomatch joined
+The repository is **`EliteForce-MacOS-Marino`** (first `VoyagerSP-MacOS`, then `EliteForce-MacOS` once Holomatch joined
 single player); the app is **Elite Force.app**. The old name still appears on purpose as the
 legacy data folder name (`MACOS_LEGACY_HOMEPATH_NAME`) and in historical paths in
-`docs/macos-port-notes.md`.
+`docs/macos-port-notes.md`. The data folder keeps its name, `Application Support/EliteForce-MacOS`.
 
 Avoid "Star Trek" in the repo name, app name and icon (Paramount trademark). "Elite Force" and
 "Voyager" as descriptive references are the norm for fan ports (VoyagerNX, VoyagerSP-Android).
@@ -96,11 +96,11 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
    - **Developer ID + notarization** (paid Apple Developer account): sign with hardened runtime,
      then `xcrun notarytool submit ... --wait` and `xcrun stapler staple`. Gatekeeper then opens
      it without warnings. Consider this before a wide announcement.
-5. Zip with `ditto -c -k --keepParent "Elite Force.app" EliteForce-MacOS-vX.Y.Z-arm64.zip`
+5. Zip with `ditto -c -k --keepParent "Elite Force.app" EliteForce-MacOS-Marino-vX.Y.Z-arm64.zip`
    (`ditto` keeps symlinks and signatures; plain `zip` can break them). Add `LICENSE`,
    `THIRD_PARTY_LICENSES.md`, the Raven license document and a short `README.txt` (where to put
    `BaseEF`, Gatekeeper note, source link).
-6. Tag: `git tag -a vX.Y.Z -m "EliteForce-MacOS vX.Y.Z"` and `git push origin vX.Y.Z`.
+6. Tag: `git tag -a vX.Y.Z -m "EliteForce-MacOS-Marino vX.Y.Z"` and `git push origin vX.Y.Z`.
 7. Create the GitHub release from the tag. Attach the zip and its SHA-256
    (`shasum -a 256 *.zip`). In the notes include: requirements (Apple Silicon, retail data,
    `pak0.pk3` from the CD for minimum installs), the Gatekeeper workaround, known issues, a
