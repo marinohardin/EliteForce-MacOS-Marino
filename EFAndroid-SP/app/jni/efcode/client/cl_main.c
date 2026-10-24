@@ -4212,7 +4212,9 @@ void CL_Init( void ) {
 
 	cl_showMouseRate = Cvar_Get ("cl_showmouserate", "0", 0);
 
-	cl_allowDownload = Cvar_Get ("cl_allowDownload", "0", CVAR_ARCHIVE);
+	// Holomatch: fetch the map pk3s a server has and we lack, as retail EF did
+	// (single player has no networking at all)
+	cl_allowDownload = Cvar_Get ("cl_allowDownload", Com_Holomatch() ? "1" : "0", CVAR_ARCHIVE);
 #ifdef USE_CURL_DLOPEN
 	cl_cURLLib = Cvar_Get("cl_cURLLib", DEFAULT_CURL_LIB, CVAR_ARCHIVE | CVAR_PROTECTED);
 #endif
