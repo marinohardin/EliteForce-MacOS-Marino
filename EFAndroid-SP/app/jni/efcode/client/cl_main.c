@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cl_main.c  -- client main loop
 
 #include "client.h"
+#include <float.h>
 #include "../../sp/sp_ui.h"   // EF1 SP native UI (libefui.so) drive hooks
 #include <limits.h>
 
@@ -3732,9 +3733,16 @@ static void CL_SaveJPG( const char *filename, int q, int w, int h, byte *buf, in
 	free( out );
 }
 #ifdef USE_VULKAN
-// translate Quake3e's string-range Cvar_CheckRange to lilium's float-range one
+// translate Quake3e's string-range Cvar_CheckRange to lilium's float-range one.
+// A NULL bound means "no limit" there; it used to become 0 here, which clamped
+// r_renderWidth/Height to 0 (a 0x0 render size with r_renderScale: the SP level
+// load then recreated the Vulkan device on the live window and failed with
+// VK_ERROR_NATIVE_WINDOW_IN_USE_KHR), r_ext_max_anisotropy to 1 and r_flareCoeff
+// to 0.1. Only CV_FLOAT (1) and CV_INTEGER (2) carry a range.
 static void CL_VK_CvarCheckRange( cvar_t *cv, const char *minVal, const char *maxVal, int type ) {
-	Cvar_CheckRange( cv, minVal ? atof(minVal) : 0, maxVal ? atof(maxVal) : 0, type == 2 /*CV_INTEGER*/ );
+	if ( type != 1 && type != 2 )
+		return;
+	Cvar_CheckRange( cv, minVal ? atof(minVal) : -FLT_MAX, maxVal ? atof(maxVal) : FLT_MAX, type == 2 /*CV_INTEGER*/ );
 }
 #endif
 #ifdef USE_VULKAN

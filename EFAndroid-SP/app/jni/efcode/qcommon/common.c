@@ -2413,7 +2413,7 @@ For controlling environment variables
 ==================
 */
 
-static qboolean com_hmNetDefaultsApplied;
+static qboolean com_hmNetDefaultsApplied;	// a one-time config fix ran: write the config
 
 void Com_ExecuteCfg(void)
 {
@@ -2442,6 +2442,36 @@ void Com_ExecuteCfg(void)
 			Cvar_Set( "com_hmNetDefaults", XSTRING( HM_NET_DEFAULTS_VERSION ) );
 			com_hmNetDefaultsApplied = qtrue;
 		}
+
+#ifdef USE_VULKAN
+		// Renderer cvars with an open-ended range were clamped to 0 or their
+		// minimum by the old CL_VK_CvarCheckRange (a NULL bound became 0), and the
+		// configs archived those values. Once, put back the defaults where a cvar
+		// still holds such a value; anything else is the player's choice.
+#define VK_RANGE_FIX_VERSION 1
+		if ( Cvar_VariableIntegerValue( "com_vkRangeFix" ) < VK_RANGE_FIX_VERSION )
+		{
+			static const struct { const char *name, *def; float bad1, bad2; } fix[] = {
+				{ "r_ext_max_anisotropy", "8",   0,   1   },
+				{ "r_renderWidth",        "800", 0,   96  },
+				{ "r_renderHeight",       "600", 0,   72  },
+				{ "r_flareCoeff",         "150", 0,   0.1f },
+			};
+			int i;
+			for ( i = 0; i < ARRAY_LEN( fix ); i++ )
+			{
+				char v[MAX_CVAR_VALUE_STRING];
+				float f;
+				Cvar_VariableStringBuffer( fix[i].name, v, sizeof( v ) );
+				f = atof( v );
+				if ( v[0] && ( f == fix[i].bad1 || fabs( f - fix[i].bad2 ) < 0.0001f ) )
+					Cvar_Set( fix[i].name, fix[i].def );
+			}
+			Cvar_Get( "com_vkRangeFix", "0", CVAR_ARCHIVE );
+			Cvar_Set( "com_vkRangeFix", XSTRING( VK_RANGE_FIX_VERSION ) );
+			com_hmNetDefaultsApplied = qtrue;	// so the config is written with the stamp
+		}
+#endif
 
 #ifdef __ANDROID__
 		// One-time Android control/graphics defaults. autoexec.cfg runs every
