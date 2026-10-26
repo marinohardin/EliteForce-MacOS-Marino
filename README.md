@@ -2,7 +2,7 @@
 # EliteForce-MacOS-Marino (Marino's Build)
 <img width="256" height="256" alt="EliteForce-MacOS-Marino Non-Starfleet App Icon" src="macos/icon/AppIcon-1024.png" />
 
-My family didn't let me play M rated games like Quake growing up, so I played Elite Force as a kid! 
+My family didn't let me play M-rated games like Quake growing up, so I played Elite Force as a kid!
 With this project, I wanted to create an easily accessible way to play it again, especially in LAN parties.
 
 ## What This Is
@@ -11,19 +11,19 @@ A native macOS (Apple Silicon) port of *Star Trek: Voyager — Elite Force* (Rav
 2000): the **single-player campaign** and **Holomatch** multiplayer, in one app.
 
 A launcher lets you pick **Single Player** or **Holomatch**, set up the graphics and choose
-where your game files are, then starts the game. The engine is an idTech 3 derivative
-(lilium-voyager, an ioquake3 fork) with the Quake3e Vulkan renderer, which runs on Metal
-through MoltenVK. Single-player game logic comes from Raven's officially released Elite
-Force SP source, built as native modules; Holomatch runs the retail game's own multiplayer
-code from your `pak*.pk3` files, like lilium-voyager does.
+where your game files are, then starts the game. It runs on an ioquake3-based engine with a
+Vulkan renderer on Metal (see [Origins](#origins)).
 
-It also supports running a **dedicated multiplayer server**, with NAT-PMP support, dramatically simplifying hosting servers compared to the original game.
+It also supports running a **dedicated multiplayer server**, with automatic port opening
+(NAT-PMP / UPnP) and a check that the server is listed on the internet, dramatically
+simplifying hosting servers compared to the original game.
 
 
 **No game data is included.** You need your own copy of the retail game. (Even the icon is intentionally not using copyrighted symbols.)
 
-> Status: **beta.** The campaign is playable, my old PC savegames load, but it has not been played 
-> through end to end on macOS yet. Please [report issues](#reporting-issues).
+> This is a relatively new release: the campaign is playable and my old PC savegames load, but
+> it hasn't been played through end to end on macOS yet. If you see any glitches, please
+> [report them](#reporting-issues).
 
 ## Screenshots
 
@@ -36,28 +36,27 @@ It also supports running a **dedicated multiplayer server**, with NAT-PMP suppor
 - **Launcher.** Choose Single Player or Holomatch; a graphics **Quality** preset
   (Performance, Balanced, Best) or the individual settings: window or full screen, window
   size, full Retina resolution, anti-aliasing, texture detail and V-Sync; your Holomatch
-  player name; and where the game files are, whether the Expansion Pack was found, and
+  player name and internet master servers (**Servers…**); **Host a Server** with its
+  **Config…**; and where the game files are, whether the Expansion Pack was found, and
   **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last
   used, including changes made in the game's own Video menu.
   <img width="632" height="835" alt="Launcher" src="https://github.com/user-attachments/assets/4fdfcc38-e8df-4c28-8d81-f0ef899a40b9" />
-- **Holomatch (multiplayer).** Host or join games on your local network (LAN party, see
-  [Holomatch and LAN parties](#holomatch-and-lan-parties)) or by IP address, with bots.
+- **Holomatch (multiplayer).** Join games on your local network (LAN party, see
+  [Holomatch and LAN parties](#holomatch-and-lan-parties)), on the internet through the Join
+  menu's Internet sources (live community master servers), or by IP address, with bots.
   It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection.
-- **Native arm64.** Built for Apple Silicon, with no Rosetta. The single-player game and UI
-  modules are native `.dylib`s, not QVM bytecode.
-- **Vulkan via MoltenVK.** The Quake3e `renderervk` renderer, running on Metal.
+- **Dedicated server.** **Host a Server** runs a standalone server with a status window
+  (players with Kick, console, map and bot controls), **Play on This Mac**, and automatic
+  router port opening (NAT-PMP / UPnP). See [Hosting a server](#hosting-a-server).
+- **Native Apple Silicon, Vulkan on Metal.** No Rosetta; the single-player game runs as native
+  code, and the Quake3e Vulkan renderer runs on Metal through MoltenVK.
 - **Retina / High-DPI.** With **High-DPI** on, the game renders at the display's native
-  resolution (a 1920×1080 window renders at 3840×2160; fullscreen on a 5K panel at 5120×2880).
-  The window stays the same size on screen either way, and it can be switched at any time
-  from the Video menu, mid-mission too.
-- **Native macOS fullscreen, switchable live.** The green window button, **Alt+Enter**,
-  Ctrl+Cmd+F or Window → Enter Full Screen all toggle fullscreen at any time, including
-  mid-mission; in fullscreen, move the pointer to the top edge for the menu bar. The window
-  can also be resized by dragging. The in-game **Video** menu has **Window Size** (sizes that
-  fit your screen), **Fullscreen** and **High-DPI**, and settings are remembered between
-  launches. The default window is 1920×1080.
+  resolution (a 1920×1080 window at 3840×2160), switchable any time from the Video menu.
+- **Native macOS fullscreen, switchable live** with the green window button or **Alt+Enter**,
+  even mid-mission. The window can be resized, and the Video menu has **Window Size**,
+  **Fullscreen** and **High-DPI**.
 - **Bink cinematics** (intro, logos, in-game movies) decoded with FFmpeg.
 - **Original PC saves load.** Savegames from the Windows version can be loaded.
 - Mac keyboard and mouse: the macOS press-and-hold accent popup is disabled, so holding
@@ -66,8 +65,7 @@ It also supports running a **dedicated multiplayer server**, with NAT-PMP suppor
 ## Requirements
 
 - **An Apple Silicon Mac** (M1 or later). Intel Macs are not supported.
-- **macOS 12 Monterey or later** (developed and tested on macOS 27 on an M1 Pro; older
-  releases are supported by the build but haven't been tried yet).
+- **macOS 12 Monterey or later.**
 - **The retail game.** Copy these files from the `BaseEF` folder of a PC installation:
   - `pak0.pk3` (about 541 MB, the main game data). This one is required.
   - The patch paks, such as `pak1.pk3` and `pak2.pk3` (and `pak3.pk3` if you have it).
@@ -100,7 +98,6 @@ It also supports running a **dedicated multiplayer server**, with NAT-PMP suppor
    - If the chosen `BaseEF` has no `pak0.pk3` (a minimum CD install), the app says so;
      copy `pak0.pk3` from the CD and try again.
 
-   It also quietly uses a `baseEF` folder placed next to the app, if there is one.
    Then pick **Single Player** or **Holomatch**, adjust the graphics if you like, and
    click **Play**.
 
@@ -118,10 +115,7 @@ folder yourself: the app's **File** menu has
   in it first). A game folder you chose to use in place is never touched.
 
 Saves from the Windows version work: the app copies them when it copies your `BaseEF`, or
-you can drop `.sav` files into the saves folder. If you played an earlier build of this
-port, its saves (from `~/Library/Application Support/Lilium Voyager/` or
-`VoyagerSP-MacOS/`) are carried over
-automatically on first launch.
+you can drop `.sav` files into the saves folder.
 
 ## Holomatch and LAN parties
 
@@ -147,8 +141,6 @@ Notes:
   & Security → Local Network** and **Network → Firewall**.
 - The game uses **UDP port 27960** (the next players on the same Mac 27961, …). The Join
   menu's LAN search only looks at ports 27960–27963.
-- Holomatch's game logic runs as bytecode (QVM) in the engine's interpreter. It's fast
-  enough on Apple Silicon: a match with four bots costs well under a millisecond per frame.
 
 ### Hosting a server
 
@@ -170,6 +162,9 @@ connection through to your Mac:
   port on my router automatically** on. While the server runs, the app asks your router
   (NAT-PMP / UPnP, which most home routers support) to forward the port, and the server window
   shows your public address to give friends. The port closes again when the server stops.
+  Its **Listed** row confirms the master server reached your server, which proves the port is
+  open. Your own Mac usually won't see it in the Internet list (most routers don't loop their
+  public address back), so use **Play on This Mac**.
 - **If the router refuses** (the feature is off or unsupported, or your provider puts you
   behind a second NAT), the server window says why. Then either forward **UDP 27960** (or your
   chosen port) to your Mac by hand in the router's settings, or use a private network like
@@ -196,9 +191,7 @@ The sheet shows which ones answer and how many games each lists. Add a master (u
 the community starts new ones, drag them into the order you want, or go back with **Restore
 Recommended Defaults** or **Restore Original Defaults** (the game's own: Raven's, then tjps). A
 server you host for the internet announces itself to every master in the list; only the first
-five appear in the Join menu. The list is passed to the game at each start, and only
-`sv_master1`–`5` are saved in `hmconfig.cfg`, so the config still works in other copies of the
-game.
+five appear in the Join menu.
 
 ### Uninstall
 
@@ -266,6 +259,10 @@ NO_BUILD=1 macos/make-app.sh  # re-bundle only
 `macos/make-release.sh` builds the app and packages it for a release as a `.dmg` (with an
 Applications shortcut) and a `.zip` in `dist/`.
 
+Local builds are ad-hoc signed and run on your own Mac without an Apple developer account.
+With a Developer ID certificate, `make-release.sh` also signs, notarizes and staples the
+release ([docs/PUBLISHING.md](docs/PUBLISHING.md)).
+
 The script copies `efsp` and the two game modules into `Contents/MacOS`, and SDL3 +
 sdl2-compat, the LGPL FFmpeg libraries, the Vulkan loader and MoltenVK into
 `Contents/Frameworks` (license texts go in `Contents/Resources/licenses`), rewrites their install names to `@rpath`, and fails if anything still
@@ -290,11 +287,9 @@ Technical background on the port is in
 - **Expansion Pack content needs the Expansion Pack's data.** Without it, single player's
   Virtual Voyager button shows **EXPANSION ONLY** (greyed out) and Holomatch servers running
   Expansion maps can't be joined. The Expansion Pack itself is untested with this port.
-- **Alpha quality.** Expect occasional rendering, audio or animation glitches inherited from
-  the Android port. Back up your saves.
+- **Still being tested.** Please report any glitches found. Back up your saves.
 - Apple Silicon only.
-- **Holomatch is new.** Mac-to-Mac LAN games are tested; games with PC players (Elite Force
-  1.2 or lilium-voyager) use the same protocol but haven't been tried yet. The internet
+- **Holomatch is new.** Mac-to-Mac games over LAN and online are tested. The internet
   server browser depends on community master servers being online (see **Servers…**).
 
 ## Reporting issues
