@@ -532,6 +532,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[[appIcon widthAnchor] constraintEqualToConstant: 56].active = YES;
 	[[appIcon heightAnchor] constraintEqualToConstant: 56].active = YES;
 	headerText = [NSStackView stackViewWithViews: @[
+		VSP_Label( @"Star Trek: Voyager", [NSFont systemFontOfSize: 12 weight: NSFontWeightSemibold], [NSColor secondaryLabelColor] ),
 		VSP_Label( @"Elite Force", [NSFont systemFontOfSize: 24 weight: NSFontWeightBold], nil ),
 		VSP_Label( @"Choose how you want to play.", [NSFont systemFontOfSize: 13], [NSColor secondaryLabelColor] ) ]];
 	[headerText setOrientation: NSUserInterfaceLayoutOrientationVertical];
