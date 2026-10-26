@@ -3735,10 +3735,7 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 
 	if( !cell )
 		cell = [[VSPMasterCell alloc] initWithOwner: self];
-	[[cell slot] setStringValue: row < MASTER_SLOTS ? [NSString stringWithFormat: @"Internet %ld", (long)row + 1] : @"Announce only"];
-	[[cell slot] setToolTip: row < MASTER_SLOTS ?
-		[NSString stringWithFormat: @"Holomatch's Join menu lists this master's games under Internet %ld", (long)row + 1] :
-		@"Not in the Join menu (it has Internet 1 to 5), but a server you host announces itself here too"];
+	[self labelCell: cell row: row];
 	if( [cell textField] != editing )		// a status update mustn't reset what's being typed
 		[[cell textField] setStringValue: m];
 	if( [checking containsObject: m] )
@@ -3765,6 +3762,15 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[[cell status] setToolTip: a && [a integerValue] < 0 ? @"It didn't answer from this network. It may be down, or "
 		@"reachable only over IPv6. Games it lists still show up for players who can reach it." : nil];
 	return cell;
+}
+
+// The browser source a row is: the only part of a cell that depends on its row.
+- (void)labelCell: (VSPMasterCell *)cell row: (NSInteger)row
+{
+	[[cell slot] setStringValue: row < MASTER_SLOTS ? [NSString stringWithFormat: @"Internet %ld", (long)row + 1] : @"Announce only"];
+	[[cell slot] setToolTip: row < MASTER_SLOTS ?
+		[NSString stringWithFormat: @"Holomatch's Join menu lists this master's games under Internet %ld", (long)row + 1] :
+		@"Not in the Join menu (it has Internet 1 to 5), but a server you host announces itself here too"];
 }
 
 - (void)beginEditingRow: (NSInteger)row
@@ -3860,13 +3866,7 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 - (void)moveBy: (NSInteger)delta
 {
 	NSIndexSet *sel = [table selectedRowIndexes];
-	NSArray *moving = [masters objectsAtIndexes: sel];
-	NSUInteger at = delta < 0 ? [sel firstIndex] - 1 : [sel lastIndex] + 2 - [sel count];
-
-	[masters removeObjectsAtIndexes: sel];
-	[masters insertObjects: moving atIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( at, [moving count] )]];
-	[self show];
-	[table selectRowIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( at, [moving count] )] byExtendingSelection: NO];
+	[self moveRows: sel to: delta < 0 ? (NSInteger)[sel firstIndex] - 1 : (NSInteger)[sel lastIndex] + 2];
 }
 
 - (void)moveUp: (id)sender
@@ -3920,16 +3920,33 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	return YES;
 }
 
+// Move rows to above row. The table moves its row views along (no reload: a reload
+// in the middle of a drop leaves the table's drag state behind, and the next drag
+// then needs a second try), and only the Internet N labels are redone.
 - (void)moveRows: (NSIndexSet *)from to: (NSInteger)row
 {
 	NSArray *moving = [masters objectsAtIndexes: from];
+	NSInteger at = row - (NSInteger)[from countOfIndexesInRange: NSMakeRange( 0, (NSUInteger)MAX( row, 0 ) )];
+	__block NSInteger above = 0, below = 0;
 
-	row -= (NSInteger)[from countOfIndexesInRange: NSMakeRange( 0, (NSUInteger)row )];
-	[masters removeObjectsAtIndexes: from];
 	row = MIN( MAX( row, 0 ), (NSInteger)[masters count] );
-	[masters insertObjects: moving atIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( (NSUInteger)row, [moving count] )]];
-	[self show];
-	[table selectRowIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( (NSUInteger)row, [moving count] )] byExtendingSelection: NO];
+	[masters removeObjectsAtIndexes: from];
+	at = MIN( MAX( at, 0 ), (NSInteger)[masters count] );
+	[masters insertObjects: moving atIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( (NSUInteger)at, [moving count] )]];
+
+	[table beginUpdates];
+	[from enumerateIndexesUsingBlock: ^( NSUInteger i, BOOL *stop ) {
+		if( (NSInteger)i < row )
+			[self->table moveRowAtIndex: (NSInteger)i - above++ toIndex: row - 1];
+		else
+			[self->table moveRowAtIndex: (NSInteger)i toIndex: row + below++];
+	}];
+	[table endUpdates];
+	[table enumerateAvailableRowViewsUsingBlock: ^( NSTableRowView *rv, NSInteger r ) {
+		[self labelCell: [rv viewAtColumn: 0] row: r];
+	}];
+	[table selectRowIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( (NSUInteger)at, [moving count] )] byExtendingSelection: NO];
+	[self updateButtons];
 }
 
 // VOYAGERSP_TEST_MASTERS_ACTIONS: edit<row>, type:<text>, drag<row>to<row> (as a drop
@@ -3955,7 +3972,14 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 			[self addMaster: nil];
 		else if( [a isEqualToString: @"end"] )
 			[_panel makeFirstResponder: nil];
-		LLog( @"[test] %@ -> %@%@", a, [masters componentsJoinedByString: @" | "], editing ? @" (editing)" : @"" );
+		NSMutableArray *shownRows = [NSMutableArray array];
+		for( NSInteger r = 0; r < [table numberOfRows]; r++ )
+		{
+			VSPMasterCell *c = [table viewAtColumn: 0 row: r makeIfNecessary: YES];
+			[shownRows addObject: [NSString stringWithFormat: @"%@=%@", [[c slot] stringValue], [[c textField] stringValue]]];
+		}
+		LLog( @"[test] %@ -> %@%@ | shown: %@ | selected %@", a, [masters componentsJoinedByString: @" | "],
+			editing ? @" (editing)" : @"", [shownRows componentsJoinedByString: @", "], [table selectedRowIndexes] );
 	}
 }
 
