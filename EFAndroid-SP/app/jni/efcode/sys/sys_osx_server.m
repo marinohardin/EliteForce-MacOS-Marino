@@ -62,7 +62,7 @@ Test hooks (environment variables, see also sys_osx_launcher.m):
   VOYAGERSP_TEST_NAT=<ipv4>|fail          fake the router's answer
   VOYAGERSP_TEST_MASTERS=a,b,...         use these master servers (saved, as if set in the sheet)
   VOYAGERSP_TEST_MASTERS_SNAPSHOT=<file.png>  render the Servers… sheet once each master answered
-  VOYAGERSP_TEST_MASTERS_ACTIONS=a,b,...  ... after these: edit<row>, type:<text>, drag<row>to<row>, add, end
+  VOYAGERSP_TEST_MASTERS_ACTIONS=a,b,...  ... after these: edit<row>, type:<text>, drag<row>to<row>, select<row>, add, end
   VOYAGERSP_TEST_LIST_FAST=1              check the internet list every 2 s, twice
   VOYAGERSP_TEST_SERVER_ACTIONS=a,b,...   press controls 4 s apart once ready: next, restart,
                                          slot<N>, map:<name>, addbot, removebots, kick<row>
@@ -911,9 +911,64 @@ static NSImage *NoLevelshot( BOOL missing )
 // A table that reports Delete and double clicks.
 @interface VSPTable : NSTableView
 @property (nonatomic, copy) void ( ^deleteHandler )( void );
+@property (nonatomic, copy) void ( ^moveRow )( NSInteger from, NSInteger to );	// live reordering
+@property (nonatomic, copy) void ( ^doubleClickRow )( NSInteger row );			// with moveRow
 @end
 
 @implementation VSPTable
+// With moveRow set, a click and drag moves the row live, tracked here rather than
+// with a drag session (in the launcher's modal sheet, the click after a drag
+// session ended often went nowhere). A double-click goes to doubleClickRow (the
+// table only knows double-clicks whose first click it tracked itself), and
+// Command/Shift clicks are the table's own.
+- (void)mouseDown: (NSEvent *)e
+{
+	NSInteger row, current;
+
+	if( !_moveRow || ( [e modifierFlags] & ( NSEventModifierFlagCommand | NSEventModifierFlagShift ) ) )
+	{
+		[super mouseDown: e];
+		return;
+	}
+	[[self window] makeFirstResponder: self];	// ends an edit, which may change the rows
+	row = [self rowAtPoint: [self convertPoint: [e locationInWindow] fromView: nil]];
+	if( row < 0 )
+	{
+		[super mouseDown: e];
+		return;
+	}
+	if( [e clickCount] > 1 )
+	{
+		// on the release, as the table does
+		while( [[[self window] nextEventMatchingMask: NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp] type] != NSEventTypeLeftMouseUp )
+			;
+		if( _doubleClickRow )
+			_doubleClickRow( row );
+		return;
+	}
+	[self selectRowIndexes: [NSIndexSet indexSetWithIndex: row] byExtendingSelection: NO];
+	current = row;
+	for( ;; )
+	{
+		NSEvent *ev = [[self window] nextEventMatchingMask: NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp];
+		NSPoint q;
+		NSInteger target;
+
+		if( [ev type] == NSEventTypeLeftMouseUp )
+			break;
+		[self autoscroll: ev];
+		q = [self convertPoint: [ev locationInWindow] fromView: nil];
+		target = [self rowAtPoint: q];
+		if( target < 0 )
+			target = q.y < NSMinY( [self bounds] ) + 4 ? 0 : [self numberOfRows] - 1;	// flipped: above or below
+		if( target != current && target >= 0 )
+		{
+			_moveRow( current, target );
+			current = target;
+		}
+	}
+}
+
 - (void)keyDown: (NSEvent *)e
 {
 	unichar k = [[e charactersIgnoringModifiers] length] ? [[e charactersIgnoringModifiers] characterAtIndex: 0] : 0;
@@ -3397,7 +3452,6 @@ NSModalResponse VSP_RunServerWindow( VSPServerSettings *settings, NSString *base
    ------------------------------------------------------------------------ */
 
 #define KEY_MASTERS		@"MasterServers"
-#define ROW_MASTER		@"org.voyagersp.master-row"
 #define MASTER_SLOTS	5		// Holomatch's Join menu: Internet 1-5
 
 NSArray<NSString *> *VSP_DefaultMasters( void )
@@ -3595,13 +3649,13 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[table setColumnAutoresizingStyle: NSTableViewUniformColumnAutoresizingStyle];
 	[table setDataSource: self];
 	[table setDelegate: self];
-	[table registerForDraggedTypes: @[ ROW_MASTER ]];
-	[table setTarget: self];
-	[table setDoubleAction: @selector(editClicked:)];
-	[table setDraggingDestinationFeedbackStyle: NSTableViewDraggingDestinationFeedbackStyleGap];
 	{
 		__weak VSPMastersController *weakSelf = self;
 		table.deleteHandler = ^{ [weakSelf removeMasters: nil]; };
+		table.doubleClickRow = ^( NSInteger row ) { [weakSelf beginEditingRow: row]; };
+		table.moveRow = ^( NSInteger from, NSInteger to ) {
+			[weakSelf moveRows: [NSIndexSet indexSetWithIndex: from] to: to > from ? to + 1 : to];
+		};
 	}
 	box = Boxed( Scrolled( table ) );
 
@@ -3796,11 +3850,6 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[_panel makeFirstResponder: editing];	// selects the text
 }
 
-- (void)editClicked: (id)sender
-{
-	[self beginEditingRow: [table clickedRow]];
-}
-
 // The edit is found by the address it started from, not by its row: rows may
 // have moved since.
 - (void)controlTextDidEndEditing: (NSNotification *)n
@@ -3883,46 +3932,8 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 		[self moveBy: 1];
 }
 
-- (id<NSPasteboardWriting>)tableView: (NSTableView *)t pasteboardWriterForRow: (NSInteger)row
-{
-	NSPasteboardItem *item;
-
-	if( editing || row < 0 || row >= (NSInteger)[masters count] || ![masters[row] length] )
-		return nil;		// not while an address is being typed
-	item = [[NSPasteboardItem alloc] init];
-	[item setString: [NSString stringWithFormat: @"%ld", (long)row] forType: ROW_MASTER];
-	return item;
-}
-
-- (NSDragOperation)tableView: (NSTableView *)t validateDrop: (id<NSDraggingInfo>)info proposedRow: (NSInteger)row
-	proposedDropOperation: (NSTableViewDropOperation)op
-{
-	if( [info draggingSource] != table )
-		return NSDragOperationNone;
-	[t setDropRow: row dropOperation: NSTableViewDropAbove];
-	return NSDragOperationMove;
-}
-
-- (BOOL)tableView: (NSTableView *)t acceptDrop: (id<NSDraggingInfo>)info row: (NSInteger)row
-	dropOperation: (NSTableViewDropOperation)op
-{
-	NSMutableIndexSet *from = [NSMutableIndexSet indexSet];
-
-	for( NSPasteboardItem *item in [[info draggingPasteboard] pasteboardItems] )
-	{
-		NSString *r = [item stringForType: ROW_MASTER];
-		if( r && [r integerValue] >= 0 && [r integerValue] < (NSInteger)[masters count] )
-			[from addIndex: (NSUInteger)[r integerValue]];
-	}
-	if( ![from count] )
-		return NO;
-	[self moveRows: from to: row];
-	return YES;
-}
-
-// Move rows to above row. The table moves its row views along (no reload: a reload
-// in the middle of a drop leaves the table's drag state behind, and the next drag
-// then needs a second try), and only the Internet N labels are redone.
+// Move rows to above row. The table moves its row views along (smoothly, and
+// without ending a drag in progress), and only the Internet N labels are redone.
 - (void)moveRows: (NSIndexSet *)from to: (NSInteger)row
 {
 	NSArray *moving = [masters objectsAtIndexes: from];
@@ -3949,8 +3960,8 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[self updateButtons];
 }
 
-// VOYAGERSP_TEST_MASTERS_ACTIONS: edit<row>, type:<text>, drag<row>to<row> (as a drop
-// above that row; refused while editing, as the table does), add, end (focus elsewhere)
+// VOYAGERSP_TEST_MASTERS_ACTIONS: edit<row>, type:<text>, drag<row>to<row> (synthetic
+// mouse events), select<row>, add, end (focus elsewhere)
 - (void)testActions: (const char *)actions
 {
 	[_panel orderBack: nil];
@@ -3963,11 +3974,38 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 			[[editing currentEditor] setString: [a substringFromIndex: 5]];
 		else if( sscanf( [a UTF8String], "drag%ldto%ld", &x, &y ) == 2 )
 		{
-			if( [self tableView: table pasteboardWriterForRow: x] )
-				[self moveRows: [NSIndexSet indexSetWithIndex: x] to: y];
-			else
-				LLog( @"[test] drag %ld refused", (long)x );
+			// synthetic mouse: down on row x, drag to the middle of row y, up
+			NSRect from = [table rectOfRow: x], to = [table rectOfRow: y];
+			NSEvent *( ^ev )( NSEventType, CGFloat ) = ^NSEvent *( NSEventType t, CGFloat ty ) {
+				NSPoint p = [self->table convertPoint: NSMakePoint( NSMinX( from ) + 200, ty ) toView: nil];
+				return [NSEvent mouseEventWithType: t location: p modifierFlags: 0
+					timestamp: [[NSProcessInfo processInfo] systemUptime] windowNumber: [self->_panel windowNumber]
+					context: nil eventNumber: 0 clickCount: 1 pressure: 1];
+			};
+			for( int k = 1; k <= 6; k++ )
+				[NSApp postEvent: ev( NSEventTypeLeftMouseDragged, NSMidY( from ) + ( NSMidY( to ) - NSMidY( from ) ) * k / 6 ) atStart: NO];
+			[NSApp postEvent: ev( NSEventTypeLeftMouseUp, NSMidY( to ) ) atStart: NO];
+			[_panel sendEvent: ev( NSEventTypeLeftMouseDown, NSMidY( from ) )];
 		}
+		else if( [a hasPrefix: @"dclick"] )
+		{
+			// synthetic double-click on a row's address
+			NSRect rr = [table rectOfRow: [[a substringFromIndex: 6] integerValue]];
+			NSPoint p = [table convertPoint: NSMakePoint( NSMinX( rr ) + 200, NSMidY( rr ) ) toView: nil];
+			for( NSInteger n = 1; n <= 2; n++ )
+			{
+				NSEvent *( ^ev )( NSEventType ) = ^NSEvent *( NSEventType t ) {
+					return [NSEvent mouseEventWithType: t location: p modifierFlags: 0
+						timestamp: [[NSProcessInfo processInfo] systemUptime] windowNumber: [self->_panel windowNumber]
+						context: nil eventNumber: 0 clickCount: n pressure: 1];
+				};
+				[NSApp postEvent: ev( NSEventTypeLeftMouseUp ) atStart: NO];
+				[_panel sendEvent: ev( NSEventTypeLeftMouseDown )];
+				[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
+			}
+		}
+		else if( [a hasPrefix: @"select"] )
+			[table selectRowIndexes: [NSIndexSet indexSetWithIndex: [[a substringFromIndex: 6] integerValue]] byExtendingSelection: NO];
 		else if( [a isEqualToString: @"add"] )
 			[self addMaster: nil];
 		else if( [a isEqualToString: @"end"] )
