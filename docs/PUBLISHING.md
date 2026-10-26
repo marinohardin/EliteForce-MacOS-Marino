@@ -91,9 +91,14 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
    `dist/EliteForce-MacOS-Marino-<version>-arm64.dmg` (app, Applications shortcut, Read Me) and
    `.zip` (app, Read Me), both made with `ditto` / `hdiutil` so signatures survive. The Read Me
    template is `macos/release/ReadMe.txt`; the license texts ship inside the app.
-4. Signing: ad-hoc for now (users right-click → Open the first time). With a Developer ID:
-   sign with the hardened runtime, `xcrun notarytool submit … --wait`, `xcrun stapler staple`
-   (the app, then the DMG), and Gatekeeper opens it without warnings.
+4. Signing is automatic in `make-release.sh`: with a "Developer ID Application" certificate in
+   the keychain it signs every library, the game modules and the app (hardened runtime, secure
+   timestamp), and with the notarytool keychain profile `EliteForce-notary` it notarizes and
+   staples the app and the DMG. Create the profile once (an app-specific password from
+   appleid.apple.com; it prompts for it):
+   `xcrun notarytool store-credentials EliteForce-notary --apple-id <apple-id> --team-id 4UCK4VV22J`.
+   The script prints Gatekeeper's verdict (`spctl`); "accepted, source=Notarized Developer ID" is
+   the goal. `UNSIGNED=1` makes the ad-hoc build.
 5. Draft the release on the tag `macos-v<version>` (not `v<version>`: the Android project's
    `v1.x` tags are in this repo's history) targeting `main`, as a pre-release while in beta:
    `gh release create macos-v<version> dist/EliteForce-MacOS-Marino-<version>-arm64.{dmg,zip}

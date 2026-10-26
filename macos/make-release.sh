@@ -6,6 +6,13 @@
 #   macos/make-release.sh               build (make-app.sh), then package
 #   NO_BUILD=1 macos/make-release.sh    package the existing dist/Elite Force.app
 #
+# Signing: with a "Developer ID Application" certificate in the keychain (or
+# SIGN_IDENTITY set to one), the app is signed with it (hardened runtime, secure
+# timestamp) instead of make-app.sh's ad-hoc signature. With the notarytool
+# keychain profile NOTARY_PROFILE (default EliteForce-notary; create it once with
+#   xcrun notarytool store-credentials EliteForce-notary --apple-id <id> --team-id <team>)
+# the app and the DMG are also notarized and stapled. UNSIGNED=1 skips both.
+#
 # Upload both to a GitHub release (draft first), e.g.
 #   gh release create macos-v<version> dist/EliteForce-MacOS-Marino-<version>-arm64.{dmg,zip} --draft
 set -eu
@@ -26,6 +33,48 @@ rm -rf "$DIST/release"
 mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/Elite Force.app"
 sed "s|@VERSION@|$VERSION|g" "$ROOT/macos/release/ReadMe.txt" > "$STAGE/Read Me.txt"
+
+# ---- signing and notarization ------------------------------------------------
+IDENTITY=""
+NOTARY=""
+if [ -z "${UNSIGNED:-}" ]; then
+	IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)}"
+	NOTARY="${NOTARY_PROFILE:-EliteForce-notary}"
+	if [ -n "$IDENTITY" ] && ! xcrun notarytool history --keychain-profile "$NOTARY" >/dev/null 2>&1; then
+		echo "NOTE: no notarytool profile \"$NOTARY\": signing without notarization" >&2
+		NOTARY=""
+	fi
+fi
+[ -n "$IDENTITY" ] || NOTARY=""
+
+# notarize FILE: submit to Apple's notary service and wait; fails the build if rejected
+notarize() {
+	echo "Notarizing $(basename "$1") (this usually takes a few minutes)"
+	out="$(xcrun notarytool submit "$1" --keychain-profile "$NOTARY" --wait 2>&1)" || true
+	echo "$out" | sed 's/^/  /'
+	echo "$out" | grep -q "status: Accepted" || {
+		id="$(echo "$out" | sed -n 's/^ *id: //p' | head -1)"
+		[ -n "$id" ] && xcrun notarytool log "$id" --keychain-profile "$NOTARY" >&2
+		echo "notarization of $1 failed" >&2; exit 1; }
+}
+
+if [ -n "$IDENTITY" ]; then
+	echo "Signing with \"$IDENTITY\""
+	SA="$STAGE/Elite Force.app"
+	# inside-out: the libraries, then the game modules, then the bundle (its executable)
+	for f in "$SA/Contents/Frameworks"/*.dylib "$SA/Contents/MacOS"/*.dylib; do
+		codesign --force --options runtime --timestamp --sign "$IDENTITY" "$f"
+	done
+	codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+		--identifier "$(defaults read "$APP/Contents/Info" CFBundleIdentifier)" "$SA"
+	codesign --verify --strict --deep --verbose=1 "$SA"
+	if [ -n "$NOTARY" ]; then
+		ditto -c -k --keepParent "$SA" "$DIST/notarize-app.zip"
+		notarize "$DIST/notarize-app.zip"
+		rm -f "$DIST/notarize-app.zip"
+		xcrun stapler staple "$SA"
+	fi
+fi
 
 # zip: ditto keeps the bundle's signature, permissions and symlinks intact
 rm -f "$DIST/$BASE.zip"
@@ -83,9 +132,22 @@ sync
 hdiutil detach -quiet "$MNT" || { sleep 2; hdiutil detach -force -quiet "$MNT"; }
 hdiutil convert -quiet "$RW" -format UDZO -imagekey zlib-level=9 -o "$DIST/$BASE.dmg"
 rm -f "$RW"
+if [ -n "$IDENTITY" ]; then
+	codesign --force --timestamp --sign "$IDENTITY" "$DIST/$BASE.dmg"
+	if [ -n "$NOTARY" ]; then
+		notarize "$DIST/$BASE.dmg"
+		xcrun stapler staple "$DIST/$BASE.dmg"
+	fi
+fi
 hdiutil verify -quiet "$DIST/$BASE.dmg"
 
-echo "Built:"
+# what Gatekeeper will say
+if [ -n "$IDENTITY" ]; then
+	spctl --assess --type execute --verbose=2 "$STAGE/Elite Force.app" 2>&1 | sed 's/^/  app: /' || true
+	spctl --assess --type open --context context:primary-signature --verbose=2 "$DIST/$BASE.dmg" 2>&1 | sed 's/^/  dmg: /' || true
+fi
+
+echo "Built${IDENTITY:+ (signed by $IDENTITY${NOTARY:+, notarized})}:"
 for f in "$DIST/$BASE.dmg" "$DIST/$BASE.zip"; do
 	echo "  $f  ($(du -h "$f" | cut -f1 | tr -d ' '), sha256 $(shasum -a 256 "$f" | cut -c1-16)…)"
 done
