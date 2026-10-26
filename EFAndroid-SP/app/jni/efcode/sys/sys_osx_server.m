@@ -62,6 +62,7 @@ Test hooks (environment variables, see also sys_osx_launcher.m):
   VOYAGERSP_TEST_NAT=<ipv4>|fail          fake the router's answer
   VOYAGERSP_TEST_MASTERS=a,b,...         use these master servers (saved, as if set in the sheet)
   VOYAGERSP_TEST_MASTERS_SNAPSHOT=<file.png>  render the Servers… sheet once each master answered
+  VOYAGERSP_TEST_MASTERS_ACTIONS=a,b,...  ... after these: edit<row>, type:<text>, drag<row>to<row>, add, end
   VOYAGERSP_TEST_LIST_FAST=1              check the internet list every 2 s, twice
   VOYAGERSP_TEST_SERVER_ACTIONS=a,b,...   press controls 4 s apart once ready: next, restart,
                                          slot<N>, map:<name>, addbot, removebots, kick<row>
@@ -3508,6 +3509,8 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[host setFocusRingType: NSFocusRingTypeNone];
 	[host setLineBreakMode: NSLineBreakByTruncatingTail];
 	[host setDelegate: owner];
+	[host setEditable: NO];		// a click selects or drags the row; double-click edits
+	[host setSelectable: NO];
 	[host setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
 	[host setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
 	[self setTextField: host];
@@ -3531,6 +3534,7 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 @interface VSPMastersController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate>
 @property (nonatomic, readonly) NSWindow *panel;
 - (void)checkAllWaiting: (BOOL)wait;
+- (void)testActions: (const char *)actions;
 @end
 
 @implementation VSPMastersController
@@ -3538,6 +3542,8 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	NSMutableArray<NSString *> *masters;
 	NSMutableDictionary<NSString *, NSNumber *> *answers;	// server count, or -1: no answer
 	NSMutableSet<NSString *> *checking;
+	NSTextField *editing;		// the address being edited, and what it was
+	NSString *editingWas;
 	VSPTable *table;
 	NSTextField *caption;
 	NSButton *addButton, *removeButton, *upButton, *downButton;
@@ -3590,6 +3596,8 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[table setDataSource: self];
 	[table setDelegate: self];
 	[table registerForDraggedTypes: @[ ROW_MASTER ]];
+	[table setTarget: self];
+	[table setDoubleAction: @selector(editClicked:)];
 	[table setDraggingDestinationFeedbackStyle: NSTableViewDraggingDestinationFeedbackStyleGap];
 	{
 		__weak VSPMastersController *weakSelf = self;
@@ -3617,7 +3625,7 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[[ok widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
 	[[cancel widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
 	buttons = HStack( @[ addButton, removeButton, upButton, downButton,
-		VSP_Label( @"Drag to reorder", Small(), [NSColor tertiaryLabelColor] ), [NSView new], check ], 6 );
+		VSP_Label( @"Drag to reorder, double-click to edit", Small(), [NSColor tertiaryLabelColor] ), [NSView new], check ], 6 );
 	[buttons setCustomSpacing: 12 afterView: downButton];
 	[buttons setAlignment: NSLayoutAttributeCenterY];
 	[[buttons views][5] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
@@ -3731,8 +3739,8 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[[cell slot] setToolTip: row < MASTER_SLOTS ?
 		[NSString stringWithFormat: @"Holomatch's Join menu lists this master's games under Internet %ld", (long)row + 1] :
 		@"Not in the Join menu (it has Internet 1 to 5), but a server you host announces itself here too"];
-	[[cell textField] setStringValue: m];
-	[[cell textField] setTag: row];
+	if( [cell textField] != editing )		// a status update mustn't reset what's being typed
+		[[cell textField] setStringValue: m];
 	if( [checking containsObject: m] )
 	{
 		symbol = @"arrow.triangle.2.circlepath";
@@ -3759,25 +3767,66 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	return cell;
 }
 
-- (void)controlTextDidEndEditing: (NSNotification *)n
+- (void)beginEditingRow: (NSInteger)row
 {
-	NSTextField *f = [n object];
-	NSInteger row = [f tag];
-	NSString *m = CleanMaster( [f stringValue] );
+	VSPMasterCell *cell;
+	NSString *m;
 
 	if( row < 0 || row >= (NSInteger)[masters count] )
 		return;
-	if( [m length] && [masters indexOfObject: m] != NSNotFound && [masters indexOfObject: m] != (NSUInteger)row )
-		m = @"";		// already in the list
-	if( ![m length] )
+	m = masters[row];
+	[_panel makeFirstResponder: nil];		// end any other edit first, which may move rows
+	if( ( row = (NSInteger)[masters indexOfObject: m] ) == NSNotFound )
+		return;
+	[table selectRowIndexes: [NSIndexSet indexSetWithIndex: row] byExtendingSelection: NO];
+	[table scrollRowToVisible: row];
+	cell = [table viewAtColumn: 0 row: row makeIfNecessary: YES];
+	if( !cell )
+		return;
+	editing = [cell textField];
+	editingWas = masters[row];
+	[editing setEditable: YES];
+	[editing setSelectable: YES];
+	[_panel makeFirstResponder: editing];	// selects the text
+}
+
+- (void)editClicked: (id)sender
+{
+	[self beginEditingRow: [table clickedRow]];
+}
+
+// The edit is found by the address it started from, not by its row: rows may
+// have moved since.
+- (void)controlTextDidEndEditing: (NSNotification *)n
+{
+	NSTextField *f = [n object];
+	NSString *was = editingWas, *m = CleanMaster( [f stringValue] );
+	NSUInteger row = was ? [masters indexOfObject: was] : NSNotFound, other;
+
+	if( f != editing )
+		return;
+	editing = nil;
+	editingWas = nil;
+	[f setEditable: NO];
+	[f setSelectable: NO];
+	if( row == NSNotFound )
 	{
-		[masters removeObjectAtIndex: row];
 		[self show];
 		return;
 	}
-	masters[row] = m;
+	other = [m length] ? [masters indexOfObject: m] : NSNotFound;
+	if( ![m length] )
+		[masters removeObjectAtIndex: row];		// cleared: remove it
+	else if( other != NSNotFound && other != row )
+	{
+		NSBeep();								// already in the list: keep what it was
+		if( ![was length] )
+			[masters removeObjectAtIndex: row];
+	}
+	else
+		masters[row] = m;
 	[self show];
-	if( !answers[m] )
+	if( [m length] && [masters containsObject: m] && !answers[m] )
 		[self check: m done: nil];
 }
 
@@ -3788,9 +3837,7 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	[_panel makeFirstResponder: nil];
 	[masters addObject: @""];
 	[self show];
-	[table selectRowIndexes: [NSIndexSet indexSetWithIndex: [masters count] - 1] byExtendingSelection: NO];
-	[table scrollRowToVisible: [masters count] - 1];
-	[table editColumn: 0 row: [masters count] - 1 withEvent: nil select: YES];
+	[self beginEditingRow: [masters count] - 1];
 }
 
 - (void)removeMasters: (id)sender
@@ -3838,7 +3885,11 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 
 - (id<NSPasteboardWriting>)tableView: (NSTableView *)t pasteboardWriterForRow: (NSInteger)row
 {
-	NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+	NSPasteboardItem *item;
+
+	if( editing || row < 0 || row >= (NSInteger)[masters count] || ![masters[row] length] )
+		return nil;		// not while an address is being typed
+	item = [[NSPasteboardItem alloc] init];
 	[item setString: [NSString stringWithFormat: @"%ld", (long)row] forType: ROW_MASTER];
 	return item;
 }
@@ -3856,7 +3907,6 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	dropOperation: (NSTableViewDropOperation)op
 {
 	NSMutableIndexSet *from = [NSMutableIndexSet indexSet];
-	NSArray *moving;
 
 	for( NSPasteboardItem *item in [[info draggingPasteboard] pasteboardItems] )
 	{
@@ -3866,14 +3916,47 @@ NSInteger VSP_QueryMasterCount( NSString *master )
 	}
 	if( ![from count] )
 		return NO;
-	moving = [masters objectsAtIndexes: from];
+	[self moveRows: from to: row];
+	return YES;
+}
+
+- (void)moveRows: (NSIndexSet *)from to: (NSInteger)row
+{
+	NSArray *moving = [masters objectsAtIndexes: from];
+
 	row -= (NSInteger)[from countOfIndexesInRange: NSMakeRange( 0, (NSUInteger)row )];
 	[masters removeObjectsAtIndexes: from];
 	row = MIN( MAX( row, 0 ), (NSInteger)[masters count] );
 	[masters insertObjects: moving atIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( (NSUInteger)row, [moving count] )]];
 	[self show];
 	[table selectRowIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( (NSUInteger)row, [moving count] )] byExtendingSelection: NO];
-	return YES;
+}
+
+// VOYAGERSP_TEST_MASTERS_ACTIONS: edit<row>, type:<text>, drag<row>to<row> (as a drop
+// above that row; refused while editing, as the table does), add, end (focus elsewhere)
+- (void)testActions: (const char *)actions
+{
+	[_panel orderBack: nil];
+	for( NSString *a in [@( actions ) componentsSeparatedByString: @","] )
+	{
+		NSInteger x = 0, y = 0;
+		if( [a hasPrefix: @"edit"] )
+			[self beginEditingRow: [[a substringFromIndex: 4] integerValue]];
+		else if( [a hasPrefix: @"type:"] )
+			[[editing currentEditor] setString: [a substringFromIndex: 5]];
+		else if( sscanf( [a UTF8String], "drag%ldto%ld", &x, &y ) == 2 )
+		{
+			if( [self tableView: table pasteboardWriterForRow: x] )
+				[self moveRows: [NSIndexSet indexSetWithIndex: x] to: y];
+			else
+				LLog( @"[test] drag %ld refused", (long)x );
+		}
+		else if( [a isEqualToString: @"add"] )
+			[self addMaster: nil];
+		else if( [a isEqualToString: @"end"] )
+			[_panel makeFirstResponder: nil];
+		LLog( @"[test] %@ -> %@%@", a, [masters componentsJoinedByString: @" | "], editing ? @" (editing)" : @"" );
+	}
 }
 
 // --- the sheet ---
@@ -3922,6 +4005,8 @@ BOOL VSP_SnapshotMasterServers( const char *path )
 {
 	VSPMastersController *c = [[VSPMastersController alloc] init];
 
+	if( getenv( "VOYAGERSP_TEST_MASTERS_ACTIONS" ) )
+		[c testActions: getenv( "VOYAGERSP_TEST_MASTERS_ACTIONS" )];
 	[c checkAllWaiting: YES];
 	return VSP_SnapshotWindow( [c panel], path );
 }
