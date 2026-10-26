@@ -35,6 +35,8 @@ Test hooks (environment variables):
   VOYAGERSP_TEST_LAUNCHER_PLAY=1              press Play without showing it
   VOYAGERSP_TEST_LAUNCHER_AUTOPLAY=<s>        show it, press Play after <s> s
   VOYAGERSP_TEST_ADD=<path>                   press Add Game Files… with <path>
+  VOYAGERSP_TEST_MASTERS=a,b,... / VOYAGERSP_TEST_MASTERS_SNAPSHOT=<file.png>
+                                              see sys_osx_server.m
   VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>    show it, choose About from the app
                                 menu, render the panel, close it and quit
 ===========================================================================
@@ -432,7 +434,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSSegmentedControl *preset;
 	NSPopUpButton *display, *size, *msaa, *texture;
 	NSButton *retina, *vsync;
-	NSTextField *nameLabel, *name, *nameHint;
+	NSTextField *nameLabel, *name, *nameHint, *mastersSummary;
 	NSImageView *folderIcon, *statusIcon;
 	NSTextField *folderPath, *status;
 	NSButton *showButton, *addButton, *changeButton, *playButton;
@@ -458,6 +460,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	// a server's Play on This Mac is a Holomatch client
 	gfx = LoadGraphics( mode != MODE_SP, &fromConfig );
 	server = [VSPServerSettings load];
+	if( getenv( "VOYAGERSP_TEST_MASTERS" ) )
+		VSP_SetMasterServers( [@( getenv( "VOYAGERSP_TEST_MASTERS" ) ) componentsSeparatedByString: @","] );
 	if( getenv( "VOYAGERSP_TEST_SERVER_PORT" ) )
 		server.port = atoi( getenv( "VOYAGERSP_TEST_SERVER_PORT" ) );
 	[self buildWindow];
@@ -466,6 +470,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[name setStringValue: hm[@"name"] && ![hm[@"name"] isEqualToString: @"UnnamedPlayer"] ? hm[@"name"] : DefaultPlayerName()];
 
 	[self refreshData];
+	[self showMasters];
 	[self showGraphics];
 	[self selectMode: mode];
 	if( getenv( "VOYAGERSP_TEST_LAUNCHER_PRESET" ) )
@@ -621,7 +626,23 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[name setPlaceholderString: @"UnnamedPlayer"];
 	[[name widthAnchor] constraintEqualToConstant: 220].active = YES;
 	nameHint = VSP_Label( @"Shown to other players in Holomatch.", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
-	nameGrid = [NSGridView gridViewWithViews: @[ @[ nameLabel, name ], @[ [NSGridCell emptyContentView], nameHint ] ]];
+	// and the master servers behind the Join menu's Internet 1-5
+	{
+		NSButton *servers = [NSButton buttonWithTitle: @"Servers…" target: self action: @selector(editMasters:)];
+		NSStackView *row;
+		[servers setControlSize: NSControlSizeSmall];
+		[servers setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+		[servers setToolTip: @"The master servers that list internet games, and that a server you host announces itself to"];
+		mastersSummary = VSP_Label( @"", [NSFont systemFontOfSize: 13], nil );
+		[mastersSummary setLineBreakMode: NSLineBreakByTruncatingTail];
+		[mastersSummary setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
+		row = [NSStackView stackViewWithViews: @[ mastersSummary, servers ]];
+		[row setSpacing: 10];
+		[row setAlignment: NSLayoutAttributeFirstBaseline];
+		nameGrid = [NSGridView gridViewWithViews: @[ @[ nameLabel, name ], @[ [NSGridCell emptyContentView], nameHint ],
+			@[ VSP_Label( @"Internet games:", [NSFont systemFontOfSize: 13], nil ), row ] ]];
+		[[nameGrid rowAtIndex: 2] setTopPadding: 8];
+	}
 	[nameGrid setRowSpacing: 4];
 	[nameGrid setColumnSpacing: 10];
 	[[nameGrid columnAtIndex: 0] setXPlacement: NSGridCellPlacementTrailing];
@@ -888,6 +909,23 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	} );
 }
 
+- (void)showMasters
+{
+	NSArray *m = VSP_MasterServers();
+	[mastersSummary setStringValue: ![m count] ? @"No master servers" : [m count] == 1 ?
+		[NSString stringWithFormat: @"1 master server · %@", m[0]] :
+		[NSString stringWithFormat: @"%lu master servers · Internet 1: %@", (unsigned long)[m count], m[0]]];
+	[mastersSummary setTextColor: [m count] ? [NSColor labelColor] : [NSColor systemOrangeColor]];
+	[mastersSummary setToolTip: [m componentsJoinedByString: @"\n"]];
+}
+
+- (void)editMasters: (id)sender
+{
+	VSP_ShowMasterServers( window, ^( BOOL saved ) {
+		[self showMasters];
+	} );
+}
+
 - (void)refreshData
 {
 	NSString *shown;
@@ -1009,6 +1047,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		@"+set", @"name", VSP_CleanName( [name stringValue] ) ]];
 	if( basepath )
 		[a addObjectsFromArray: @[ @"+set", @"fs_basepath", basepath ]];
+	if( VSP_WriteMastersConfig() )
+		[a addObjectsFromArray: @[ @"+exec", VSP_MASTERS_CFG ]];
 	return a;
 }
 
@@ -1031,6 +1071,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		[args appendFormat: @"+set name \"%@\" ", VSP_CleanName( [name stringValue] )];
 	if( basepath )
 		[args appendFormat: @"+set fs_basepath \"%@\" ", basepath];
+	// the Servers… list: sv_master1-16 in a cfg file (too long for this line)
+	if( holomatch && VSP_WriteMastersConfig() )
+		[args appendFormat: @"+exec %@ ", VSP_MASTERS_CFG];
 	LLog( @"Launcher: %@", args );
 	Q_strcat( commandLine, size, [args UTF8String] );
 }
@@ -1258,6 +1301,15 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 
 		if( getenv( "VOYAGERSP_TEST_ADD" ) )
 			[l addFiles: nil];		// with sys_osx_data.m's hook instead of the open panel
+		if( getenv( "VOYAGERSP_TEST_MASTERS_SNAPSHOT" ) )
+		{
+			VSP_SnapshotMasterServers( getenv( "VOYAGERSP_TEST_MASTERS_SNAPSHOT" ) );
+			if( !getenv( "VOYAGERSP_TEST_LAUNCHER_SNAPSHOT" ) && !getenv( "VOYAGERSP_TEST_LAUNCHER_PLAY" ) )
+			{
+				SDL_Quit( );
+				exit( 0 );
+			}
+		}
 		if( getenv( "VOYAGERSP_TEST_SERVER_CONFIG_SNAPSHOT" ) )
 		{
 			VSP_SnapshotServerConfig( [l server], [l dataFolder], getenv( "VOYAGERSP_TEST_SERVER_CONFIG_TAB" ),

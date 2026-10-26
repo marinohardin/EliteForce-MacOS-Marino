@@ -687,14 +687,24 @@ void SV_Init (void)
 	sv_allowDownload = Cvar_Get ("sv_allowDownload", Com_Holomatch() ? "1" : "0", CVAR_SERVERINFO);
 	Cvar_Get ("sv_dlURL", "", CVAR_SERVERINFO | CVAR_ARCHIVE);
 	
-	sv_master[0] = Cvar_Get("sv_master1", MASTER_SERVER_NAME, 0);
 	#ifdef ELITEFORCE
-	sv_master[1] = Cvar_Get("sv_master2", "efmaster.tjps.eu", CVAR_ARCHIVE);
+	static const char *ef_default_masters[] = EF_DEFAULT_MASTERS;
+	// the community's live masters first: sv_masterN is the browser's Internet N
+	// (keep in step with VSP_DefaultMasters in the macOS launcher, and with the
+	// one-time migration in Com_ExecuteCfg)
+	// Only the browser's five are saved in the config; 6 and up (announced to
+	// when hosting) come from the launcher's vsp_masters.cfg or autoexec.cfg,
+	// so configs look as before and move between copies of the game unchanged.
+	for(index = 0; index < MAX_MASTER_SERVERS; index++)
+		sv_master[index] = Cvar_Get(va("sv_master%d", index + 1),
+			index < ARRAY_LEN(ef_default_masters) ? ef_default_masters[index] : "",
+			index < 5 ? CVAR_ARCHIVE : 0);
 	#else
+	sv_master[0] = Cvar_Get("sv_master1", MASTER_SERVER_NAME, 0);
 	sv_master[1] = Cvar_Get("sv_master2", "master.ioquake3.org", 0);
-	#endif
 	for(index = 2; index < MAX_MASTER_SERVERS; index++)
 		sv_master[index] = Cvar_Get(va("sv_master%d", index + 1), "", CVAR_ARCHIVE);
+	#endif
 
 	sv_reconnectlimit = Cvar_Get ("sv_reconnectlimit", "3", 0);
 	sv_showloss = Cvar_Get ("sv_showloss", "0", 0);

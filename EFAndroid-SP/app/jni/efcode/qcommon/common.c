@@ -2443,6 +2443,33 @@ void Com_ExecuteCfg(void)
 			com_hmNetDefaultsApplied = qtrue;
 		}
 
+#ifdef ELITEFORCE
+		// Master servers: configs archived the old defaults (sv_master2 tjps, the
+		// rest empty; sv_master1 was Raven's, not archived), leaving Internet 1
+		// dead and the other live masters unused. Once, where the five still hold
+		// those, put in the new defaults; a list a player set is kept.
+#define MASTER_DEFAULTS_VERSION 1
+		if ( Com_Holomatch() && Cvar_VariableIntegerValue( "com_masterDefaults" ) < MASTER_DEFAULTS_VERSION )
+		{
+			static const char *defaults[] = EF_DEFAULT_MASTERS;
+			const char *m1 = Cvar_VariableString( "sv_master1" );
+			const char *m2 = Cvar_VariableString( "sv_master2" );
+			qboolean old = ( !m1[0] || !Q_stricmp( m1, MASTER_SERVER_NAME ) )
+				&& ( !m2[0] || !Q_stricmp( m2, "efmaster.tjps.eu" ) );
+			int i;
+			for ( i = 3; old && i <= 5; i++ )
+				old = !Cvar_VariableString( va( "sv_master%d", i ) )[0];
+			if ( old )
+			{
+				for ( i = 0; i < ARRAY_LEN( defaults ); i++ )
+					Cvar_Set( va( "sv_master%d", i + 1 ), defaults[i] );
+			}
+			Cvar_Get( "com_masterDefaults", "0", CVAR_ARCHIVE );
+			Cvar_Set( "com_masterDefaults", XSTRING( MASTER_DEFAULTS_VERSION ) );
+			com_hmNetDefaultsApplied = qtrue;	// so the config is written with the stamp
+		}
+#endif
+
 #ifdef USE_VULKAN
 		// Renderer cvars with an open-ended range were clamped to 0 or their
 		// minimum by the old CL_VK_CvarCheckRange (a NULL bound became 0), and the

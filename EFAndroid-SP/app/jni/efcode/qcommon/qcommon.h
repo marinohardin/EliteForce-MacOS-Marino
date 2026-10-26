@@ -280,6 +280,12 @@ extern int demo_protocols[];
     #define MASTER_SERVER_NAME	"master.stef1.ravensoft.com"
   #endif
 
+  // sv_master1-5 defaults (the browser's Internet 1-5): the live community
+  // masters first, then Raven's (gone, kept in case it returns) and the
+  // IPv6-only one. The macOS launcher's VSP_DefaultMasters matches.
+  #define EF_DEFAULT_MASTERS { "master.stvef.org", "efmaster.tjps.eu", \
+	"master.stef1.daggolin.de", MASTER_SERVER_NAME, "ipv6.tjps.eu" }
+
   #define PORT_MASTER 27953
 
 #else

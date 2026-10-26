@@ -177,6 +177,29 @@ connection through to your Mac:
   to your Mac's Tailscale address (`connect 100.x.y.z`). The Join menu won't list it there;
   connect by address.
 
+### Internet games and master servers
+
+The Join menu's **Internet 1** to **Internet 5** sources each ask one **master server**, a
+community-run list of the Holomatch games on the internet. Raven's original master is long
+gone, so the launcher's **Servers…** button (under Holomatch) lets you pick them. The
+recommended defaults put the live ones first:
+
+| Join menu | Master server |
+|---|---|
+| Internet 1 | `master.stvef.org` |
+| Internet 2 | `efmaster.tjps.eu` |
+| Internet 3 | `master.stef1.daggolin.de` |
+| Internet 4 | `master.stef1.ravensoft.com` (Raven's, offline; kept in case it returns) |
+| Internet 5 | `ipv6.tjps.eu` (IPv6 only) |
+
+The sheet shows which ones answer and how many games each lists. Add a master (up to 16) as
+the community starts new ones, drag them into the order you want, or go back with **Restore
+Recommended Defaults** or **Restore Original Defaults** (the game's own: Raven's, then tjps). A
+server you host for the internet announces itself to every master in the list; only the first
+five appear in the Join menu. The list is passed to the game at each start, and only
+`sv_master1`–`5` are saved in `hmconfig.cfg`, so the config still works in other copies of the
+game.
+
 ### Uninstall
 
 Choose **File → Delete Saves & Settings…** (this also removes any game files the
@@ -272,7 +295,7 @@ Technical background on the port is in
 - Apple Silicon only.
 - **Holomatch is new.** Mac-to-Mac LAN games are tested; games with PC players (Elite Force
   1.2 or lilium-voyager) use the same protocol but haven't been tried yet. The internet
-  server browser depends on community master servers being online.
+  server browser depends on community master servers being online (see **Servers…**).
 
 ## Reporting issues
 

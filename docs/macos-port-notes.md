@@ -282,3 +282,26 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   and explains exit 1 (no game data) and 3 (bad `fs_basepath`). The server keeps its own
   `hmconfig_server.cfg`, so it no longer clashes with a local game. Holomatch's LAN search only
   probes ports 27960–27963; other ports work by address only, and the launcher warns about them.
+
+### Master servers (2026-10-26)
+
+- **Slots.** `sv_master1`–`N` serve both directions: a `dedicated 2` server heartbeats every
+  non-blank one, and the Join menu's Internet 1–5 run `globalservers 0`–`4`, which the
+  ELITEFORCE branch of `CL_GlobalServers_f` maps to `sv_master1`–`5`. The retail ui.qvm offers
+  only five sources. `MAX_MASTER_SERVERS` is now 16: slots 6+ are announce-only (and reachable
+  with `globalservers 5 24` …), not archived, so configs keep their old shape.
+- **Defaults** (`EF_DEFAULT_MASTERS`, qcommon.h; `VSP_DefaultMasters` mirrors it): stvef.org,
+  tjps.eu, daggolin.de, Raven's, ipv6.tjps.eu, after the community list on the
+  mobile-infanterie.de wiki. Before, slot 1 was Raven's (dead and unarchived) and slot 2 tjps.
+  All five are archived now.
+- **Migration** (`com_masterDefaults` 1, `Com_ExecuteCfg`, Holomatch only): where slot 1 is
+  blank or Raven's, slot 2 blank or tjps and 3–5 blank, the new five are set once. Any other
+  list is the player's and stays.
+- **Launcher.** The list lives in the app's defaults (`MasterServers`; absent means the
+  recommended defaults) and is edited in the Servers… sheet (`VSPMastersController`, in
+  sys_osx_server.m next to `QueryMaster`, which now takes `host:port` and IPv6). Sixteen
+  `+set`s don't fit the engine's 1024-character command line, so the launcher writes
+  `baseEF/vsp_masters.cfg` (all 16 slots, blanks included, so a removed master doesn't linger)
+  and adds `+exec vsp_masters.cfg` for Holomatch and Play on This Mac; a hosted server gets the
+  same lines in `vsp_server.cfg`. The server window's Listed check asks the same list and names
+  the Internet N it found the server under.

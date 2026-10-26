@@ -90,6 +90,27 @@ void VSP_ShowServerConfig( NSWindow *parent, VSPServerSettings *settings, NSStri
 	void ( ^done )( BOOL saved ) );
 BOOL VSP_SnapshotServerConfig( VSPServerSettings *settings, NSString *dataFolder, const char *tab, const char *path );
 
+// Master servers (the launcher's Servers… sheet). The list is sv_master1, 2, …:
+// the first five are Holomatch's Internet 1-5 in the Join menu, and a hosted
+// internet server announces itself to all of them. Saved in the app's
+// defaults (key MasterServers); the engine's defaults (EF_DEFAULT_MASTERS) match.
+#define VSP_MAX_MASTERS	16		// MAX_MASTER_SERVERS
+#define VSP_MASTERS_CFG	@"vsp_masters.cfg"
+NSArray<NSString *> *VSP_DefaultMasters( void );			// the recommended list
+NSArray<NSString *> *VSP_OriginalMasters( void );			// the game's own: Raven's, then tjps
+NSArray<NSString *> *VSP_MasterServers( void );				// the saved list, or the defaults
+void VSP_SetMasterServers( NSArray<NSString *> *masters );	// cleaned; nil: the defaults
+// "set sv_masterN …" for every slot (empty past the list, or all empty when blank)
+NSString *VSP_MastersCfgText( BOOL blank );
+// baseEF/vsp_masters.cfg, for "+exec" (a command line can't hold 16 addresses)
+BOOL VSP_WriteMastersConfig( void );
+// Ask a master ("host" or "host:port") for its server list; blocks a few
+// seconds. The number of servers listed, or -1 when it didn't answer.
+NSInteger VSP_QueryMasterCount( NSString *master );
+// The Servers… sheet: done is called with YES when the user pressed Done.
+void VSP_ShowMasterServers( NSWindow *parent, void ( ^done )( BOOL saved ) );
+BOOL VSP_SnapshotMasterServers( const char *path );		// after checking each master
+
 // The server window: starts the server as a child process (the app's own
 // executable, dedicated), shows it until it stops, and returns
 // NSModalResponseStop to go back to the launcher or NSModalResponseCancel to

@@ -13,6 +13,9 @@ It is compiled with ARC (see the macOS CMakeLists.txt).
     the levelshots/ .jpg and .tga files, stored or deflated, inflated
     with the engine's own zlib).
   - The Config… sheet (Maps, Game, Server tabs).
+  - The master servers and the launcher's Servers… sheet: the list in the
+    app's defaults (key MasterServers), passed to the game as
+    baseEF/vsp_masters.cfg (+exec) and to a server in vsp_server.cfg.
   - The server window: runs the app's own executable as a dedicated server
     child process, with the settings in baseEF/vsp_server.cfg (+exec), talks
     to its console over stdin/stdout, polls "status" for the map and
@@ -57,6 +60,8 @@ Test hooks (environment variables, see also sys_osx_launcher.m):
   VOYAGERSP_TEST_SERVER_INTERNET=1        an internet server opening its port
   VOYAGERSP_TEST_SERVER_NOMASTER=1        ... without listing it on the masters
   VOYAGERSP_TEST_NAT=<ipv4>|fail          fake the router's answer
+  VOYAGERSP_TEST_MASTERS=a,b,...         use these master servers (saved, as if set in the sheet)
+  VOYAGERSP_TEST_MASTERS_SNAPSHOT=<file.png>  render the Servers… sheet once each master answered
   VOYAGERSP_TEST_LIST_FAST=1              check the internet list every 2 s, twice
   VOYAGERSP_TEST_SERVER_ACTIONS=a,b,...   press controls 4 s apart once ready: next, restart,
                                          slot<N>, map:<name>, addbot, removebots, kick<row>
@@ -1822,7 +1827,9 @@ static BOOL WriteServerConfig( VSPServerSettings *s, NSArray<VSPMapInfo *> *maps
 	[cfg appendString: @"set bot_enable 1\n"];
 	[cfg appendFormat: @"set bot_minplayers %ld\n", (long)s.bots];
 	[cfg appendFormat: @"set g_spSkill %ld\n\n", (long)s.botSkill];
-	[cfg appendString: @"// the map rotation\n"];
+	[cfg appendString: @"// the master servers it announces itself to (the launcher's Servers… sheet)\n"];
+	[cfg appendString: VSP_MastersCfgText( TestEnvSet( "VOYAGERSP_TEST_SERVER_NOMASTER" ) )];
+	[cfg appendString: @"\n// the map rotation\n"];
 	for( i = 0; i < [rot count]; i++ )
 		[cfg appendFormat: @"set vsp_map%lu \"map %@ ; set nextmap vstr vsp_map%lu\"\n",
 			(unsigned long)i + 1, rot[i], (unsigned long)( i + 1 < [rot count] ? i + 2 : 1 )];
@@ -2271,9 +2278,6 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		@"+set", @"net_port", [NSString stringWithFormat: @"%ld", (long)settings.port] ]];
 	if( basepath )
 		[args addObjectsFromArray: @[ @"+set", @"fs_basepath", basepath ]];
-	if( TestEnvSet( "VOYAGERSP_TEST_SERVER_NOMASTER" ) )
-		for( int i = 1; i <= 5; i++ )
-			[args addObjectsFromArray: @[ @"+set", [NSString stringWithFormat: @"sv_master%d", i], @"" ]];
 	[args addObjectsFromArray: @[ @"+exec", SERVER_CFG ]];
 
 	task = [[NSTask alloc] init];
@@ -2709,10 +2713,6 @@ static BOOL PrivateIPv4( uint32_t a )
 #define LIST_INTERVAL		( TestEnvSet( "VOYAGERSP_TEST_LIST_FAST" ) ? 2 : 20 )	// s between checks
 #define LIST_MAX_CHECKS		( TestEnvSet( "VOYAGERSP_TEST_LIST_FAST" ) ? 2 : 9 )		// then give up (about 3 minutes)
 
-static NSArray<NSString *> *MasterNames( void )
-{
-	return @[ @"efmaster.tjps.eu", @"master.stef1.ravensoft.com" ];
-}
 
 static int HexNibble( unsigned char c )
 {
@@ -2757,21 +2757,38 @@ static void ParseServerList( const unsigned char *buf, ssize_t n, NSMutableSet *
 	}
 }
 
-// Ask one master for its protocol-24 list (blocking, a few seconds); nil if it didn't answer.
-static NSSet<NSString *> *QueryMaster( NSString *host )
+// Ask one master ("host", "host:port" or "[v6]:port") for its protocol-24 list
+// (blocking, a few seconds); nil if it didn't answer.
+static NSSet<NSString *> *QueryMaster( NSString *master )
 {
 	struct addrinfo hints = { 0 }, *res = NULL;
 	struct timeval tv = { 2, 0 };
 	NSMutableSet *list = nil;
 	unsigned char buf[16384];
 	static const char q[] = "\xff\xff\xff\xffgetservers 24 full empty";
+	NSString *host = master, *port = @"27953";
+	NSRange colon = [master rangeOfString: @":" options: NSBackwardsSearch];
 	int fd;
 
-	hints.ai_family = AF_INET;
+	if( [master hasPrefix: @"["] )
+	{
+		NSRange close = [master rangeOfString: @"]"];
+		if( close.location == NSNotFound )
+			return nil;
+		host = [master substringWithRange: NSMakeRange( 1, close.location - 1 )];
+		if( [master length] > NSMaxRange( close ) + 1 && [master characterAtIndex: NSMaxRange( close )] == ':' )
+			port = [master substringFromIndex: NSMaxRange( close ) + 1];
+	}
+	else if( colon.location != NSNotFound && [master rangeOfString: @":"].location == colon.location )
+	{
+		host = [master substringToIndex: colon.location];
+		port = [master substringFromIndex: colon.location + 1];
+	}
+	hints.ai_family = AF_UNSPEC;	// ipv6.tjps.eu has only an IPv6 address
 	hints.ai_socktype = SOCK_DGRAM;
-	if( getaddrinfo( [host UTF8String], "27953", &hints, &res ) || !res )
+	if( getaddrinfo( [host UTF8String], [port UTF8String], &hints, &res ) || !res )
 		return nil;
-	if( ( fd = socket( AF_INET, SOCK_DGRAM, 0 ) ) < 0 )
+	if( ( fd = socket( res->ai_family, SOCK_DGRAM, 0 ) ) < 0 )
 	{
 		freeaddrinfo( res );
 		return nil;
@@ -2849,7 +2866,7 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 	dispatch_async( dispatch_get_global_queue( QOS_CLASS_UTILITY, 0 ), ^{
 		NSString *found = nil;
 		BOOL anyAnswer = NO;
-		for( NSString *m in MasterNames() )
+		for( NSString *m in VSP_MasterServers() )
 		{
 			NSSet *list = QueryMaster( m );
 			if( !list )
@@ -2914,9 +2931,12 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 	if( listFound )
 	{
 		value = [NSString stringWithFormat: @"Yes, on %@", listedOn];
-		hint = @"The master server reached your server from the internet: players anywhere find it in "
-			@"Holomatch's internet list (Internet2 for this master). This Mac itself won't see it there when "
-			@"your router doesn't loop its public address back: use Play on This Mac.";
+		NSUInteger slot = [VSP_MasterServers() indexOfObject: listedOn];
+		hint = [NSString stringWithFormat: @"The master server reached your server from the internet: players anywhere "
+			@"find it in Holomatch's internet list (%@). This Mac itself won't see it there when "
+			@"your router doesn't loop its public address back: use Play on This Mac.",
+			slot < 5 ? [NSString stringWithFormat: @"Internet %lu for this master", (unsigned long)slot + 1] :
+			@"Internet 1 to 5 for the masters that list it"];
 		symbol = @"checkmark.circle.fill";
 		tint = [NSColor systemGreenColor];
 	}
@@ -3369,4 +3389,539 @@ NSModalResponse VSP_RunServerWindow( VSPServerSettings *settings, NSString *base
 		LLog( @"Server: window closed, %@", r == NSModalResponseStop ? @"back to the launcher" : @"quitting" );
 		return r;
 	}
+}
+
+/* ------------------------------------------------------------------------
+   Master servers and the Servers… sheet
+   ------------------------------------------------------------------------ */
+
+#define KEY_MASTERS		@"MasterServers"
+#define ROW_MASTER		@"org.voyagersp.master-row"
+#define MASTER_SLOTS	5		// Holomatch's Join menu: Internet 1-5
+
+NSArray<NSString *> *VSP_DefaultMasters( void )
+{
+	// as EF_DEFAULT_MASTERS (qcommon.h): the live community masters first
+	return @[ @"master.stvef.org", @"efmaster.tjps.eu", @"master.stef1.daggolin.de",
+		@"master.stef1.ravensoft.com", @"ipv6.tjps.eu" ];
+}
+
+NSArray<NSString *> *VSP_OriginalMasters( void )
+{
+	// what this port shipped before: Internet 1 Raven's (gone), Internet 2 tjps, 3-5 blank
+	return @[ @"master.stef1.ravensoft.com", @"efmaster.tjps.eu" ];
+}
+
+// A master's address as typed: host, host:port or [IPv6]:port, lowercased;
+// nothing that could break out of the cfg file's quotes.
+static NSString *CleanMaster( NSString *text )
+{
+	NSMutableString *s = [NSMutableString string];
+	NSCharacterSet *ok = [NSCharacterSet characterSetWithCharactersInString:
+		@"abcdefghijklmnopqrstuvwxyz0123456789.-:[]_"];
+
+	text = [[text stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceCharacterSet]] lowercaseString];
+	for( NSUInteger i = 0; i < [text length] && [s length] < 64; i++ )
+		if( [ok characterIsMember: [text characterAtIndex: i]] )
+			[s appendFormat: @"%C", [text characterAtIndex: i]];
+	return s;
+}
+
+// Cleaned, without blanks or repeats, at most VSP_MAX_MASTERS.
+static NSArray<NSString *> *CleanMasters( NSArray *masters )
+{
+	NSMutableArray *list = [NSMutableArray array];
+	for( id m in masters )
+	{
+		NSString *c = [m isKindOfClass: [NSString class]] ? CleanMaster( m ) : @"";
+		if( [c length] && ![list containsObject: c] && [list count] < VSP_MAX_MASTERS )
+			[list addObject: c];
+	}
+	return list;
+}
+
+NSArray<NSString *> *VSP_MasterServers( void )
+{
+	id saved = [[NSUserDefaults standardUserDefaults] objectForKey: KEY_MASTERS];
+	return [saved isKindOfClass: [NSArray class]] ? CleanMasters( saved ) : VSP_DefaultMasters();
+}
+
+void VSP_SetMasterServers( NSArray<NSString *> *masters )
+{
+	if( !masters || [CleanMasters( masters ) isEqualToArray: VSP_DefaultMasters()] )
+		[[NSUserDefaults standardUserDefaults] removeObjectForKey: KEY_MASTERS];	// follow future defaults
+	else
+		[[NSUserDefaults standardUserDefaults] setObject: CleanMasters( masters ) forKey: KEY_MASTERS];
+	LLog( @"Master servers: %@", [VSP_MasterServers() componentsJoinedByString: @", "] );
+}
+
+NSString *VSP_MastersCfgText( BOOL blank )
+{
+	NSArray *list = blank ? @[] : VSP_MasterServers();
+	NSMutableString *cfg = [NSMutableString string];
+	for( NSUInteger i = 0; i < VSP_MAX_MASTERS; i++ )
+		[cfg appendFormat: @"set sv_master%lu \"%@\"\n", (unsigned long)i + 1, i < [list count] ? list[i] : @""];
+	return cfg;
+}
+
+BOOL VSP_WriteMastersConfig( void )
+{
+	NSString *path = [VSP_HomeBase() stringByAppendingPathComponent: VSP_MASTERS_CFG];
+	NSString *cfg = [NSString stringWithFormat: @"// Written by the Elite Force launcher at each start: its Servers… list.\n"
+		@"// sv_master1-5 are Holomatch's Internet 1-5. Edits here are overwritten.\n\n%@", VSP_MastersCfgText( NO )];
+
+	[[NSFileManager defaultManager] createDirectoryAtPath: VSP_HomeBase() withIntermediateDirectories: YES attributes: nil error: NULL];
+	if( [cfg writeToFile: path atomically: YES encoding: NSUTF8StringEncoding error: NULL] )
+		return YES;
+	LLog( @"Couldn't write %@", path );
+	return NO;
+}
+
+NSInteger VSP_QueryMasterCount( NSString *master )
+{
+	NSSet *list = QueryMaster( master );
+	return list ? (NSInteger)[list count] : -1;
+}
+
+// One row: the browser source, the address (editable) and whether it answers.
+@interface VSPMasterCell : NSTableCellView
+@property (nonatomic, readonly) NSTextField *slot, *status;
+@property (nonatomic, readonly) NSImageView *statusIcon;
+@end
+
+@implementation VSPMasterCell
+- (instancetype)initWithOwner: (id<NSTextFieldDelegate>)owner
+{
+	NSTextField *host;
+	NSStackView *row;
+
+	if( !( self = [super initWithFrame: NSZeroRect] ) )
+		return nil;
+	[self setIdentifier: @"master"];
+	_slot = VSP_Label( @"", [NSFont systemFontOfSize: 12], [NSColor secondaryLabelColor] );
+	[[_slot widthAnchor] constraintEqualToConstant: 92].active = YES;
+	host = [NSTextField textFieldWithString: @""];
+	[host setPlaceholderString: @"host or host:port"];
+	[host setFont: [NSFont systemFontOfSize: 13 weight: NSFontWeightMedium]];
+	[host setBordered: NO];
+	[host setDrawsBackground: NO];
+	[host setFocusRingType: NSFocusRingTypeNone];
+	[host setLineBreakMode: NSLineBreakByTruncatingTail];
+	[host setDelegate: owner];
+	[host setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	[host setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
+	[self setTextField: host];
+	_statusIcon = [[NSImageView alloc] init];
+	_status = VSP_Label( @"", Small(), [NSColor secondaryLabelColor] );
+	[_status setAlignment: NSTextAlignmentRight];
+	[[_status widthAnchor] constraintEqualToConstant: 128].active = YES;
+	row = HStack( @[ _slot, host, _statusIcon, _status ], 8 );
+	[row setAlignment: NSLayoutAttributeCenterY];
+	[row setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[self addSubview: row];
+	[NSLayoutConstraint activateConstraints: @[
+		[[row leadingAnchor] constraintEqualToAnchor: [self leadingAnchor] constant: 6],
+		[[row trailingAnchor] constraintEqualToAnchor: [self trailingAnchor] constant: -6],
+		[[row centerYAnchor] constraintEqualToAnchor: [self centerYAnchor]],
+	]];
+	return self;
+}
+@end
+
+@interface VSPMastersController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate>
+@property (nonatomic, readonly) NSWindow *panel;
+- (void)checkAllWaiting: (BOOL)wait;
+@end
+
+@implementation VSPMastersController
+{
+	NSMutableArray<NSString *> *masters;
+	NSMutableDictionary<NSString *, NSNumber *> *answers;	// server count, or -1: no answer
+	NSMutableSet<NSString *> *checking;
+	VSPTable *table;
+	NSTextField *caption;
+	NSButton *addButton, *removeButton, *upButton, *downButton;
+}
+
+- (instancetype)init
+{
+	if( !( self = [super init] ) )
+		return nil;
+	masters = [VSP_MasterServers() mutableCopy];
+	answers = [NSMutableDictionary dictionary];
+	checking = [NSMutableSet set];
+	[self build];
+	[self show];
+	return self;
+}
+
+- (NSButton *)iconButton: (NSString *)symbol tip: (NSString *)tip action: (SEL)action
+{
+	NSButton *b = [NSButton buttonWithImage: Symbol( symbol, 12 ) target: self action: action];
+	[b setBezelStyle: NSBezelStyleRounded];
+	[b setControlSize: NSControlSizeSmall];
+	[b setToolTip: tip];
+	[b setAccessibilityLabel: tip];
+	return b;
+}
+
+- (void)build
+{
+	NSView *content, *box;
+	NSStackView *root, *buttons, *footer;
+	NSButton *cancel, *ok, *defaults, *original, *check;
+	NSTableColumn *c = [[NSTableColumn alloc] initWithIdentifier: @"master"];
+
+	_panel = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 660, 470 )
+		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO];
+	[_panel setTitle: @"Master Servers"];
+	VSP_ApplyTestAppearance( _panel );
+	content = [_panel contentView];
+
+	table = [[VSPTable alloc] init];
+	[c setResizingMask: NSTableColumnAutoresizingMask];
+	[table addTableColumn: c];
+	[table setHeaderView: nil];
+	[table setRowHeight: 30];
+	[table setStyle: NSTableViewStyleInset];
+	[table setBackgroundColor: [NSColor clearColor]];
+	[table setAllowsMultipleSelection: YES];
+	[table setColumnAutoresizingStyle: NSTableViewUniformColumnAutoresizingStyle];
+	[table setDataSource: self];
+	[table setDelegate: self];
+	[table registerForDraggedTypes: @[ ROW_MASTER ]];
+	[table setDraggingDestinationFeedbackStyle: NSTableViewDraggingDestinationFeedbackStyleGap];
+	{
+		__weak VSPMastersController *weakSelf = self;
+		table.deleteHandler = ^{ [weakSelf removeMasters: nil]; };
+	}
+	box = Boxed( Scrolled( table ) );
+
+	caption = VSP_Label( @"", [NSFont systemFontOfSize: 11 weight: NSFontWeightSemibold], [NSColor secondaryLabelColor] );
+	addButton = [self iconButton: @"plus" tip: @"Add a master server" action: @selector(addMaster:)];
+	removeButton = [self iconButton: @"minus" tip: @"Remove" action: @selector(removeMasters:)];
+	upButton = [self iconButton: @"chevron.up" tip: @"Move up" action: @selector(moveUp:)];
+	downButton = [self iconButton: @"chevron.down" tip: @"Move down" action: @selector(moveDown:)];
+	defaults = [NSButton buttonWithTitle: @"Restore Recommended Defaults" target: self action: @selector(restoreDefaults:)];
+	[defaults setToolTip: [@"The live community masters first: " stringByAppendingString:
+		[VSP_DefaultMasters() componentsJoinedByString: @", "]]];
+	original = [NSButton buttonWithTitle: @"Restore Original Defaults" target: self action: @selector(restoreOriginal:)];
+	[original setToolTip: @"As the game came: Internet 1 Raven's master (no longer running), Internet 2 efmaster.tjps.eu, 3 to 5 blank"];
+	check = [NSButton buttonWithTitle: @"Check Now" target: self action: @selector(checkNow:)];
+	[check setControlSize: NSControlSizeSmall];
+	[check setToolTip: @"Ask each master server for its list of games"];
+	cancel = [NSButton buttonWithTitle: @"Cancel" target: self action: @selector(cancel:)];
+	[cancel setKeyEquivalent: @"\033"];
+	ok = [NSButton buttonWithTitle: @"Done" target: self action: @selector(ok:)];
+	[ok setKeyEquivalent: @"\r"];
+	[[ok widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
+	[[cancel widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
+	buttons = HStack( @[ addButton, removeButton, upButton, downButton,
+		VSP_Label( @"Drag to reorder", Small(), [NSColor tertiaryLabelColor] ), [NSView new], check ], 6 );
+	[buttons setCustomSpacing: 12 afterView: downButton];
+	[buttons setAlignment: NSLayoutAttributeCenterY];
+	[[buttons views][5] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	footer = HStack( @[ defaults, original, [NSView new], cancel, ok ], 10 );
+	[[footer views][2] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+
+	root = VStack( @[ caption,
+		Hint( @"Master servers keep the list of Holomatch games on the internet. The first five are the "
+			@"Join menu's Internet 1 to 5 sources, in this order. When you host an internet server, it "
+			@"announces itself to every one, so add new masters here as the community starts them.", 610 ),
+		box, buttons, footer ], 8 );
+	[root setCustomSpacing: 10 afterView: [root views][1]];
+	[root setCustomSpacing: 18 afterView: buttons];
+	[root setEdgeInsets: NSEdgeInsetsMake( 18, 20, 20, 20 )];
+	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[content addSubview: root];
+	for( NSView *v in @[ box, buttons, footer ] )
+		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -40].active = YES;
+	[NSLayoutConstraint activateConstraints: @[
+		[[root leadingAnchor] constraintEqualToAnchor: [content leadingAnchor]],
+		[[root trailingAnchor] constraintEqualToAnchor: [content trailingAnchor]],
+		[[root topAnchor] constraintEqualToAnchor: [content topAnchor]],
+		[[root bottomAnchor] constraintEqualToAnchor: [content bottomAnchor]],
+		[[root widthAnchor] constraintEqualToConstant: 660],
+		[[[(NSStackView *)box views][1] heightAnchor] constraintEqualToConstant: 280],
+	]];
+}
+
+- (void)show
+{
+	[caption setStringValue: [masters count] == 1 ? @"MASTER SERVERS · 1" :
+		[NSString stringWithFormat: @"MASTER SERVERS · %lu", (unsigned long)[masters count]]];
+	[table reloadData];
+	[self updateButtons];
+}
+
+- (void)updateButtons
+{
+	NSIndexSet *sel = [table selectedRowIndexes];
+	[addButton setEnabled: [masters count] < VSP_MAX_MASTERS];
+	[removeButton setEnabled: [sel count] > 0];
+	[upButton setEnabled: [sel count] > 0 && [sel firstIndex] > 0];
+	[downButton setEnabled: [sel count] > 0 && [sel lastIndex] + 1 < [masters count]];
+}
+
+- (void)tableViewSelectionDidChange: (NSNotification *)n	{ [self updateButtons]; }
+
+// --- checking ---
+
+- (void)check: (NSString *)m done: (dispatch_group_t)group
+{
+	if( ![m length] || [checking containsObject: m] )
+		return;
+	[checking addObject: m];
+	[answers removeObjectForKey: m];
+	if( group )
+		dispatch_group_enter( group );
+	dispatch_async( dispatch_get_global_queue( QOS_CLASS_UTILITY, 0 ), ^{
+		NSInteger n = VSP_QueryMasterCount( m );
+		dispatch_async( dispatch_get_main_queue(), ^{
+			[self->checking removeObject: m];
+			self->answers[m] = @( n );
+			LLog( @"Master %@: %@", m, n < 0 ? @"no answer" : [NSString stringWithFormat: @"%ld servers", (long)n] );
+			[self reloadMaster: m];
+			if( group )
+				dispatch_group_leave( group );
+		} );
+	} );
+	[self reloadMaster: m];
+}
+
+- (void)reloadMaster: (NSString *)m
+{
+	NSUInteger i = [masters indexOfObject: m];
+	if( i != NSNotFound )
+		[table reloadDataForRowIndexes: [NSIndexSet indexSetWithIndex: i] columnIndexes: [NSIndexSet indexSetWithIndex: 0]];
+}
+
+- (void)checkAllWaiting: (BOOL)wait
+{
+	dispatch_group_t group = wait ? dispatch_group_create() : nil;
+
+	for( NSString *m in masters )
+		[self check: m done: group];
+	// for a snapshot: run the main queue until every answer is in
+	while( group && dispatch_group_wait( group, DISPATCH_TIME_NOW ) )
+		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
+}
+
+- (void)checkNow: (id)sender
+{
+	[_panel makeFirstResponder: nil];
+	[self checkAllWaiting: NO];
+}
+
+// --- the table ---
+
+- (NSInteger)numberOfRowsInTableView: (NSTableView *)t	{ return (NSInteger)[masters count]; }
+
+- (NSView *)tableView: (NSTableView *)t viewForTableColumn: (NSTableColumn *)col row: (NSInteger)row
+{
+	VSPMasterCell *cell = [t makeViewWithIdentifier: @"master" owner: self];
+	NSString *m = masters[row];
+	NSNumber *a = answers[m];
+	NSString *symbol = nil, *text = @"";
+	NSColor *tint = [NSColor secondaryLabelColor];
+
+	if( !cell )
+		cell = [[VSPMasterCell alloc] initWithOwner: self];
+	[[cell slot] setStringValue: row < MASTER_SLOTS ? [NSString stringWithFormat: @"Internet %ld", (long)row + 1] : @"Announce only"];
+	[[cell slot] setToolTip: row < MASTER_SLOTS ?
+		[NSString stringWithFormat: @"Holomatch's Join menu lists this master's games under Internet %ld", (long)row + 1] :
+		@"Not in the Join menu (it has Internet 1 to 5), but a server you host announces itself here too"];
+	[[cell textField] setStringValue: m];
+	[[cell textField] setTag: row];
+	if( [checking containsObject: m] )
+	{
+		symbol = @"arrow.triangle.2.circlepath";
+		text = @"Checking…";
+	}
+	else if( a && [a integerValue] >= 0 )
+	{
+		symbol = @"checkmark.circle.fill";
+		tint = [NSColor systemGreenColor];
+		text = [a integerValue] == 1 ? @"Answers · 1 game" : [NSString stringWithFormat: @"Answers · %ld games", (long)[a integerValue]];
+	}
+	else if( a )
+	{
+		symbol = @"xmark.circle.fill";
+		tint = [NSColor systemOrangeColor];
+		text = @"No answer";
+	}
+	[[cell statusIcon] setImage: symbol ? Symbol( symbol, 12 ) : nil];
+	[[cell statusIcon] setContentTintColor: tint];
+	[[cell status] setStringValue: text];
+	[[cell status] setTextColor: a && [a integerValue] < 0 ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor]];
+	[[cell status] setToolTip: a && [a integerValue] < 0 ? @"It didn't answer from this network. It may be down, or "
+		@"reachable only over IPv6. Games it lists still show up for players who can reach it." : nil];
+	return cell;
+}
+
+- (void)controlTextDidEndEditing: (NSNotification *)n
+{
+	NSTextField *f = [n object];
+	NSInteger row = [f tag];
+	NSString *m = CleanMaster( [f stringValue] );
+
+	if( row < 0 || row >= (NSInteger)[masters count] )
+		return;
+	if( [m length] && [masters indexOfObject: m] != NSNotFound && [masters indexOfObject: m] != (NSUInteger)row )
+		m = @"";		// already in the list
+	if( ![m length] )
+	{
+		[masters removeObjectAtIndex: row];
+		[self show];
+		return;
+	}
+	masters[row] = m;
+	[self show];
+	if( !answers[m] )
+		[self check: m done: nil];
+}
+
+- (void)addMaster: (id)sender
+{
+	if( [masters count] >= VSP_MAX_MASTERS )
+		return;
+	[_panel makeFirstResponder: nil];
+	[masters addObject: @""];
+	[self show];
+	[table selectRowIndexes: [NSIndexSet indexSetWithIndex: [masters count] - 1] byExtendingSelection: NO];
+	[table scrollRowToVisible: [masters count] - 1];
+	[table editColumn: 0 row: [masters count] - 1 withEvent: nil select: YES];
+}
+
+- (void)removeMasters: (id)sender
+{
+	NSIndexSet *sel = [table selectedRowIndexes];
+	NSUInteger first = [sel firstIndex];
+
+	if( ![sel count] )
+		return;
+	[_panel makeFirstResponder: nil];
+	sel = [table selectedRowIndexes];	// ending an edit may have changed the rows
+	if( ![sel count] )
+		return;
+	[masters removeObjectsAtIndexes: sel];
+	[self show];
+	if( [masters count] )
+		[table selectRowIndexes: [NSIndexSet indexSetWithIndex: MIN( first, [masters count] - 1 )] byExtendingSelection: NO];
+}
+
+- (void)moveBy: (NSInteger)delta
+{
+	NSIndexSet *sel = [table selectedRowIndexes];
+	NSArray *moving = [masters objectsAtIndexes: sel];
+	NSUInteger at = delta < 0 ? [sel firstIndex] - 1 : [sel lastIndex] + 2 - [sel count];
+
+	[masters removeObjectsAtIndexes: sel];
+	[masters insertObjects: moving atIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( at, [moving count] )]];
+	[self show];
+	[table selectRowIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( at, [moving count] )] byExtendingSelection: NO];
+}
+
+- (void)moveUp: (id)sender
+{
+	[_panel makeFirstResponder: nil];
+	if( [[table selectedRowIndexes] count] && [[table selectedRowIndexes] firstIndex] > 0 )
+		[self moveBy: -1];
+}
+
+- (void)moveDown: (id)sender
+{
+	[_panel makeFirstResponder: nil];
+	if( [[table selectedRowIndexes] count] && [[table selectedRowIndexes] lastIndex] + 1 < [masters count] )
+		[self moveBy: 1];
+}
+
+- (id<NSPasteboardWriting>)tableView: (NSTableView *)t pasteboardWriterForRow: (NSInteger)row
+{
+	NSPasteboardItem *item = [[NSPasteboardItem alloc] init];
+	[item setString: [NSString stringWithFormat: @"%ld", (long)row] forType: ROW_MASTER];
+	return item;
+}
+
+- (NSDragOperation)tableView: (NSTableView *)t validateDrop: (id<NSDraggingInfo>)info proposedRow: (NSInteger)row
+	proposedDropOperation: (NSTableViewDropOperation)op
+{
+	if( [info draggingSource] != table )
+		return NSDragOperationNone;
+	[t setDropRow: row dropOperation: NSTableViewDropAbove];
+	return NSDragOperationMove;
+}
+
+- (BOOL)tableView: (NSTableView *)t acceptDrop: (id<NSDraggingInfo>)info row: (NSInteger)row
+	dropOperation: (NSTableViewDropOperation)op
+{
+	NSMutableIndexSet *from = [NSMutableIndexSet indexSet];
+	NSArray *moving;
+
+	for( NSPasteboardItem *item in [[info draggingPasteboard] pasteboardItems] )
+	{
+		NSString *r = [item stringForType: ROW_MASTER];
+		if( r && [r integerValue] >= 0 && [r integerValue] < (NSInteger)[masters count] )
+			[from addIndex: (NSUInteger)[r integerValue]];
+	}
+	if( ![from count] )
+		return NO;
+	moving = [masters objectsAtIndexes: from];
+	row -= (NSInteger)[from countOfIndexesInRange: NSMakeRange( 0, (NSUInteger)row )];
+	[masters removeObjectsAtIndexes: from];
+	row = MIN( MAX( row, 0 ), (NSInteger)[masters count] );
+	[masters insertObjects: moving atIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( (NSUInteger)row, [moving count] )]];
+	[self show];
+	[table selectRowIndexes: [NSIndexSet indexSetWithIndexesInRange: NSMakeRange( (NSUInteger)row, [moving count] )] byExtendingSelection: NO];
+	return YES;
+}
+
+// --- the sheet ---
+
+- (void)restore: (NSArray *)list
+{
+	[_panel makeFirstResponder: nil];
+	[masters setArray: list];
+	[self show];
+	for( NSString *m in masters )
+		if( !answers[m] )
+			[self check: m done: nil];
+}
+
+- (void)restoreDefaults: (id)sender	{ [self restore: VSP_DefaultMasters()]; }
+- (void)restoreOriginal: (id)sender	{ [self restore: VSP_OriginalMasters()]; }
+
+- (void)finish: (BOOL)saved
+{
+	if( saved )
+	{
+		[_panel makeFirstResponder: nil];		// end editing
+		VSP_SetMasterServers( masters );
+	}
+	[[_panel sheetParent] endSheet: _panel returnCode: saved ? NSModalResponseOK : NSModalResponseCancel];
+}
+
+- (void)ok: (id)sender		{ [self finish: YES]; }
+- (void)cancel: (id)sender	{ [self finish: NO]; }
+
+@end
+
+void VSP_ShowMasterServers( NSWindow *parent, void ( ^done )( BOOL saved ) )
+{
+	VSPMastersController *c = [[VSPMastersController alloc] init];
+
+	[c checkAllWaiting: NO];
+	// the block keeps the controller alive until the sheet ends
+	[parent beginSheet: [c panel] completionHandler: ^( NSModalResponse r ) {
+		[[c panel] orderOut: nil];
+		done( r == NSModalResponseOK );
+	}];
+}
+
+BOOL VSP_SnapshotMasterServers( const char *path )
+{
+	VSPMastersController *c = [[VSPMastersController alloc] init];
+
+	[c checkAllWaiting: YES];
+	return VSP_SnapshotWindow( [c panel], path );
 }
