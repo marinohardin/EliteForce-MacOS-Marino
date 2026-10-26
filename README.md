@@ -27,9 +27,9 @@ It also supports running a **dedicated multiplayer server**, with NAT-PMP suppor
 
 ## Screenshots
 
-<img width="1926" height="1232" alt="Elite Force Mac: Borg Approach" src="https://github.com/user-attachments/assets/11f67934-a3fe-44d7-b852-6be0d98eb6f4" />
-<img width="1920" height="1235" alt="Elite Force Mac: Borg Lighting" src="https://github.com/user-attachments/assets/57a616ef-73a7-4cae-9b86-c3f2ad308839" />
-<img width="1920" height="1110" alt="Elite Force Mac: Borg Holodeck" src="https://github.com/user-attachments/assets/432dfc63-aa8a-47c1-8b60-8f94f99087e2" />
+<img width="2047" height="1147" alt="Elite Force Mac: Borg Lighting" src="https://github.com/user-attachments/assets/5e19c8bf-c23c-45db-aacf-07fd942648eb" />
+<img width="2047" height="1147" alt="Elite Force Mac: Holomatch" src="https://github.com/user-attachments/assets/e23b315c-6f1d-4a55-8e8a-db6cff2e469c" />
+<img width="2050" height="1150" alt="Elite Force Mac: Seven of Nine" src="https://github.com/user-attachments/assets/49a38191-5eaf-44c7-99f6-d014cd2e59d3" />
 
 ## Features
 
@@ -39,7 +39,7 @@ It also supports running a **dedicated multiplayer server**, with NAT-PMP suppor
   player name; and where the game files are, whether the Expansion Pack was found, and
   **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last
   used, including changes made in the game's own Video menu.
-  <img width="630" height="790" alt="Launcher" src="https://github.com/user-attachments/assets/81962865-d259-4357-b6d5-1318ec26118e" />
+  <img width="632" height="835" alt="Launcher" src="https://github.com/user-attachments/assets/4fdfcc38-e8df-4c28-8d81-f0ef899a40b9" />
 - **Holomatch (multiplayer).** Host or join games on your local network (LAN party, see
   [Holomatch and LAN parties](#holomatch-and-lan-parties)) or by IP address, with bots.
   It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
