@@ -8,8 +8,7 @@ You need:
 
 Install:
 1. Drag "Elite Force.app" to your Applications folder.
-2. This build is not notarized. The first time, right-click (Control-click) the app,
-   choose Open, then Open again. (Or: System Settings > Privacy & Security > Open Anyway.)
+2. Open it. (It's signed and notarized by Apple, so macOS opens it without warnings.)
 3. In the launcher, click Choose... under Game Files and pick your Elite Force folder
    (the one containing BaseEF). Then pick Single Player or Holomatch and click Play.
 

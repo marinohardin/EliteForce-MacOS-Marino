@@ -87,7 +87,9 @@ It also supports running a **dedicated multiplayer server**, with NAT-PMP suppor
 
 1. Download `EliteForce-MacOS-Marino-<version>.dmg` (or the `.zip`) from the
    [Releases page](https://github.com/marinohardin/EliteForce-MacOS-Marino/releases).
-2. Unzip it and move **Elite Force.app** to `/Applications` (or anywhere you like).
+2. Open the DMG and drag **Elite Force.app** onto the Applications shortcut (or unzip the
+   `.zip` and move the app to `/Applications`, or anywhere you like). Release builds are
+   signed and notarized by Apple, so macOS opens them without warnings.
 3. Open the app. The launcher opens. It looks for your game data, and if it can't find it,
    click **Choose…** under **Game Files** and pick **the folder where Elite Force is
    installed** (the folder that contains `BaseEF`):
@@ -101,12 +103,6 @@ It also supports running a **dedicated multiplayer server**, with NAT-PMP suppor
    It also quietly uses a `baseEF` folder placed next to the app, if there is one.
    Then pick **Single Player** or **Holomatch**, adjust the graphics if you like, and
    click **Play**.
-4. Release builds are not notarized, so the first time you open the app macOS may say it
-   can't verify the developer. Either:
-   - right-click (Control-click) the app, choose **Open**, then **Open** again, or
-   - on newer macOS, go to **System Settings → Privacy & Security** and click
-     **Open Anyway**, or
-   - in Terminal: `xattr -dr com.apple.quarantine "/Applications/Elite Force.app"`
 
 ### Saves and settings
 
@@ -273,7 +269,7 @@ Technical background on the port is in
   Expansion maps can't be joined. The Expansion Pack itself is untested with this port.
 - **Alpha quality.** Expect occasional rendering, audio or animation glitches inherited from
   the Android port. Back up your saves.
-- Apple Silicon only, and the app is not notarized (see Install step 4).
+- Apple Silicon only.
 - **Holomatch is new.** Mac-to-Mac LAN games are tested; games with PC players (Elite Force
   1.2 or lilium-voyager) use the same protocol but haven't been tried yet. The internet
   server browser depends on community master servers being online.
