@@ -916,14 +916,20 @@ static NSImage *NoLevelshot( BOOL missing )
 @end
 
 @implementation VSPTable
-// With moveRow set, a click and drag moves the row live, tracked here rather than
-// with a drag session (in the launcher's modal sheet, the click after a drag
-// session ended often went nowhere). A double-click goes to doubleClickRow (the
-// table only knows double-clicks whose first click it tracked itself), and
-// Command/Shift clicks are the table's own.
+// With moveRow set, a click and drag reorders rows, tracked here rather than with a
+// drag session (in the launcher's modal sheet, the click after a drag session ended
+// often went nowhere). The row is lifted into a floating copy that follows the
+// pointer exactly; the others slide aside as it passes their middle, and it settles
+// into its place on release. A double-click goes to doubleClickRow (the table only
+// knows double-clicks whose first click it tracked itself), and Command/Shift
+// clicks are the table's own.
 - (void)mouseDown: (NSEvent *)e
 {
 	NSInteger row, current;
+	NSPoint start;
+	NSRect startRect;
+	NSImageView *lifted = nil;
+	NSTableRowView *hidden = nil;
 
 	if( !_moveRow || ( [e modifierFlags] & ( NSEventModifierFlagCommand | NSEventModifierFlagShift ) ) )
 	{
@@ -931,7 +937,8 @@ static NSImage *NoLevelshot( BOOL missing )
 		return;
 	}
 	[[self window] makeFirstResponder: self];	// ends an edit, which may change the rows
-	row = [self rowAtPoint: [self convertPoint: [e locationInWindow] fromView: nil]];
+	start = [self convertPoint: [e locationInWindow] fromView: nil];
+	row = [self rowAtPoint: start];
 	if( row < 0 )
 	{
 		[super mouseDown: e];
@@ -948,24 +955,74 @@ static NSImage *NoLevelshot( BOOL missing )
 	}
 	[self selectRowIndexes: [NSIndexSet indexSetWithIndex: row] byExtendingSelection: NO];
 	current = row;
+	startRect = [self rectOfRow: row];
 	for( ;; )
 	{
 		NSEvent *ev = [[self window] nextEventMatchingMask: NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp];
 		NSPoint q;
+		NSRect f;
 		NSInteger target;
+		NSTableRowView *rv;
 
 		if( [ev type] == NSEventTypeLeftMouseUp )
 			break;
 		[self autoscroll: ev];
 		q = [self convertPoint: [ev locationInWindow] fromView: nil];
-		target = [self rowAtPoint: q];
-		if( target < 0 )
-			target = q.y < NSMinY( [self bounds] ) + 4 ? 0 : [self numberOfRows] - 1;	// flipped: above or below
-		if( target != current && target >= 0 )
+		if( !lifted )
+		{
+			NSBitmapImageRep *rep;
+			NSImage *image;
+
+			if( fabs( q.y - start.y ) < 3 && fabs( q.x - start.x ) < 3 )
+				continue;		// not a drag yet
+			// lift a picture of the row; the row itself stays, invisible, as its slot
+			rv = [self rowViewAtRow: row makeIfNecessary: NO];
+			if( !rv )
+				break;
+			rep = [rv bitmapImageRepForCachingDisplayInRect: [rv bounds]];
+			[rv cacheDisplayInRect: [rv bounds] toBitmapImageRep: rep];
+			image = [[NSImage alloc] initWithSize: [rv bounds].size];
+			[image addRepresentation: rep];
+			lifted = [NSImageView imageViewWithImage: image];
+			[lifted setImageScaling: NSImageScaleNone];
+			[lifted setWantsLayer: YES];
+			[[lifted layer] setShadowOpacity: 0.25];
+			[[lifted layer] setShadowRadius: 6];
+			[[lifted layer] setShadowOffset: CGSizeMake( 0, -2 )];
+			[lifted setFrame: [rv frame]];
+			[self addSubview: lifted];
+		}
+		// follow the pointer exactly, within the rows
+		f = [lifted frame];
+		f.origin.y = startRect.origin.y + ( q.y - start.y );
+		f.origin.y = MAX( NSMinY( [self rectOfRow: 0] ), MIN( f.origin.y, NSMinY( [self rectOfRow: [self numberOfRows] - 1] ) ) );
+		[lifted setFrame: f];
+		// its slot is the row under its middle
+		target = [self rowAtPoint: NSMakePoint( NSMidX( f ), NSMidY( f ) )];
+		if( target >= 0 && target != current )
 		{
 			_moveRow( current, target );
 			current = target;
 		}
+		rv = [self rowViewAtRow: current makeIfNecessary: NO];
+		if( rv != hidden )
+		{
+			[hidden setAlphaValue: 1];
+			[rv setAlphaValue: 0];
+			hidden = rv;
+		}
+	}
+	if( lifted )
+	{
+		// settle into the slot
+		NSTableRowView *slot = hidden;
+		[NSAnimationContext runAnimationGroup: ^( NSAnimationContext *ctx ) {
+			[ctx setDuration: 0.15];
+			[[lifted animator] setFrame: [self rectOfRow: current]];
+		} completionHandler: ^{
+			[lifted removeFromSuperview];
+			[slot setAlphaValue: 1];
+		}];
 	}
 }
 
