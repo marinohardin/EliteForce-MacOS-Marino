@@ -85,7 +85,6 @@ With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
-#import <objc/runtime.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -1054,12 +1053,35 @@ static NSImage *NoLevelshot( BOOL missing )
 }
 @end
 
-// Clipped to the group box's rounded corners (Boxed insets it 1 pt), and with
-// Show scroll bars: Always, the square beside a table's header drawn as more
-// header instead of the corner view AppKit puts there.
+// With Show scroll bars: Always, a table's header stops short of the
+// scroller and AppKit fills the square above it with a corner view that
+// doesn't match the header. Instead the header runs on over the scroller.
+@interface VSPScrollView : NSScrollView
+@end
+
+@implementation VSPScrollView
+- (void)tile
+{
+	NSTableHeaderView *h = [[self documentView] isKindOfClass: [NSTableView class]] ?
+		[(NSTableView *)[self documentView] headerView] : nil;
+	NSView *clip = [h superview];
+	NSRect f;
+
+	[super tile];
+	if( !h || !clip || [self scrollerStyle] != NSScrollerStyleLegacy || ![self hasVerticalScroller] )
+		return;
+	f = [clip frame];
+	f.size.width = NSMaxX( [self bounds] ) - NSMinX( f );
+	[clip setFrame: f];
+	if( NSWidth( [h frame] ) < NSWidth( f ) )
+		[h setFrameSize: NSMakeSize( NSWidth( f ), NSHeight( [h frame] ) )];
+}
+@end
+
+// Clipped to the group box's rounded corners (Boxed insets it 1 pt).
 static NSScrollView *Scrolled( NSView *doc )
 {
-	NSScrollView *sv = [[NSScrollView alloc] init];
+	NSScrollView *sv = [[VSPScrollView alloc] init];
 	[sv setDocumentView: doc];
 	[sv setHasVerticalScroller: YES];
 	[sv setAutohidesScrollers: YES];
@@ -1068,17 +1090,8 @@ static NSScrollView *Scrolled( NSView *doc )
 	[sv setWantsLayer: YES];
 	[[sv layer] setCornerRadius: 9];
 	[[sv layer] setMasksToBounds: YES];
-	if( [doc isKindOfClass: [NSTableView class]] && [(NSTableView *)doc headerView] )
-	{
-		// a header of a table without columns: all filler, as past the last column
-		NSTableHeaderView *corner = [[NSTableHeaderView alloc] initWithFrame:
-			NSMakeRect( 0, 0, 16, NSHeight( [[(NSTableView *)doc headerView] frame] ) )];
-		NSTableView *none = [[NSTableView alloc] init];
-
-		[corner setTableView: none];
-		objc_setAssociatedObject( corner, @selector(tableView), none, OBJC_ASSOCIATION_RETAIN );
-		[(NSTableView *)doc setCornerView: corner];
-	}
+	if( [doc isKindOfClass: [NSTableView class]] )
+		[(NSTableView *)doc setCornerView: nil];
 	return sv;
 }
 
@@ -5760,6 +5773,15 @@ BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, NSS
 	}
 	if( path )
 		ok = VSP_SnapshotWindow( [c panel], path );
+	if( getenv( "VOYAGERSP_TEST_BROWSER_HOLD" ) )		// show it a while, to look at
+	{
+		[NSApp activateIgnoringOtherApps: YES];
+		[[c panel] makeKeyAndOrderFront: nil];
+		LLog( @"[test] holding Browse… on screen (window %ld)", (long)[[c panel] windowNumber] );
+		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate:
+			[NSDate dateWithTimeIntervalSinceNow: atoi( getenv( "VOYAGERSP_TEST_BROWSER_HOLD" ) )]];
+		[[c panel] orderOut: nil];
+	}
 	if( getenv( "VOYAGERSP_TEST_BROWSER_PREVIEW" ) )
 	{
 		NSDate *until = [NSDate dateWithTimeIntervalSinceNow: 30];
