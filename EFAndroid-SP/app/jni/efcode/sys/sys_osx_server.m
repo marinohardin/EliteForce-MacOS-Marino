@@ -1053,14 +1053,26 @@ static NSImage *NoLevelshot( BOOL missing )
 }
 @end
 
+// Overlay scrollers, even with Show scroll bars: Always: legacy ones put a
+// square corner beside a table's header that pokes over the box's rounded
+// corner. AppKit puts the preferred style back when it changes, so it's set
+// again then.
 static NSScrollView *Scrolled( NSView *doc )
 {
 	NSScrollView *sv = [[NSScrollView alloc] init];
+	__weak NSScrollView *weak = sv;
 	[sv setDocumentView: doc];
 	[sv setHasVerticalScroller: YES];
 	[sv setAutohidesScrollers: YES];
 	[sv setBorderType: NSNoBorder];
 	[sv setDrawsBackground: NO];
+	[sv setScrollerStyle: NSScrollerStyleOverlay];
+	if( [doc isKindOfClass: [NSTableView class]] )
+		[(NSTableView *)doc setCornerView: nil];
+	[[NSNotificationCenter defaultCenter] addObserverForName: NSPreferredScrollerStyleDidChangeNotification object: nil
+		queue: [NSOperationQueue mainQueue] usingBlock: ^( NSNotification *n ) {
+		dispatch_async( dispatch_get_main_queue(), ^{ [weak setScrollerStyle: NSScrollerStyleOverlay]; } );
+	}];
 	return sv;
 }
 
