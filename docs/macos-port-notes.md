@@ -382,3 +382,22 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
 - **Players / Humans.** Players is `clients/sv_maxclients` (bots included); Humans is
   `g_humanplayers`, or `?` when the server doesn't send it. Default sort: Humans (`?` as 0), then
   Players, then ping.
+- **Favorites and filters.** A star column (`BrowserFavorites`, addresses) sorts first; **Only
+  favorites** and **Only servers with people** (`BrowserOnlyFavorites`, `BrowserOnlyPeople`)
+  combine. "With people" keeps `?` servers that have players, since they may have people.
+- **Who's playing.** Selecting a server sends that one server a `getstatus` (up to two tries,
+  1 s each) and lists `<score> <ping> "<name>"` with its colors; nothing is sent to the others.
+  Answers are kept for the sheet's life (the small refresh asks again). Bots have ping 0, the only
+  tell: rows get a "bot" tag only when the count of players with a ping matches `g_humanplayers`
+  (from the answer, else from `getinfo`), or when the server doesn't say.
+- **Preview Map.** For maps that aren't the game's own (pak0-pak3 and the Expansion Pack list),
+  a sheet with a `WKWebView` (WebKit, a system framework) shows
+  `efservers.com/pk3.php?preview&popup=1&map=<map>` (files, a Render BSP button for the 3D view),
+  with Open in Browser. A sheet, since the launcher is app modal. The globe button opens
+  efservers.com.
+- **Join links owner.** When `URLForApplicationToOpenURL:` says another app (cMod claims `stvef`
+  too) opens `stvef://`, a row offers **Open Join Links with Elite Force**
+  (`setDefaultApplicationAtURL:toOpenURLsWithScheme:`, macOS 12+; macOS may ask to confirm).
+  Without a choice, macOS picks among the apps that claim it, often the most recently registered.
+- **Tests.** `VOYAGERSP_TEST_BROWSER_SELECT=<row>` (and waits for its players),
+  `VOYAGERSP_TEST_BROWSER_PREVIEW=<png>`, `VOYAGERSP_TEST_LINK_HANDLER=<app>`.

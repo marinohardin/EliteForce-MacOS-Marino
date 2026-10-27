@@ -84,6 +84,7 @@ With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 #include "../zlib/zlib.h"
 
 #import <Cocoa/Cocoa.h>
+#import <WebKit/WebKit.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -4265,6 +4266,9 @@ BOOL VSP_SnapshotMasterServers( const char *path )
    ------------------------------------------------------------------------ */
 
 #define KEY_LOOPBACKFIX		@"LoopbackHostFix"
+#define KEY_FAVORITES		@"BrowserFavorites"		// server addresses, starred in Browse…
+#define KEY_ONLYFAVORITES	@"BrowserOnlyFavorites"
+#define KEY_ONLYPEOPLE		@"BrowserOnlyPeople"
 
 static DNSServiceRef publicAddrRef;
 static NSString *routerAddress;
@@ -4371,7 +4375,7 @@ static NSColor *AmberColor( void )
 @property (nonatomic, copy) NSString *address, *name, *map;
 @property (nonatomic, copy) NSArray<NSString *> *listedOn;		// Combined: the masters listing it
 @property (nonatomic) NSInteger players, maxPlayers, humans, gametype, ping;	// humans -1: not reported
-@property (nonatomic) BOOL needPass, thisMac;
+@property (nonatomic) BOOL needPass, thisMac, favorite;
 @property (nonatomic, readonly) NSString *gametypeName, *playersText, *humansText;
 @property (nonatomic, readonly) NSInteger knownHumans;	// for sorting: ? counts as 0
 @end
@@ -4525,6 +4529,211 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	} );
 }
 
+// One player in a server's getstatus answer. Bots have ping 0 (the server
+// doesn't time them); that's the only tell, so it's checked against the
+// server's own count of people before rows get a "bot" tag.
+@interface VSPPlayer : NSObject
+@property (nonatomic, copy) NSString *name;		// with color codes
+@property (nonatomic) NSInteger score, ping;
+@end
+@implementation VSPPlayer
+@end
+
+@interface VSPServerStatus : NSObject
+@property (nonatomic, copy) NSArray<VSPPlayer *> *players;
+@property (nonatomic) NSInteger humans;			// g_humanplayers, -1: not sent
+@property (nonatomic, strong) NSDate *when;
+@end
+@implementation VSPServerStatus
+@end
+
+static VSPServerStatus *ParseStatusResponse( const char *buf, ssize_t n )
+{
+	static const char head[] = "\xff\xff\xff\xffstatusResponse";
+	VSPServerStatus *st = [[VSPServerStatus alloc] init];
+	NSMutableArray *list = [NSMutableArray array];
+	NSMutableDictionary *kv = [NSMutableDictionary dictionary];
+	NSArray<NSString *> *lines;
+
+	if( n < (ssize_t)sizeof( head ) || memcmp( buf, head, sizeof( head ) - 1 ) )
+		return nil;
+	lines = [[[NSString alloc] initWithBytes: buf + sizeof( head ) - 1 length: n - ( sizeof( head ) - 1 )
+		encoding: NSISOLatin1StringEncoding] componentsSeparatedByString: @"\n"];
+	for( NSString *line in lines )
+	{
+		NSScanner *sc;
+		NSInteger score, ping;
+		NSRange q;
+		VSPPlayer *pl;
+
+		if( [line hasPrefix: @"\\"] )
+		{
+			NSArray *parts = [line componentsSeparatedByString: @"\\"];
+			for( NSUInteger i = 1; i + 1 < [parts count]; i += 2 )
+				kv[[parts[i] lowercaseString]] = parts[i + 1];
+			continue;
+		}
+		// <score> <ping> "<name>"
+		sc = [NSScanner scannerWithString: line];
+		if( ![sc scanInteger: &score] || ![sc scanInteger: &ping] ||
+			( q = [line rangeOfString: @"\""] ).location == NSNotFound )
+			continue;
+		pl = [[VSPPlayer alloc] init];
+		pl.score = score;
+		pl.ping = ping;
+		pl.name = [[line substringFromIndex: q.location + 1] stringByTrimmingCharactersInSet:
+			[NSCharacterSet characterSetWithCharactersInString: @"\"\r"]];
+		[list addObject: pl];
+	}
+	st.players = list;
+	st.humans = kv[@"g_humanplayers"] ? [kv[@"g_humanplayers"] integerValue] : -1;
+	st.when = [NSDate date];
+	return st;
+}
+
+// Ask one server who's playing (on a background queue); done gets nil when it
+// doesn't answer.
+static void QueryServerStatus( NSString *address, void ( ^done )( VSPServerStatus *st ) )
+{
+	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
+		static const char q[] = "\xff\xff\xff\xffgetstatus";
+		struct sockaddr_in sa;
+		__block VSPServerStatus *st = nil;
+		int fd = socket( AF_INET, SOCK_DGRAM, 0 );
+
+		if( fd >= 0 && ParseAddress( address, &sa ) )
+		{
+			for( int tries = 0; !st && tries < 2; tries++ )		// once more if a packet is lost
+			{
+				CFAbsoluteTime until = CFAbsoluteTimeGetCurrent() + 1;
+
+				sendto( fd, q, sizeof( q ) - 1, 0, (struct sockaddr *)&sa, sizeof( sa ) );
+				while( !st && CFAbsoluteTimeGetCurrent() < until )
+				{
+					struct pollfd pfd = { fd, POLLIN, 0 };
+					char buf[16384];
+					ssize_t n;
+
+					if( poll( &pfd, 1, 100 ) > 0 && ( n = recv( fd, buf, sizeof( buf ), 0 ) ) > 0 )
+						st = ParseStatusResponse( buf, n );
+				}
+			}
+		}
+		if( fd >= 0 )
+			close( fd );
+		dispatch_async( dispatch_get_main_queue(), ^{ done( st ); } );
+	} );
+}
+
+// A name with its Quake 3 color codes (^1 red...) as colors; white and black
+// become the label colors so names read in light and dark.
+static NSAttributedString *ColoredName( NSString *s, NSFont *font )
+{
+	NSArray<NSColor *> *colors = @[ [NSColor secondaryLabelColor], [NSColor systemRedColor], [NSColor systemGreenColor],
+		[NSColor systemYellowColor], [NSColor systemBlueColor], [NSColor systemTealColor], [NSColor systemPinkColor],
+		[NSColor labelColor] ];
+	NSMutableAttributedString *o = [[NSMutableAttributedString alloc] init];
+	NSColor *c = [NSColor labelColor];
+	NSUInteger i, n = [s length];
+
+	for( i = 0; i < n; i++ )
+	{
+		unichar ch = [s characterAtIndex: i];
+
+		if( ch == '^' && i + 1 < n && [s characterAtIndex: i + 1] != '^' && isalnum( [s characterAtIndex: i + 1] ) )
+		{
+			c = colors[( [s characterAtIndex: ++i] - '0' ) & 7];
+			continue;
+		}
+		[o appendAttributedString: [[NSAttributedString alloc] initWithString: [NSString stringWithCharacters: &ch length: 1]
+			attributes: @{ NSFontAttributeName: font, NSForegroundColorAttributeName: c }]];
+	}
+	return o;
+}
+
+// efservers.com's page for a map (screenshots, its files, a 3D preview), in a
+// sheet: the launcher is app modal, so a window of its own couldn't be used
+@interface VSPMapPreview : NSObject
++ (void)showMap: (NSString *)map onWindow: (NSWindow *)parent;
+@end
+
+@interface VSPMapPreview () <WKNavigationDelegate>
+@end
+
+@implementation VSPMapPreview
+{
+	NSWindow *sheet;
+	NSURL *url;
+}
+
+- (void)webView: (WKWebView *)web didFinishNavigation: (WKNavigation *)nav
+{
+	const char *test = getenv( "VOYAGERSP_TEST_BROWSER_PREVIEW" );
+
+	LLog( @"Browser: map preview loaded (%@)", [web title] );
+	if( !test )
+		return;
+	dispatch_after( dispatch_time( DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC ), dispatch_get_main_queue(), ^{
+		[web takeSnapshotWithConfiguration: nil completionHandler: ^( NSImage *img, NSError *e ) {
+			NSBitmapImageRep *r = img ? [NSBitmapImageRep imageRepWithData: [img TIFFRepresentation]] : nil;
+			[[r representationUsingType: NSBitmapImageFileTypePNG properties: @{}] writeToFile: @( test ) atomically: YES];
+			LLog( @"[test] map preview -> %s%@", test, r ? @"" : @" (no image)" );
+			[self done: nil];
+		}];
+	} );
+}
+
+- (void)webView: (WKWebView *)web didFailProvisionalNavigation: (WKNavigation *)nav withError: (NSError *)e
+{
+	LLog( @"Browser: map preview failed: %@", [e localizedDescription] );
+}
+
++ (void)showMap: (NSString *)map onWindow: (NSWindow *)parent
+{
+	VSPMapPreview *p = [[VSPMapPreview alloc] init];
+	NSString *m = [map stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet alphanumericCharacterSet]];
+	WKWebView *web = [[WKWebView alloc] initWithFrame: NSMakeRect( 0, 0, 720, 520 )
+		configuration: [[WKWebViewConfiguration alloc] init]];
+	NSButton *done = [NSButton buttonWithTitle: @"Done" target: p action: @selector(done:)];
+	NSButton *browser = [NSButton buttonWithTitle: @"Open in Browser" target: p action: @selector(openInBrowser:)];
+	NSStackView *buttons, *root;
+
+	p->url = [NSURL URLWithString: [NSString stringWithFormat: @"https://efservers.com/pk3.php?preview&popup=1&map=%@", m]];
+	p->sheet = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 720, 580 ) styleMask: NSWindowStyleMaskTitled
+		backing: NSBackingStoreBuffered defer: NO];
+	[done setKeyEquivalent: @"\r"];
+	[web setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[[web widthAnchor] constraintEqualToConstant: 720].active = YES;
+	[[web heightAnchor] constraintEqualToConstant: 520].active = YES;
+	buttons = HStack( @[ VSP_Label( [NSString stringWithFormat: @"%@ on efservers.com", map], Small(),
+		[NSColor secondaryLabelColor] ), [NSView new], browser, done ], 10 );
+	[buttons setAlignment: NSLayoutAttributeCenterY];
+	[[buttons views][1] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	[buttons setEdgeInsets: NSEdgeInsetsMake( 0, 16, 0, 16 )];
+	root = VStack( @[ web, buttons ], 12 );
+	[root setEdgeInsets: NSEdgeInsetsMake( 0, 0, 14, 0 )];
+	[[buttons widthAnchor] constraintEqualToAnchor: [root widthAnchor]].active = YES;
+	[p->sheet setContentView: root];
+	[p->sheet setContentSize: [root fittingSize]];
+	[web setNavigationDelegate: p];
+	[web loadRequest: [NSURLRequest requestWithURL: p->url]];
+	LLog( @"Browser: map preview %@", p->url );
+	// the block keeps the preview alive until the sheet ends
+	[parent beginSheet: p->sheet completionHandler: ^( NSModalResponse r ) {
+		[p->sheet orderOut: nil];
+		[web stopLoading];
+	}];
+}
+
+- (void)done: (id)sender	{ [[sheet sheetParent] endSheet: sheet]; }
+
+- (void)openInBrowser: (id)sender
+{
+	[[NSWorkspace sharedWorkspace] openURL: url];
+	[self done: sender];
+}
+@end
+
 @interface VSPBrowserController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate>
 @property (nonatomic, readonly) NSWindow *panel;
 - (instancetype)initWithDataFolder: (NSString *)dataFolder;
@@ -4532,6 +4741,8 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 - (void)selectSource: (NSInteger)source;
 - (BOOL)busy;
 - (void)joinRow: (NSInteger)row;
+- (void)selectRowForTest: (NSInteger)row;
+- (void)previewForTest;
 @end
 
 // the browser's tabs: Local, Combined (every master's list, merged), then Internet 1, 2…
@@ -4549,13 +4760,23 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	NSArray<VSPServerInfo *> *shown;
 	BOOL reloadPending;
 	NSSet<NSString *> *haveMaps;		// lowercased, from the map catalog
+	NSSet<NSString *> *builtinMaps;		// the game's own (pak0-pak3): efservers has no page for them
+	NSMutableSet<NSString *> *favorites;	// addresses
+	NSMutableDictionary<NSString *, VSPServerStatus *> *statuses;	// who's playing, by address
+	NSString *asking;					// the address a getstatus is out for
 
 	NSSegmentedControl *tabs;
 	NSTextField *statusText;
 	NSProgressIndicator *spinner;
 	NSTableView *table;
 	NSTextField *addressField;
-	NSButton *joinButton, *connectButton, *refreshButton;
+	NSButton *joinButton, *connectButton, *refreshButton, *siteButton, *onlyFavorites, *onlyPeople;
+	NSTableView *playerTable;
+	NSArray<VSPPlayer *> *players;		// the selected server's
+	BOOL tagBots;
+	NSTextField *playersTitle, *playersNote;
+	NSButton *playersRefresh, *previewButton;
+	NSStackView *linkRow;				// "Join links open in <other app>"
 }
 
 - (instancetype)initWithDataFolder: (NSString *)dataFolder
@@ -4564,9 +4785,19 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 
 	if( !( self = [super init] ) )
 		return nil;
+	NSMutableSet *builtin = [ExpansionMaps() mutableCopy];
+
 	for( VSPMapInfo *m in VSP_MapCatalog( dataFolder ) )
+	{
 		[have addObject: [m.name lowercaseString]];
+		if( m.retail || m.expansion )
+			[builtin addObject: [m.name lowercaseString]];
+	}
 	haveMaps = have;
+	builtinMaps = builtin;
+	favorites = [NSMutableSet setWithArray: [[NSUserDefaults standardUserDefaults] stringArrayForKey: KEY_FAVORITES] ?: @[]];
+	statuses = [NSMutableDictionary dictionary];
+	players = @[];
 	masters = VSP_MasterServers();
 	results = [NSMutableDictionary dictionary];
 	status = [NSMutableDictionary dictionary];
@@ -4631,7 +4862,11 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	[refreshButton setAccessibilityLabel: @"Refresh"];
 	[refreshButton setKeyEquivalent: @"r"];
 	[refreshButton setKeyEquivalentModifierMask: NSEventModifierFlagCommand];
-	top = HStack( @[ tabs, [NSView new], refreshButton ], 8 );
+	siteButton = [NSButton buttonWithImage: Symbol( @"globe", 12 ) target: self action: @selector(openSite:)];
+	[siteButton setBezelStyle: NSBezelStyleRounded];
+	[siteButton setToolTip: @"Open efservers.com: who's playing where, server and map history"];
+	[siteButton setAccessibilityLabel: @"Open efservers.com"];
+	top = HStack( @[ tabs, [NSView new], siteButton, refreshButton ], 8 );
 	[top setAlignment: NSLayoutAttributeCenterY];
 	[[top views][1] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
 
@@ -4644,6 +4879,18 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	[statusText setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow
 		forOrientation: NSLayoutConstraintOrientationHorizontal];
 
+	onlyFavorites = [NSButton checkboxWithTitle: @"Only favorites" target: self action: @selector(filterChanged:)];
+	onlyPeople = [NSButton checkboxWithTitle: @"Only servers with people" target: self action: @selector(filterChanged:)];
+	for( NSButton *b in @[ onlyFavorites, onlyPeople ] )
+	{
+		[b setControlSize: NSControlSizeSmall];
+		[b setFont: Small()];
+	}
+	[onlyFavorites setToolTip: @"Star servers in the list to make them favorites"];
+	[onlyPeople setToolTip: @"Hide servers with only bots, or no one. Servers that don't say (?) stay when they have players"];
+	[onlyFavorites setState: [[NSUserDefaults standardUserDefaults] boolForKey: KEY_ONLYFAVORITES]];
+	[onlyPeople setState: [[NSUserDefaults standardUserDefaults] boolForKey: KEY_ONLYPEOPLE]];
+
 	table = [[NSTableView alloc] init];
 	[table setStyle: NSTableViewStyleFullWidth];
 	[table setBackgroundColor: [NSColor clearColor]];
@@ -4651,7 +4898,10 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	[table setRowHeight: 22];
 	[table setIntercellSpacing: NSMakeSize( 10, 0 )];
 	[table setColumnAutoresizingStyle: NSTableViewFirstColumnOnlyAutoresizingStyle];
-	[self column: @"name" title: @"Server" width: 240 sortKey: @"name" ascending: YES];
+	[self column: @"fav" title: @"" width: 16 sortKey: @"favorite" ascending: NO];
+	[[[table tableColumnWithIdentifier: @"fav"] headerCell] setImage: Symbol( @"star", 10 )];
+	[[table tableColumnWithIdentifier: @"fav"] setHeaderToolTip: @"Favorites"];
+	[self column: @"name" title: @"Server" width: 212 sortKey: @"name" ascending: YES];
 	[self column: @"lock" title: @"" width: 14 sortKey: @"needPass" ascending: NO];
 	[[[table tableColumnWithIdentifier: @"lock"] headerCell] setImage: Symbol( @"lock.fill", 10 )];
 	[[table tableColumnWithIdentifier: @"lock"] setHeaderToolTip: @"Needs a password"];
@@ -4662,9 +4912,15 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	[[table tableColumnWithIdentifier: @"humans"] setHeaderToolTip: @"People playing, without bots (? if the server doesn't say)"];
 	[self column: @"type" title: @"Game" width: 120 sortKey: @"gametype" ascending: YES];
 	[self column: @"ping" title: @"Ping" width: 40 sortKey: @"ping" ascending: YES];
-	[[table tableColumnWithIdentifier: @"name"] setResizingMask: NSTableColumnAutoresizingMask | NSTableColumnUserResizingMask];
-	// people first, then everyone (bots included), then the nearest
-	[table setSortDescriptors: @[ [NSSortDescriptor sortDescriptorWithKey: @"knownHumans" ascending: NO],
+	// only the server name takes up the table's width (the stars come first, so
+	// "first column only" won't do)
+	for( NSTableColumn *c in [table tableColumns] )
+		[c setResizingMask: [[c identifier] isEqualToString: @"name"] ? NSTableColumnAutoresizingMask | NSTableColumnUserResizingMask :
+			[[c identifier] isEqualToString: @"fav"] ? NSTableColumnNoResizing : NSTableColumnUserResizingMask];
+	[table setColumnAutoresizingStyle: NSTableViewUniformColumnAutoresizingStyle];
+	// favorites, then people first, then everyone (bots included), then the nearest
+	[table setSortDescriptors: @[ [NSSortDescriptor sortDescriptorWithKey: @"favorite" ascending: NO],
+		[NSSortDescriptor sortDescriptorWithKey: @"knownHumans" ascending: NO],
 		[NSSortDescriptor sortDescriptorWithKey: @"players" ascending: NO],
 		[NSSortDescriptor sortDescriptorWithKey: @"ping" ascending: YES] ]];
 	[table setDataSource: self];
@@ -4672,6 +4928,49 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	[table setTarget: self];
 	[table setDoubleAction: @selector(joinClicked:)];
 	box = Boxed( Scrolled( table ) );
+
+	// who's playing on the selected server: asked when it's selected (getstatus)
+	playerTable = [[NSTableView alloc] init];
+	[playerTable setStyle: NSTableViewStyleFullWidth];
+	[playerTable setBackgroundColor: [NSColor clearColor]];
+	[playerTable setRowHeight: 18];
+	[playerTable setIntercellSpacing: NSMakeSize( 10, 0 )];
+	[playerTable setColumnAutoresizingStyle: NSTableViewFirstColumnOnlyAutoresizingStyle];
+	[playerTable setSelectionHighlightStyle: NSTableViewSelectionHighlightStyleNone];
+	for( NSArray *c in @[ @[ @"pname", @"Name", @300 ], @[ @"score", @"Score", @50 ], @[ @"pping", @"Ping", @44 ], @[ @"bot", @"", @34 ] ] )
+	{
+		NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier: c[0]];
+		[col setTitle: c[1]];
+		[col setWidth: [c[2] doubleValue]];
+		[playerTable addTableColumn: col];
+	}
+	[[playerTable tableColumnWithIdentifier: @"pname"] setResizingMask: NSTableColumnAutoresizingMask];
+	[playerTable setDataSource: self];
+	[playerTable setDelegate: self];
+	playersTitle = VSP_Label( @"Players", [NSFont systemFontOfSize: 12 weight: NSFontWeightSemibold], nil );
+	[playersTitle setLineBreakMode: NSLineBreakByTruncatingTail];
+	[playersTitle setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow
+		forOrientation: NSLayoutConstraintOrientationHorizontal];
+	playersNote = VSP_Label( @"", Small(), [NSColor secondaryLabelColor] );
+	playersRefresh = [NSButton buttonWithImage: Symbol( @"arrow.clockwise", 10 ) target: self action: @selector(refreshPlayers:)];
+	[playersRefresh setBordered: NO];
+	[playersRefresh setToolTip: @"Ask the server again"];
+	[playersRefresh setAccessibilityLabel: @"Ask again who's playing"];
+	previewButton = [NSButton buttonWithTitle: @"Preview Map" target: self action: @selector(previewMap:)];
+	[previewButton setControlSize: NSControlSizeSmall];
+	[previewButton setFont: Small()];
+	NSStackView *playersHead = HStack( @[ playersTitle, playersNote, playersRefresh, [NSView new], previewButton ], 6 );
+	[playersHead setAlignment: NSLayoutAttributeCenterY];
+	[[playersHead views][3] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	NSView *playersBox = Boxed( Scrolled( playerTable ) );
+
+	// another app (cMod, say) opens stvef:// links: offer to take them
+	linkRow = HStack( @[ VSP_Label( @"", Small(), [NSColor secondaryLabelColor] ),
+		[NSButton buttonWithTitle: @"Open Join Links with Elite Force" target: self action: @selector(claimLinks:)] ], 8 );
+	[linkRow setAlignment: NSLayoutAttributeCenterY];
+	[(NSButton *)[linkRow views][1] setControlSize: NSControlSizeSmall];
+	[(NSButton *)[linkRow views][1] setFont: Small()];
+	[self showLinkRow];
 
 	addressField = [NSTextField textFieldWithString: @""];
 	[addressField setPlaceholderString: @"Or an address, like 203.0.113.5:27960"];
@@ -4690,13 +4989,19 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	[footer setAlignment: NSLayoutAttributeCenterY];
 	[[footer views][2] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
 
-	root = VStack( @[ top, HStack( @[ spinner, statusText ], 6 ), box, footer ], 8 );
-	[(NSStackView *)[root views][1] setAlignment: NSLayoutAttributeCenterY];
-	[root setCustomSpacing: 18 afterView: box];
+	NSStackView *statusRow = HStack( @[ spinner, statusText, [NSView new], onlyFavorites, onlyPeople ], 6 );
+	[statusRow setAlignment: NSLayoutAttributeCenterY];
+	[statusRow setCustomSpacing: 14 afterView: onlyFavorites];
+	[[statusRow views][2] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	root = VStack( @[ top, statusRow, box, playersHead, playersBox, linkRow, footer ], 8 );
+	[root setCustomSpacing: 12 afterView: box];
+	[root setCustomSpacing: 4 afterView: playersHead];
+	[root setCustomSpacing: 18 afterView: playersBox];
+	[root setCustomSpacing: 18 afterView: linkRow];
 	[root setEdgeInsets: NSEdgeInsetsMake( 18, 20, 20, 20 )];
 	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
 	[content addSubview: root];
-	for( NSView *v in @[ top, box, footer ] )
+	for( NSView *v in @[ top, statusRow, box, playersHead, playersBox, footer ] )
 		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -40].active = YES;
 	[NSLayoutConstraint activateConstraints: @[
 		[[root leadingAnchor] constraintEqualToAnchor: [content leadingAnchor]],
@@ -4704,8 +5009,10 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 		[[root topAnchor] constraintEqualToAnchor: [content topAnchor]],
 		[[root bottomAnchor] constraintEqualToAnchor: [content bottomAnchor]],
 		[[root widthAnchor] constraintEqualToConstant: 780],
-		[[[(NSStackView *)box views][1] heightAnchor] constraintEqualToConstant: 360],
+		[[[(NSStackView *)box views][1] heightAnchor] constraintEqualToConstant: 280],
+		[[[(NSStackView *)playersBox views][1] heightAnchor] constraintEqualToConstant: 112],
 	]];
+	[self showPlayers];
 	[_panel setContentSize: [root fittingSize]];
 	[_panel setInitialFirstResponder: table];
 }
@@ -4725,7 +5032,16 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 
 - (void)refresh: (id)sender	{ [self fetch: source]; }
 
-- (BOOL)busy	{ return [fetches count] > 0; }
+- (BOOL)busy	{ return [fetches count] > 0 || asking; }
+
+- (void)selectRowForTest: (NSInteger)row
+{
+	if( row < (NSInteger)[shown count] )
+		[table selectRowIndexes: [NSIndexSet indexSetWithIndex: row] byExtendingSelection: NO];
+	LLog( @"[test] selected %@", row < (NSInteger)[shown count] ? shown[row].name : @"nothing (no such row)" );
+}
+
+- (void)previewForTest	{ [self previewMap: nil]; }
 
 - (void)fetch: (NSInteger)s
 {
@@ -4851,7 +5167,17 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 		shown[[table selectedRow]] : nil;
 	NSUInteger again;
 
-	shown = [results[@( source )] sortedArrayUsingDescriptors: [table sortDescriptors]];
+	BOOL favOnly = [onlyFavorites state] == NSControlStateValueOn, peopleOnly = [onlyPeople state] == NSControlStateValueOn;
+	NSMutableArray *list = [NSMutableArray array];
+
+	for( VSPServerInfo *i in results[@( source )] )
+	{
+		i.favorite = [favorites containsObject: i.address];
+		if( ( favOnly && !i.favorite ) || ( peopleOnly && !( i.humans > 0 || ( i.humans < 0 && i.players > 0 ) ) ) )
+			continue;
+		[list addObject: i];
+	}
+	shown = [list sortedArrayUsingDescriptors: [table sortDescriptors]];
 	[table reloadData];
 	if( selected && ( again = [shown indexOfObjectPassingTest: ^BOOL( VSPServerInfo *i, NSUInteger idx, BOOL *stop ) {
 			return [i.address isEqualToString: selected.address]; }] ) != NSNotFound )
@@ -4860,21 +5186,229 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	fetches[@( source )] ? [spinner startAnimation: nil] : [spinner stopAnimation: nil];
 	[spinner setHidden: !fetches[@( source )]];
 	[joinButton setEnabled: [table selectedRow] >= 0];
+	[self showPlayers];
 }
 
-- (void)tableView: (NSTableView *)t sortDescriptorsDidChange: (NSArray *)old	{ [self show]; }
-- (void)tableViewSelectionDidChange: (NSNotification *)n	{ [joinButton setEnabled: [table selectedRow] >= 0]; }
+- (void)tableView: (NSTableView *)t sortDescriptorsDidChange: (NSArray *)old
+{
+	if( t == table )
+		[self show];
+}
+
+- (void)tableViewSelectionDidChange: (NSNotification *)n
+{
+	if( [n object] != table )
+		return;
+	[joinButton setEnabled: [table selectedRow] >= 0];
+	[self showPlayers];
+}
+
+- (VSPServerInfo *)selectedServer
+{
+	return [table selectedRow] >= 0 && [table selectedRow] < (NSInteger)[shown count] ? shown[[table selectedRow]] : nil;
+}
+
+// --- favorites, filters, efservers.com ---
+
+- (void)toggleFavorite: (NSButton *)sender
+{
+	NSInteger row = [table rowForView: sender];
+	VSPServerInfo *s = row >= 0 && row < (NSInteger)[shown count] ? shown[row] : nil;
+
+	if( !s )
+		return;
+	if( [favorites containsObject: s.address] )
+		[favorites removeObject: s.address];
+	else
+		[favorites addObject: s.address];
+	[[NSUserDefaults standardUserDefaults] setObject: [[favorites allObjects] sortedArrayUsingSelector: @selector(compare:)]
+		forKey: KEY_FAVORITES];
+	[self show];
+}
+
+- (void)filterChanged: (id)sender
+{
+	[[NSUserDefaults standardUserDefaults] setBool: [onlyFavorites state] == NSControlStateValueOn forKey: KEY_ONLYFAVORITES];
+	[[NSUserDefaults standardUserDefaults] setBool: [onlyPeople state] == NSControlStateValueOn forKey: KEY_ONLYPEOPLE];
+	[self show];
+}
+
+- (void)openSite: (id)sender	{ [[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString: @"https://efservers.com/"]]; }
+
+// --- who's playing ---
+
+- (void)refreshPlayers: (id)sender
+{
+	VSPServerInfo *s = [self selectedServer];
+
+	if( s )
+		[statuses removeObjectForKey: s.address];
+	[self showPlayers];
+}
+
+// The selected server's players: from its last answer, or asked now. Only the
+// selected server is asked (getstatus), so nothing extra goes out until a row
+// is picked.
+- (void)showPlayers
+{
+	VSPServerInfo *s = [self selectedServer];
+	VSPServerStatus *st = s ? statuses[s.address] : nil;
+	NSInteger pinged = 0, humans;
+
+	[previewButton setHidden: !s || ![s.map length] || [builtinMaps containsObject: s.map]];
+	[previewButton setToolTip: s ? [NSString stringWithFormat: @"See %@ on efservers.com: screenshots, its files and a 3D "
+		@"preview", s.map] : nil];
+	[playersRefresh setHidden: !st];
+	players = @[];
+	if( !s )
+	{
+		[playersTitle setStringValue: @"Players"];
+		[playersNote setStringValue: @"Select a server to see who's playing."];
+		[playerTable reloadData];
+		return;
+	}
+	[playersTitle setStringValue: [NSString stringWithFormat: @"Players on %@", s.name]];
+	if( !st )
+	{
+		NSString *address = s.address;
+
+		[playerTable reloadData];
+		[playersNote setStringValue: @"Asking the server…"];
+		if( [asking isEqualToString: address] )
+			return;
+		asking = address;
+		QueryServerStatus( address, ^( VSPServerStatus *answer ) {
+			BOOL current = [[self selectedServer].address isEqualToString: address];
+
+			if( [self->asking isEqualToString: address] )
+				self->asking = nil;
+			if( answer )
+				self->statuses[address] = answer;
+			if( current && answer )
+				[self showPlayers];
+			else if( current )
+			{
+				[self->playersNote setStringValue: @"The server didn't answer."];
+				[self->playersRefresh setHidden: NO];
+			}
+		} );
+		return;
+	}
+	players = [st.players sortedArrayUsingDescriptors: @[ [NSSortDescriptor sortDescriptorWithKey: @"score" ascending: NO] ]];
+	for( VSPPlayer *p in players )
+		pinged += p.ping > 0;
+	// ping 0 is a bot, as long as that agrees with the server's count of people
+	humans = st.humans >= 0 ? st.humans : s.humans;
+	tagBots = humans < 0 || pinged == humans;
+	[playerTable reloadData];
+	[playersNote setStringValue: ![players count] ? @"No one is playing." :
+		[NSString stringWithFormat: @"as of %@", [NSDateFormatter localizedStringFromDate: st.when
+			dateStyle: NSDateFormatterNoStyle timeStyle: NSDateFormatterShortStyle]]];
+}
+
+- (void)previewMap: (id)sender
+{
+	VSPServerInfo *s = [self selectedServer];
+
+	if( s && [s.map length] )
+		[VSPMapPreview showMap: s.map onWindow: _panel];
+}
+
+// --- stvef:// links ---
+
+- (NSURL *)linkHandler
+{
+	if( getenv( "VOYAGERSP_TEST_LINK_HANDLER" ) )		// as if that app opened them
+		return [NSURL fileURLWithPath: @( getenv( "VOYAGERSP_TEST_LINK_HANDLER" ) )];
+	return [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL: [NSURL URLWithString: @"stvef://connect/127.0.0.1:27960"]];
+}
+
+// shown only when another app (cMod, say) opens Join links
+- (void)showLinkRow
+{
+	NSURL *h = [self linkHandler];
+	BOOL mine = !h || [[[h URLByResolvingSymlinksInPath] path] isEqualToString:
+		[[[[NSBundle mainBundle] bundleURL] URLByResolvingSymlinksInPath] path]];
+
+	LLog( @"Browser: stvef:// links open in %@", h ? [h path] : @"no app" );
+	[linkRow setHidden: mine];
+	if( !mine )
+		[(NSTextField *)[linkRow views][0] setStringValue: [NSString stringWithFormat:
+			@"Join links on websites (stvef://) open in %@.", [[[h path] lastPathComponent] stringByDeletingPathExtension]]];
+}
+
+- (void)claimLinks: (id)sender
+{
+	[[NSWorkspace sharedWorkspace] setDefaultApplicationAtURL: [[NSBundle mainBundle] bundleURL] toOpenURLsWithScheme: @"stvef"
+		completionHandler: ^( NSError *error ) {
+		dispatch_async( dispatch_get_main_queue(), ^{
+			LLog( @"Browser: open stvef:// links with this app: %@", error ? [error localizedDescription] : @"done" );
+			[self showLinkRow];
+		} );
+	}];
+}
+
 
 // --- the table ---
 
-- (NSInteger)numberOfRowsInTableView: (NSTableView *)t	{ return (NSInteger)[shown count]; }
+- (NSInteger)numberOfRowsInTableView: (NSTableView *)t	{ return (NSInteger)[t == table ? shown : players count]; }
+
+- (NSView *)playerView: (NSTableView *)t column: (NSString *)ident row: (NSInteger)row
+{
+	VSPPlayer *p = players[row];
+	NSTextField *l = [t makeViewWithIdentifier: ident owner: self];
+
+	if( !l )
+	{
+		l = VSP_Label( @"", Small(), nil );
+		[l setIdentifier: ident];
+		[l setLineBreakMode: NSLineBreakByTruncatingTail];
+		if( ![ident isEqualToString: @"pname"] )
+			[l setAlignment: NSTextAlignmentRight];
+	}
+	[l setTextColor: [NSColor labelColor]];
+	if( [ident isEqualToString: @"pname"] )
+		[l setAttributedStringValue: ColoredName( p.name, Small() )];
+	else if( [ident isEqualToString: @"score"] )
+		[l setStringValue: [NSString stringWithFormat: @"%ld", (long)p.score]];
+	else if( [ident isEqualToString: @"pping"] )
+	{
+		[l setStringValue: [NSString stringWithFormat: @"%ld", (long)p.ping]];
+		if( !p.ping )
+			[l setTextColor: [NSColor tertiaryLabelColor]];
+	}
+	else
+	{
+		[l setStringValue: tagBots && !p.ping ? @"bot" : @""];
+		[l setTextColor: [NSColor secondaryLabelColor]];
+	}
+	return l;
+}
+
 
 - (NSView *)tableView: (NSTableView *)t viewForTableColumn: (NSTableColumn *)col row: (NSInteger)row
 {
 	NSString *ident = [col identifier];
-	VSPServerInfo *s = shown[row];
+	VSPServerInfo *s;
 	NSTextField *l;
 
+	if( t == playerTable )
+		return [self playerView: t column: ident row: row];
+	s = shown[row];
+	if( [ident isEqualToString: @"fav"] )
+	{
+		NSButton *b = [t makeViewWithIdentifier: ident owner: self];
+		if( !b )
+		{
+			b = [NSButton buttonWithImage: Symbol( @"star", 11 ) target: self action: @selector(toggleFavorite:)];
+			[b setIdentifier: ident];
+			[b setBordered: NO];
+		}
+		[b setImage: Symbol( s.favorite ? @"star.fill" : @"star", 11 )];
+		[b setContentTintColor: s.favorite ? [NSColor systemYellowColor] : [NSColor tertiaryLabelColor]];
+		[b setToolTip: s.favorite ? @"Remove from favorites" : @"Add to favorites"];
+		return b;
+	}
 	if( [ident isEqualToString: @"lock"] )
 	{
 		NSImageView *v = [t makeViewWithIdentifier: ident owner: self];
@@ -5094,8 +5628,24 @@ BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, NSS
 	while( [c busy] )
 		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
 	[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.2]];
+	if( getenv( "VOYAGERSP_TEST_BROWSER_SELECT" ) )
+	{
+		[c selectRowForTest: atoi( getenv( "VOYAGERSP_TEST_BROWSER_SELECT" ) )];
+		while( [c busy] )		// its players
+			[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
+		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.2]];
+	}
 	if( path )
 		ok = VSP_SnapshotWindow( [c panel], path );
+	if( getenv( "VOYAGERSP_TEST_BROWSER_PREVIEW" ) )
+	{
+		NSDate *until = [NSDate dateWithTimeIntervalSinceNow: 30];
+		[c previewForTest];
+		while( [[c panel] attachedSheet] == nil && [until timeIntervalSinceNow] > 0 )
+			[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
+		while( [[c panel] attachedSheet] && [until timeIntervalSinceNow] > 0 )
+			[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
+	}
 	if( join >= 0 )
 		[c joinRow: join];
 	return ok;

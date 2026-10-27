@@ -51,7 +51,11 @@ simplifying hosting servers compared to the original game.
   **Browse…** in the launcher lists every server on your network, on all the masters together
   (**Combined**, the default) or on each master, with players, map and ping, and joins one
   directly. Servers with people on them come first: **Players** counts everyone, bots
-  included, and **Humans** only the people (**?** when a server doesn't say). **Join links**
+  included, and **Humans** only the people (**?** when a server doesn't say). Star servers to
+  keep them at the top, and filter to **Only favorites** or **Only servers with people**.
+  Selecting a server shows who's playing (names, scores, pings, which are bots), and for custom
+  maps **Preview Map** opens the map's page on efservers.com (files and a 3D preview); the globe
+  button opens efservers.com itself. **Join links**
   (`stvef://connect/<address>`, as on [efservers.com](https://efservers.com)) open the app and
   join that server, or switch to it from a Holomatch game. Maps you don't have are shown in amber
   (they download when you join, if the server allows it) and Expansion Pack maps you don't

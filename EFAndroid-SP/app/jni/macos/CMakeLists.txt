@@ -163,7 +163,7 @@ target_compile_options(efsp PRIVATE
   -Wno-error=incompatible-function-pointer-types -Wno-error=int-conversion)
 
 target_link_libraries(efsp PRIVATE sp_game_bridge PkgConfig::SDL2
-  "-framework Cocoa" "-framework IOKit" dl m
+  "-framework Cocoa" "-framework IOKit" "-framework WebKit" dl m
   lzma)		# the system's liblzma, for GOG installers (sys_osx_gog.c)
 if(EF_BINK)
   target_link_libraries(efsp PRIVATE PkgConfig::FFMPEG)
