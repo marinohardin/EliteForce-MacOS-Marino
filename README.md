@@ -40,6 +40,7 @@ simplifying hosting servers compared to the original game.
   **Config…**; and where the game files are, whether the Expansion Pack was found, and
   **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last
   used, including changes made in the game's own Video menu.
+  
   <img width="632" height="835" alt="Launcher" src="https://github.com/user-attachments/assets/4fdfcc38-e8df-4c28-8d81-f0ef899a40b9" />
 - **Holomatch (multiplayer).** Join games on your local network (LAN party, see
   [Holomatch and LAN parties](#holomatch-and-lan-parties)), on the internet through the Join
