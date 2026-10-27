@@ -41,6 +41,8 @@ Test hooks (environment variables):
                                 servers answered, and quit (or go on with ..._JOIN)
   VOYAGERSP_TEST_BROWSER_TAB=local|<n>  its source (default local)
   VOYAGERSP_TEST_BROWSER_JOIN=<row>     join that row: play Holomatch, connecting
+  VOYAGERSP_TEST_LAUNCHER_BROWSE_CANCEL=1  open Browse…, press Cancel, log
+                                whether the launcher stayed, and quit
   VOYAGERSP_TEST_SERVER_RUNNING=show|another|cancel  answer Start Server's
                                 "already running" question
   VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>    show it, choose About from the app
@@ -296,6 +298,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 - (void)play: (id)sender;
 - (void)addFiles: (id)sender;
 - (void)joinAddress: (NSString *)address password: (NSString *)password;
+- (void)browseServers: (id)sender;
 @end
 
 @implementation VSPModeCard
@@ -949,6 +952,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 {
 	[self selectMode: MODE_HOLOMATCH];
 	VSP_ShowServerBrowser( window, ^( NSString *address, NSString *password ) {
+		if( !address )
+			return;
 		[self joinAddress: address password: password];
 		[self play: nil];
 	} );
@@ -1515,6 +1520,29 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 				{
 					NSTimer *t = [NSTimer timerWithTimeInterval: 1 repeats: NO block: ^( NSTimer *timer ) {
 						TestAboutPanel( getenv( "VOYAGERSP_TEST_LAUNCHER_ABOUT" ) );
+					}];
+					[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
+				}
+				if( getenv( "VOYAGERSP_TEST_LAUNCHER_BROWSE_CANCEL" ) )
+				{
+					// open Browse…, then press its Cancel: the launcher must stay
+					NSTimer *t = [NSTimer timerWithTimeInterval: 1 repeats: NO block: ^( NSTimer *timer ) {
+						[l browseServers: nil];
+						NSTimer *t2 = [NSTimer timerWithTimeInterval: 3 repeats: NO block: ^( NSTimer *timer2 ) {
+							NSWindow *sheet = [[l window] attachedSheet];
+							LLog( @"[test] Browse… sheet %s, pressing Cancel", sheet ? "open" : "missing" );
+							for( NSView *v in [[[sheet contentView] subviews] firstObject].subviews )
+								for( NSView *b in [v isKindOfClass: [NSStackView class]] ? [(NSStackView *)v views] : @[] )
+									if( [b isKindOfClass: [NSButton class]] && [[(NSButton *)b title] isEqualToString: @"Cancel"] )
+										[(NSButton *)b performClick: nil];
+							NSTimer *t3 = [NSTimer timerWithTimeInterval: 2 repeats: NO block: ^( NSTimer *timer3 ) {
+								LLog( @"[test] after Cancel: launcher %s, sheet %s", [[l window] isVisible] ? "visible" : "gone",
+									[[l window] attachedSheet] ? "still open" : "closed" );
+								[NSApp stopModalWithCode: NSModalResponseCancel];
+							}];
+							[[NSRunLoop currentRunLoop] addTimer: t3 forMode: NSModalPanelRunLoopMode];
+						}];
+						[[NSRunLoop currentRunLoop] addTimer: t2 forMode: NSModalPanelRunLoopMode];
 					}];
 					[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
 				}

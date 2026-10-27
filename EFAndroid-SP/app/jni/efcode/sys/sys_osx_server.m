@@ -4861,7 +4861,7 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 		f.cancelled = YES;
 	[fetches removeAllObjects];
 	LLog( @"Browser: %@", address ? [@"join " stringByAppendingString: address] : @"cancelled" );
-	if( _done )
+	if( _done && address )		// only for a server picked, never on Cancel
 		_done( address, password );
 	_done = nil;
 	if( [_panel sheetParent] )
