@@ -46,8 +46,9 @@ simplifying hosting servers compared to the original game.
 - **Holomatch (multiplayer).** Join games on your local network (LAN party, see
   [Holomatch and LAN parties](#holomatch-and-lan-parties)), on the internet through the Join
   menu's Internet sources (live community master servers), or by IP address, with bots.
-  **Browse…** in the launcher lists every server on your network and each master at once,
-  with players, map and ping, and joins one directly. Maps you don't have are shown in amber
+  **Browse…** in the launcher lists every server on your network, on all the masters together
+  (**Combined**, the default) or on each master, with players, map and ping, and joins one
+  directly. Maps you don't have are shown in amber
   (they download when you join, if the server allows it) and Expansion Pack maps you don't
   have in purple: servers can't send those, so Join warns first.
   It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
@@ -191,9 +192,9 @@ recommended defaults put the live ones first:
 
 | Join menu | Master server |
 |---|---|
-| Internet 1 | `master.stvef.org` |
+| Internet 1 | `master.stef1.daggolin.de` (the most complete list) |
 | Internet 2 | `efmaster.tjps.eu` |
-| Internet 3 | `master.stef1.daggolin.de` |
+| Internet 3 | `master.stvef.org` (copies daggolin's list) |
 | Internet 4 | `master.stef1.ravensoft.com` (Raven's, offline; kept in case it returns) |
 | Internet 5 | `ipv6.tjps.eu` (IPv6 only) |
 
@@ -201,7 +202,8 @@ The sheet shows which ones answer and how many games each lists. Add a master (u
 the community starts new ones, drag them into the order you want, or go back with **Restore
 Recommended Defaults** or **Restore Original Defaults** (the game's own: Raven's, then tjps). A
 server you host for the internet announces itself to every master in the list; only the first
-five appear in the Join menu, while **Browse…** has a tab for each.
+five appear in the Join menu, while **Browse…** has a tab for each, plus **Combined**, which
+merges all their lists.
 
 ### Uninstall
 

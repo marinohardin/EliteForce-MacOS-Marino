@@ -290,9 +290,11 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   ELITEFORCE branch of `CL_GlobalServers_f` maps to `sv_master1`–`5`. The retail ui.qvm offers
   only five sources. `MAX_MASTER_SERVERS` is now 16: slots 6+ are announce-only (and reachable
   with `globalservers 5 24` …), not archived, so configs keep their old shape.
-- **Defaults** (`EF_DEFAULT_MASTERS`, qcommon.h; `VSP_DefaultMasters` mirrors it): stvef.org,
-  tjps.eu, daggolin.de, Raven's, ipv6.tjps.eu, after the community list on the
-  mobile-infanterie.de wiki. Before, slot 1 was Raven's (dead and unarchived) and slot 2 tjps.
+- **Defaults** (`EF_DEFAULT_MASTERS`, qcommon.h; `VSP_DefaultMasters` mirrors it): daggolin.de,
+  tjps.eu, stvef.org, Raven's, ipv6.tjps.eu, from the community list on the
+  mobile-infanterie.de wiki. 1.2.1 put daggolin first: stvef.org takes no heartbeats and its list
+  is a lagging copy of daggolin's (a new server shows on daggolin and tjps, not stvef). Configs
+  keep whatever order they have; the launcher passes its list (the defaults unless edited). Before, slot 1 was Raven's (dead and unarchived) and slot 2 tjps.
   All five are archived now.
 - **Migration** (`com_masterDefaults` 1, `Com_ExecuteCfg`, Holomatch only): where slot 1 is
   blank or Raven's, slot 2 blank or tjps and 3–5 blank, the new five are set once. Any other
@@ -320,6 +322,8 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   master-list entries with that address to `127.0.0.1`, keeping the port. A server on another
   Mac behind the same router would be rewritten wrongly; the checkbox turns it off.
 - **Browse…** (`VSPBrowserController`, `sys_osx_server.m`): Local broadcasts `getinfo` on ports
-  27960–27963; Internet N asks master N (`QueryMaster`), then every listed server at once on one
+  27960–27963; Internet N asks master N (`QueryMaster`), Combined (the default tab) asks every
+  master at once and merges the lists by `ip:port` (a row's tooltip names the masters listing it);
+  then every listed server at once on one
   UDP socket (ping is the round trip), applying the loopback rewrite itself. Join plays
   Holomatch with `+connect` (and `+set password` when the server needs one).

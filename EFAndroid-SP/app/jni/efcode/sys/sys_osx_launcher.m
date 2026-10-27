@@ -39,7 +39,7 @@ Test hooks (environment variables):
                                               see sys_osx_server.m
   VOYAGERSP_TEST_BROWSER_SNAPSHOT=<file.png>  render the Browse… sheet once its
                                 servers answered, and quit (or go on with ..._JOIN)
-  VOYAGERSP_TEST_BROWSER_TAB=local|<n>  its source (default local)
+  VOYAGERSP_TEST_BROWSER_TAB=local|combined|<n>  its source (default local; <n>: Internet n)
   VOYAGERSP_TEST_BROWSER_JOIN=<row>     join that row: play Holomatch, connecting
   VOYAGERSP_TEST_BROWSER_EXPANSION=anyway|cancel  answer the Expansion Pack
                                 map warning (logged)

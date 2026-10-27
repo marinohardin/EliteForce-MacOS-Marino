@@ -16,8 +16,8 @@ It is compiled with ARC (see the macOS CMakeLists.txt).
   - The master servers and the launcher's Servers… sheet: the list in the
     app's defaults (key MasterServers), passed to the game as
     baseEF/vsp_masters.cfg (+exec) and to a server in vsp_server.cfg.
-  - The launcher's Browse… sheet: a server browser over Local and each
-    master, all servers asked at once (see its section).
+  - The launcher's Browse… sheet: a server browser over Local, Combined (every
+    master's list, merged) and each master, all servers asked at once (see its section).
   - Loopback Host Fix: the public address (NAT-PMP) for cl_loopbackHostIP.
   - The server window, in an app instance of its own (--host-server): runs
     the app's own executable as a dedicated server
@@ -3644,7 +3644,7 @@ void VSP_RunServerWindow( VSPServerSettings *settings, NSString *basepath, NSStr
 NSArray<NSString *> *VSP_DefaultMasters( void )
 {
 	// as EF_DEFAULT_MASTERS (qcommon.h): the live community masters first
-	return @[ @"master.stvef.org", @"efmaster.tjps.eu", @"master.stef1.daggolin.de",
+	return @[ @"master.stef1.daggolin.de", @"efmaster.tjps.eu", @"master.stvef.org",
 		@"master.stef1.ravensoft.com", @"ipv6.tjps.eu" ];
 }
 
@@ -4336,7 +4336,8 @@ NSArray<NSString *> *VSP_LoopbackArgs( void )
 // Holomatch's own Join menu waits for each source in turn. This asks a master for
 // its list, then every server on it for its info (getinfo) at once, in the
 // background, and fills the table as the answers come in. Local asks the network
-// by broadcast on Holomatch's LAN ports (27960-27963), as the game does.
+// by broadcast on Holomatch's LAN ports (27960-27963), as the game does. Combined
+// asks every master at once and merges their lists, so a server listed twice shows once.
 
 #define BROWSER_WAIT		2.5		// s to wait for the servers' answers
 #define BROWSER_WAIT_LOCAL	1.5
@@ -4368,6 +4369,7 @@ static NSColor *AmberColor( void )
 
 @interface VSPServerInfo : NSObject
 @property (nonatomic, copy) NSString *address, *name, *map;
+@property (nonatomic, copy) NSArray<NSString *> *listedOn;		// Combined: the masters listing it
 @property (nonatomic) NSInteger players, maxPlayers, humans, gametype, ping;	// humans -1: not reported
 @property (nonatomic) BOOL needPass, thisMac;
 @property (nonatomic, readonly) NSString *gametypeName, *playersText;
@@ -4527,10 +4529,15 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 - (void)joinRow: (NSInteger)row;
 @end
 
+// the browser's tabs: Local, Combined (every master's list, merged), then Internet 1, 2…
+#define SOURCE_LOCAL	0
+#define SOURCE_COMBINED	1
+#define SOURCE_MASTER	2
+
 @implementation VSPBrowserController
 {
 	NSArray<NSString *> *masters;
-	NSInteger source;				// 0 Local, n: masters[n - 1]
+	NSInteger source;				// SOURCE_LOCAL, SOURCE_COMBINED, or a master: masters[source - SOURCE_MASTER]
 	NSMutableDictionary<NSNumber *, NSMutableArray<VSPServerInfo *> *> *results;
 	NSMutableDictionary<NSNumber *, NSString *> *status;
 	NSMutableDictionary<NSNumber *, VSPFetch *> *fetches;	// the ones still running
@@ -4566,7 +4573,8 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 
 - (NSString *)labelForSource: (NSInteger)s
 {
-	return s == 0 ? @"Local" : [NSString stringWithFormat: @"Internet %ld", (long)s];
+	return s == SOURCE_LOCAL ? @"Local" : s == SOURCE_COMBINED ? @"Combined" :
+		[NSString stringWithFormat: @"Internet %ld", (long)( s - SOURCE_MASTER + 1 )];
 }
 
 - (NSTableColumn *)column: (NSString *)ident title: (NSString *)title width: (CGFloat)width sortKey: (NSString *)key
@@ -4597,16 +4605,21 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	VSP_ApplyTestAppearance( _panel );
 	content = [_panel contentView];
 
-	// the sources: Local and every master, as the Join menu numbers them
+	// the sources: Local, Combined, and every master, as the Join menu numbers them
+	if( [masters count] )
+		[labels addObject: [self labelForSource: SOURCE_COMBINED]];
 	for( NSUInteger i = 0; i < [masters count]; i++ )
 		[labels addObject: [masters count] > 7 ? [NSString stringWithFormat: @"%lu", (unsigned long)i + 1] :
-			[self labelForSource: i + 1]];
+			[self labelForSource: SOURCE_MASTER + i]];
 	tabs = [NSSegmentedControl segmentedControlWithLabels: labels trackingMode: NSSegmentSwitchTrackingSelectOne
 		target: self action: @selector(sourceChanged:)];
-	[tabs setToolTip: @"Local: this network. Internet 1, 2…: the master servers, in the order set in Servers…"];
-	[tabs setToolTip: @"Your network" forSegment: 0];
+	[tabs setToolTip: @"Local: this network. Combined: every master server's list. Internet 1, 2…: one master "
+		@"server each, in the order set in Servers…"];
+	[tabs setToolTip: @"Your network" forSegment: SOURCE_LOCAL];
+	if( [masters count] )
+		[tabs setToolTip: @"Every master server's list, together" forSegment: SOURCE_COMBINED];
 	for( NSUInteger i = 0; i < [masters count]; i++ )
-		[tabs setToolTip: masters[i] forSegment: i + 1];
+		[tabs setToolTip: masters[i] forSegment: SOURCE_MASTER + i];
 	refreshButton = [NSButton buttonWithImage: Symbol( @"arrow.clockwise", 12 ) target: self action: @selector(refresh:)];
 	[refreshButton setBezelStyle: NSBezelStyleRounded];
 	[refreshButton setToolTip: @"Ask again"];
@@ -4693,7 +4706,7 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 
 - (void)selectSource: (NSInteger)s
 {
-	source = MAX( 0, MIN( s, (NSInteger)[masters count] ) );
+	source = MAX( SOURCE_LOCAL, MIN( s, [masters count] ? SOURCE_MASTER + (NSInteger)[masters count] - 1 : SOURCE_LOCAL ) );
 	[tabs setSelectedSegment: source];
 	if( !results[@( source )] )
 		[self fetch: source];
@@ -4708,74 +4721,102 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 {
 	NSNumber *key = @( s );
 	VSPFetch *fetch = [[VSPFetch alloc] init];
-	NSString *master = s ? masters[s - 1] : nil;
+	BOOL combined = s == SOURCE_COMBINED;
+	NSArray<NSString *> *asking = s == SOURCE_LOCAL ? @[] : combined ? masters : @[ masters[s - SOURCE_MASTER] ];
+	NSString *master = combined ? nil : [asking firstObject];		// one master's tab
 	BOOL loopbackFix = VSP_LoopbackFix();
 
 	fetches[key].cancelled = YES;
 	fetches[key] = fetch;
 	results[key] = [NSMutableArray array];
-	status[key] = s ? [NSString stringWithFormat: @"Asking %@ for its servers…", master] : @"Looking on your network…";
+	status[key] = master ? [NSString stringWithFormat: @"Asking %@ for its servers…", master] :
+		combined ? [NSString stringWithFormat: @"Asking %lu master servers for their servers…", (unsigned long)[asking count]] :
+		@"Looking on your network…";
 	[self show];
 	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
-		NSMutableArray<NSString *> *addresses = [NSMutableArray array];
+		// every server listed, with the tabs (Internet 1, 2…) of the masters listing it
+		NSMutableDictionary<NSString *, NSMutableArray<NSString *> *> *listed = [NSMutableDictionary dictionary];
+		NSMutableArray *lists = [NSMutableArray array];
 		NSMutableSet<NSString *> *thisMac = [NSMutableSet set];
-		NSUInteger listed;
+		NSUInteger answeredMasters = 0, count;
+		NSString *own;
 
-		if( master )
-		{
-			NSSet<NSString *> *list = QueryMaster( master );
-			NSString *own;
-			// the router's answer (from the launcher's start) is usually in by now
-			for( int i = 0; loopbackFix && !VSP_PublicAddress() && i < 20; i++ )
-				usleep( 50000 );
-			own = loopbackFix ? VSP_PublicAddress() : nil;
-			if( !list )
-			{
-				dispatch_async( dispatch_get_main_queue(), ^{
-					if( fetch.cancelled )
-						return;
-					[self->fetches removeObjectForKey: key];
-					self->status[key] = [NSString stringWithFormat: @"%@ didn't answer. It may be offline: try another "
-						@"source, or change the list in Servers….", master];
-					[self show];
-				} );
-				return;
+		for( NSUInteger i = 0; i < [asking count]; i++ )
+			[lists addObject: [NSNull null]];
+		dispatch_apply( [asking count], dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^( size_t i ) {
+			NSSet<NSString *> *list = QueryMaster( asking[i] );
+			@synchronized( lists ) {
+				if( list )
+					lists[i] = list;
 			}
-			for( NSString *a in list )
+		} );
+		// the router's answer (from the launcher's start) is usually in by now
+		for( int i = 0; [asking count] && loopbackFix && !VSP_PublicAddress() && i < 20; i++ )
+			usleep( 50000 );
+		own = loopbackFix ? VSP_PublicAddress() : nil;
+		for( NSUInteger i = 0; i < [lists count]; i++ )
+		{
+			NSString *tab = [self labelForSource: SOURCE_MASTER + (NSInteger)[self->masters indexOfObject: asking[i]]];
+			if( lists[i] == [NSNull null] )
+				continue;
+			answeredMasters++;
+			for( NSString *a in lists[i] )
 			{
+				NSString *addr = a;
 				// Loopback Host Fix: a server on this network, listed under its public address
 				if( own && [a hasPrefix: [own stringByAppendingString: @":"]] )
 				{
-					NSString *local = [@"127.0.0.1" stringByAppendingString: [a substringFromIndex: [own length]]];
-					[thisMac addObject: local];
-					[addresses addObject: local];
+					addr = [@"127.0.0.1" stringByAppendingString: [a substringFromIndex: [own length]]];
+					[thisMac addObject: addr];
 				}
-				else
-					[addresses addObject: a];
+				if( !listed[addr] )
+					listed[addr] = [NSMutableArray array];
+				[listed[addr] addObject: tab];
 			}
+		}
+		count = [listed count];
+		if( [asking count] )
+		{
 			dispatch_async( dispatch_get_main_queue(), ^{
 				if( fetch.cancelled )
 					return;
-				self->status[key] = [NSString stringWithFormat: @"%@ lists %lu %@, asking each…", master,
-					(unsigned long)[list count], [list count] == 1 ? @"server" : @"servers"];
+				if( !answeredMasters )
+				{
+					[self->fetches removeObjectForKey: key];
+					self->status[key] = master ? [NSString stringWithFormat: @"%@ didn't answer. It may be offline: try "
+						@"another source, or change the list in Servers….", master] :
+						@"None of the master servers answered. Check your internet connection, or change the list in Servers….";
+				}
+				else
+					self->status[key] = [NSString stringWithFormat: @"%@ %lu %@, asking each…",
+						master ? [master stringByAppendingString: @" lists"] : [NSString stringWithFormat: @"%lu of %lu master servers list",
+							(unsigned long)answeredMasters, (unsigned long)[asking count]],
+						(unsigned long)count, count == 1 ? @"server" : @"servers"];
 				[self show];
 			} );
+			if( !answeredMasters )
+				return;
 		}
-		listed = [addresses count];
-		QueryServerInfo( addresses, !master, fetch, ^( VSPServerInfo *info ) {
+		QueryServerInfo( [listed allKeys], !master && !combined, fetch, ^( VSPServerInfo *info ) {
 			info.thisMac = [thisMac containsObject: info.address];
+			info.listedOn = combined ? listed[info.address] : nil;
 			[self->results[key] addObject: info];
 			[self scheduleReload];
 		}, ^( NSUInteger answered ) {
 			NSUInteger n = [self->results[key] count];
+			NSString *servers = [NSString stringWithFormat: @"%lu %@", (unsigned long)n, n == 1 ? @"server" : @"servers"];
+			NSString *quiet = count > answered ? [NSString stringWithFormat: @" · %lu listed didn't answer",
+				(unsigned long)( count - answered )] : @"";
 			[self->fetches removeObjectForKey: key];
 			if( master )
-				self->status[key] = !listed ? [NSString stringWithFormat: @"%@ lists no servers right now.", master] :
-					[NSString stringWithFormat: @"%@ · %lu %@%@", master, (unsigned long)n, n == 1 ? @"server" : @"servers",
-						listed > answered ? [NSString stringWithFormat: @" · %lu listed didn't answer", (unsigned long)( listed - answered )] : @""];
+				self->status[key] = !count ? [NSString stringWithFormat: @"%@ lists no servers right now.", master] :
+					[NSString stringWithFormat: @"%@ · %@%@", master, servers, quiet];
+			else if( combined )
+				self->status[key] = !count ? @"The master servers list no servers right now." :
+					[NSString stringWithFormat: @"%@ from %lu of %lu master servers%@", servers,
+						(unsigned long)answeredMasters, (unsigned long)[asking count], quiet];
 			else
-				self->status[key] = n ? [NSString stringWithFormat: @"Your network · %lu %@", (unsigned long)n,
-					n == 1 ? @"server" : @"servers"] :
+				self->status[key] = n ? [NSString stringWithFormat: @"Your network · %@", servers] :
 					@"No servers on your network (Holomatch looks on ports 27960 to 27963). Type an address below to join another.";
 			LLog( @"Browser: %@", self->status[key] );
 			[self show];
@@ -4850,7 +4891,9 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	if( [ident isEqualToString: @"name"] )
 	{
 		[l setStringValue: s.thisMac ? [s.name stringByAppendingString: @" (this Mac)"] : s.name];
-		[l setToolTip: s.thisMac ? [NSString stringWithFormat: @"%@, hosted on this Mac (Loopback Host Fix)", s.address] : s.address];
+		[l setToolTip: [NSString stringWithFormat: @"%@%@", s.thisMac ? [NSString stringWithFormat:
+			@"%@, hosted on this Mac (Loopback Host Fix)", s.address] : s.address, [s.listedOn count] ?
+			[@"\nListed on " stringByAppendingString: [s.listedOn componentsJoinedByString: @", "]] : @""]];
 	}
 	else if( [ident isEqualToString: @"map"] )
 	{
@@ -5009,14 +5052,14 @@ void VSP_ShowServerBrowser( NSWindow *parent, NSString *dataFolder, void ( ^done
 	VSPBrowserController *c = [[VSPBrowserController alloc] initWithDataFolder: dataFolder];
 
 	c.done = done;
-	[c selectSource: [VSP_MasterServers() count] ? 1 : 0];		// Internet 1
+	[c selectSource: SOURCE_COMBINED];		// Local when there are no masters
 	// the block keeps the controller alive until the sheet ends
 	[parent beginSheet: [c panel] completionHandler: ^( NSModalResponse r ) {
 		[[c panel] orderOut: nil];
 	}];
 }
 
-// For tests: show source (local, or 1-16) once its answers are in, render it, and
+// For tests: show source (local, combined, or Internet 1-16) once its answers are in, render it, and
 // with join, join that row (as a double-click would; done gets the address).
 BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, NSString *dataFolder,
 	void ( ^done )( NSString *address, NSString *password ) )
@@ -5025,7 +5068,8 @@ BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, NSS
 	BOOL ok = YES;
 
 	c.done = done;
-	[c selectSource: !tab || !Q_stricmp( tab, "local" ) ? 0 : atoi( tab )];
+	[c selectSource: !tab || !Q_stricmp( tab, "local" ) ? SOURCE_LOCAL : !Q_stricmp( tab, "combined" ) ? SOURCE_COMBINED :
+		SOURCE_MASTER + atoi( tab ) - 1];
 	while( [c busy] )
 		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
 	[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.2]];
