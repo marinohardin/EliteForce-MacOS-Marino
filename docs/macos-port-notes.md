@@ -386,7 +386,8 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   favorites** and **Only servers with people** (`BrowserOnlyFavorites`, `BrowserOnlyPeople`)
   combine. "With people" keeps `?` servers that have players, since they may have people.
 - **Who's playing.** Selecting a server sends that one server a `getstatus` (up to two tries,
-  1 s each) and lists `<score> <ping> "<name>"` with its colors; nothing is sent to the others.
+  1 s each) and lists `<score> <ping> "<name>"` with its colors, people (a ping) before bots, then
+  by score; nothing is sent to the others.
   Answers are kept for the sheet's life (the small refresh asks again). Bots have ping 0, the only
   tell: rows get a "bot" tag only when the count of players with a ping matches `g_humanplayers`
   (from the answer, else from `getinfo`), or when the server doesn't say.

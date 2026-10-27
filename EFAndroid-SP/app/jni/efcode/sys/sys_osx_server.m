@@ -5294,7 +5294,12 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 		} );
 		return;
 	}
-	players = [st.players sortedArrayUsingDescriptors: @[ [NSSortDescriptor sortDescriptorWithKey: @"score" ascending: NO] ]];
+	// people (a ping) before bots (ping 0), then by score
+	players = [st.players sortedArrayUsingComparator: ^NSComparisonResult( VSPPlayer *a, VSPPlayer *b ) {
+		if( ( a.ping > 0 ) != ( b.ping > 0 ) )
+			return a.ping > 0 ? NSOrderedAscending : NSOrderedDescending;
+		return a.score > b.score ? NSOrderedAscending : a.score < b.score ? NSOrderedDescending : NSOrderedSame;
+	}];
 	for( VSPPlayer *p in players )
 		pinged += p.ping > 0;
 	// ping 0 is a bot, as long as that agrees with the server's count of people
