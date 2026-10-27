@@ -1883,6 +1883,7 @@ NSString *VSP_LANAddress( void )
 }
 
 static void RegisterRunningServer( NSString *name, NSInteger port );		// below
+static NSColor *AmberColor( void );													// below
 
 // The child's environment: ours, without the test hooks.
 static NSDictionary *ChildEnvironment( void )
@@ -2010,8 +2011,9 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 
 	NSImageView *dot;
 	NSTextField *title, *stateText, *address, *addressHint, *mapValue, *gameValue, *playersValue;
-	NSTextField *internetValue, *internetHint, *listValue, *listHint;
-	NSImageView *internetIcon, *listIcon;
+	NSTextField *internetValue, *internetHint, *listStatus, *listHint;
+	NSImageView *internetIcon;
+	NSStackView *listRows;			// a line per master: listed, not listed, no answer
 	NSButton *checkAgainButton;
 	NSButton *copyButton, *copyInternetButton, *playButton, *stopButton, *sendButton;
 	NSButton *nextMapButton, *restartMapButton, *addBotButton, *removeBotsButton, *messageButton, *kickButton;
@@ -2104,8 +2106,8 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[copyInternetButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
 	internetHint = Hint( @"", 480 );
 	[internetHint setLineBreakMode: NSLineBreakByWordWrapping];
-	listIcon = [[NSImageView alloc] init];
-	listValue = VSP_Label( @"", [NSFont systemFontOfSize: 13], nil );
+	listRows = VStack( @[], 3 );
+	listStatus = VSP_Label( @"", Small(), [NSColor secondaryLabelColor] );
 	checkAgainButton = [NSButton buttonWithTitle: @"Check Again" target: self action: @selector(checkListAgain:)];
 	[checkAgainButton setControlSize: NSControlSizeSmall];
 	[checkAgainButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
@@ -2124,8 +2126,8 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 		@[ [NSGridCell emptyContentView], addressHint ],
 		@[ VSP_Label( @"Internet:", f, nil ), HStack( @[ internetIcon, internetValue, copyInternetButton ], 8 ) ],
 		@[ [NSGridCell emptyContentView], internetHint ],
-		@[ VSP_Label( @"Listed:", f, nil ), HStack( @[ listIcon, listValue, checkAgainButton ], 8 ) ],
-		@[ [NSGridCell emptyContentView], listHint ],
+		@[ VSP_Label( @"Listed:", f, nil ), listRows ],
+		@[ [NSGridCell emptyContentView], VStack( @[ HStack( @[ listStatus, checkAgainButton ], 8 ), listHint ], 4 ) ],
 		@[ VSP_Label( @"Map:", f, nil ), mapValue ],
 		@[ VSP_Label( @"Game:", f, nil ), gameValue ],
 		@[ VSP_Label( @"Players:", f, nil ), playersValue ],
@@ -2978,7 +2980,6 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 {
 	NSString *ip = [self publicIP];
 	NSString *want = ip ? [NSString stringWithFormat: @"%@:%ld", ip, (long)( publicAddress ? publicPort : port )] : nil;
-	NSString *wantIP = ip ? [ip stringByAppendingString: @":"] : nil;
 	NSArray<NSString *> *masters = VSP_MasterServers();
 
 	listTimer = nil;
@@ -3000,7 +3001,7 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 			{
 				found = @NO;
 				for( NSString *e in list )
-					if( want && ( [e isEqualToString: want] || [e hasPrefix: wantIP] ) )
+					if( want && [e isEqualToString: want] )		// this server: another one here has the same IP
 						found = @YES;
 			}
 			[lock lock];
@@ -3020,28 +3021,6 @@ static NSString *MasterLabel( NSString *master )
 {
 	NSUInteger slot = [VSP_MasterServers() indexOfObject: master];
 	return slot < 5 ? [NSString stringWithFormat: @"Internet %lu", (unsigned long)slot + 1] : master;
-}
-
-// "Internet 2 and 3", "Internet 1, 2 and master.example.org"
-static NSString *MasterLabels( NSArray<NSString *> *masters )
-{
-	NSMutableArray *slots = [NSMutableArray array], *names = [NSMutableArray array];
-	NSMutableArray *parts = [NSMutableArray array];
-
-	for( NSString *m in masters )
-	{
-		NSString *l = MasterLabel( m );
-		[l hasPrefix: @"Internet "] ? [slots addObject: [l substringFromIndex: 9]] : [names addObject: l];
-	}
-	if( [slots count] )
-		[parts addObject: [@"Internet " stringByAppendingString: [slots componentsJoinedByString: @", "]]];
-	[parts addObjectsFromArray: names];
-	if( [parts count] < 2 )
-		return [parts firstObject] ? [parts firstObject] : @"";
-	// "Internet 2, 3" -> "Internet 2 and 3" when it ends the list
-	NSString *last = [parts lastObject];
-	NSString *head = [[parts subarrayWithRange: NSMakeRange( 0, [parts count] - 1 )] componentsJoinedByString: @", "];
-	return [NSString stringWithFormat: @"%@ and %@", head, last];
 }
 
 static NSString *MasterLabelsWithNames( NSArray<NSString *> *masters )
@@ -3100,64 +3079,76 @@ static NSString *MasterLabelsWithNames( NSArray<NSString *> *masters )
 	[self startListCheck];
 }
 
-- (void)showList
+// One line per master: a green check when it lists the server, a red X when it
+// answers without it, an amber ! when it doesn't answer, dotted until checked.
+- (NSView *)listRowFor: (NSString *)master
 {
-	NSString *symbol = nil, *value, *hint = @"";
-	NSColor *tint = [NSColor secondaryLabelColor];
+	NSString *label = MasterLabel( master ), *symbol = @"circle.dotted", *tip = @"Not checked yet";
+	NSColor *tint = [NSColor tertiaryLabelColor];
+	NSImageView *icon;
+	NSTextField *name, *host;
+	NSStackView *row;
 
-	if( !listValue || !settings.internet )
-		return;
-	if( listFound )
+	if( [listedOn containsObject: master] )
 	{
-		NSMutableString *h = [NSMutableString stringWithFormat: @"Players anywhere find it in the Join menu under %@.",
-			MasterLabelsWithNames( listedOn )];
-		value = [NSString stringWithFormat: @"Yes, on %@%@", MasterLabels( listedOn ),
-			listChecking ? @" · checking the others…" : @""];
-		if( [listMissing count] )
-			[h appendFormat: @" Not%@ on %@: some masters list new servers late, or copy another master's list.",
-				listChecking ? @" yet" : @"", MasterLabelsWithNames( listMissing )];
-		if( [listDown count] )
-			[h appendFormat: @" %@ %@ answer.", MasterLabels( listDown ), [listDown count] > 1 ? @"don't" : @"doesn't"];
-		[h appendString: @" On this Mac, Loopback Host Fix (in the launcher) shows it in your list too."];
-		hint = h;
 		symbol = @"checkmark.circle.fill";
 		tint = [NSColor systemGreenColor];
+		tip = [NSString stringWithFormat: @"Listed: players find your server under %@ in the Join menu.", label];
 	}
-	else if( listChecking )
+	else if( [listMissing containsObject: master] )
 	{
-		value = listChecks ? [NSString stringWithFormat: @"Not yet, checking again… (%d of %d)", listChecks, LIST_MAX_CHECKS] :
-			@"Checking the internet server list…";
-		hint = @"Your Mac can't test its own public address (most routers don't loop it back), so this asks the "
-			@"master server whether it reached your server.";
-		symbol = @"arrow.triangle.2.circlepath";
+		symbol = @"xmark.circle.fill";
+		tint = [NSColor systemRedColor];
+		tip = @"Not listed: this master answers but doesn't list your server (yet). Some masters list new servers "
+			@"late, or only copy another master's list.";
 	}
-	else if( listChecks && listMasterDown )
+	else if( [listDown containsObject: master] )
 	{
-		value = @"Couldn't check";
-		hint = @"No master server answered. Players can still connect by your public address if the port is open.";
-		symbol = @"questionmark.circle";
+		symbol = @"exclamationmark.circle.fill";
+		tint = AmberColor();
+		tip = @"No answer: this master didn't respond.";
 	}
-	else if( listChecks )
-	{
-		value = @"Not listed";
-		hint = [NSString stringWithFormat: @"The master server couldn't reach your server, so players outside your network "
+	icon = [NSImageView imageViewWithImage: [NSImage imageWithSystemSymbolName: symbol accessibilityDescription: nil]];
+	[icon setContentTintColor: tint];
+	name = VSP_Label( [label isEqualToString: master] ? @"" : label, [NSFont systemFontOfSize: 13], nil );
+	host = VSP_Label( master, [NSFont systemFontOfSize: 12], [NSColor secondaryLabelColor] );
+	[[name widthAnchor] constraintGreaterThanOrEqualToConstant: [label isEqualToString: master] ? 0 : 74].active = YES;
+	row = HStack( [label isEqualToString: master] ? @[ icon, host ] : @[ icon, name, host ], 6 );
+	[row setToolTip: [NSString stringWithFormat: @"%@ (%@): %@", label, master, tip]];
+	return row;
+}
+
+- (void)showList
+{
+	NSString *status = @"", *hint = @"";
+	NSArray<NSString *> *masters = VSP_MasterServers();
+	NSMutableArray *rows = [NSMutableArray array];
+
+	if( !listRows || !settings.internet )
+		return;
+	for( NSString *m in masters )
+		[rows addObject: [self listRowFor: m]];
+	if( ![masters count] )
+		[rows addObject: VSP_Label( @"No master servers (see Servers… in the launcher)", [NSFont systemFontOfSize: 13],
+			[NSColor systemOrangeColor] )];
+	[listRows setViews: rows inGravity: NSStackViewGravityTop];
+
+	if( listChecking )
+		status = listChecks ? [NSString stringWithFormat: @"Checking again… (%d of %d)", listChecks, LIST_MAX_CHECKS] :
+			@"Checking the masters…";
+	else if( !listChecks )
+		status = task ? @"Waiting for the server…" : @"";
+	else if( !listFound && !listMasterDown )
+		hint = [NSString stringWithFormat: @"No master could reach your server, so players outside your network "
 			@"can't either%@. Forward UDP %ld to %@ in your router's settings, or use Tailscale (see the README).",
 			publicAddress ? @" (your router accepted the port request but doesn't forward it)" : @"",
 			(long)port, lanAddress ? lanAddress : @"this Mac"];
-		symbol = @"exclamationmark.triangle.fill";
-		tint = [NSColor systemOrangeColor];
-	}
-	else
-		value = task ? @"Waiting for the server…" : @"—";
-	[listValue setStringValue: value];
-	[listIcon setImage: symbol ? [NSImage imageWithSystemSymbolName: symbol accessibilityDescription: nil] : nil];
-	[listIcon setHidden: !symbol];
-	[listIcon setContentTintColor: tint];
+	[listStatus setStringValue: status];
+	[listStatus setHidden: ![status length]];
 	[checkAgainButton setHidden: !task || listChecking || ( listFound && ![listMissing count] )];
 	[listHint setStringValue: hint];
 	[listHint setHidden: ![hint length]];
-	[listHint setTextColor: ( listChecks && !listFound && !listChecking && !listMasterDown ) ?
-		[NSColor systemOrangeColor] : [NSColor secondaryLabelColor]];
+	[listHint setTextColor: [NSColor systemOrangeColor]];
 }
 
 - (void)dealloc
