@@ -47,7 +47,9 @@ simplifying hosting servers compared to the original game.
   [Holomatch and LAN parties](#holomatch-and-lan-parties)), on the internet through the Join
   menu's Internet sources (live community master servers), or by IP address, with bots.
   **Browse…** in the launcher lists every server on your network and each master at once,
-  with players, map and ping, and joins one directly.
+  with players, map and ping, and joins one directly. Maps you don't have are shown in amber
+  (they download when you join, if the server allows it) and Expansion Pack maps you don't
+  have in purple: servers can't send those, so Join warns first.
   It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection.

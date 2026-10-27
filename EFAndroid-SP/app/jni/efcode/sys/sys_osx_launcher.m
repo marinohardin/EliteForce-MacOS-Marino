@@ -41,6 +41,8 @@ Test hooks (environment variables):
                                 servers answered, and quit (or go on with ..._JOIN)
   VOYAGERSP_TEST_BROWSER_TAB=local|<n>  its source (default local)
   VOYAGERSP_TEST_BROWSER_JOIN=<row>     join that row: play Holomatch, connecting
+  VOYAGERSP_TEST_BROWSER_EXPANSION=anyway|cancel  answer the Expansion Pack
+                                map warning (logged)
   VOYAGERSP_TEST_LAUNCHER_BROWSE_CANCEL=1  open Browse…, press Cancel, log
                                 whether the launcher stayed, and quit
   VOYAGERSP_TEST_SERVER_RUNNING=show|another|cancel  answer Start Server's
@@ -952,7 +954,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 - (void)browseServers: (id)sender
 {
 	[self selectMode: MODE_HOLOMATCH];
-	VSP_ShowServerBrowser( window, ^( NSString *address, NSString *password ) {
+	VSP_ShowServerBrowser( window, dataFolder, ^( NSString *address, NSString *password ) {
 		if( !address )
 			return;
 		[self joinAddress: address password: password];
@@ -1455,7 +1457,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 		{
 			__block BOOL joined = NO;
 			VSP_SnapshotServerBrowser( getenv( "VOYAGERSP_TEST_BROWSER_SNAPSHOT" ), getenv( "VOYAGERSP_TEST_BROWSER_TAB" ),
-				getenv( "VOYAGERSP_TEST_BROWSER_JOIN" ) ? atoi( getenv( "VOYAGERSP_TEST_BROWSER_JOIN" ) ) : -1,
+				getenv( "VOYAGERSP_TEST_BROWSER_JOIN" ) ? atoi( getenv( "VOYAGERSP_TEST_BROWSER_JOIN" ) ) : -1, [l dataFolder],
 				^( NSString *address, NSString *password ) {
 					joined = address != nil;
 					[l joinAddress: address password: password];

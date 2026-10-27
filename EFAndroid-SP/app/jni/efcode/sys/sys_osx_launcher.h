@@ -122,10 +122,12 @@ NSString *VSP_PublicAddress( void );			// nil until the router answered
 NSArray<NSString *> *VSP_LoopbackArgs( void );	// +set cl_loopbackHostIP <ip>, or none
 
 // The Browse… sheet: Holomatch servers on this network (Local) and on each
-// master (Internet 1, 2…), Internet 1 first. done gets the address to join and
-// the password the user typed (or nil), only when the user picked one.
-void VSP_ShowServerBrowser( NSWindow *parent, void ( ^done )( NSString *address, NSString *password ) );
-BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join,
+// master (Internet 1, 2…), Internet 1 first. Maps missing from the game files
+// in dataFolder (may be nil) and the homepath are marked. done gets the address
+// to join and the password the user typed (or nil), only when the user picked one.
+void VSP_ShowServerBrowser( NSWindow *parent, NSString *dataFolder,
+	void ( ^done )( NSString *address, NSString *password ) );
+BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, NSString *dataFolder,
 	void ( ^done )( NSString *address, NSString *password ) );
 
 // The server window: starts the server as a child process (the app's own

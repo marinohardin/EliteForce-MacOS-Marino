@@ -4350,6 +4350,31 @@ NSArray<NSString *> *VSP_LoopbackArgs( void )
 #define BROWSER_WAIT		2.5		// s to wait for the servers' answers
 #define BROWSER_WAIT_LOCAL	1.5
 
+// The Expansion Pack's Holomatch maps (pak3.pk3). Servers never send its files,
+// so a player without it can't join a server running one of these.
+static NSSet<NSString *> *ExpansionMaps( void )
+{
+	static NSSet *maps;
+	if( !maps )
+		maps = [NSSet setWithArray: @[ @"ctf_breach", @"ctf_dn1", @"ctf_for1", @"ctf_neptune", @"ctf_oldwest",
+			@"ctf_reservoir", @"ctf_singularity", @"ctf_spyglass2", @"ctf_stasis", @"hm_altar", @"hm_blastradius",
+			@"hm_borgattack", @"hm_for2", @"hm_raven", @"hm_temple", @"hm_voy3" ]];
+	return maps;
+}
+
+// a server's map against the game files
+typedef enum { MAP_HAVE, MAP_MISSING, MAP_EXPANSION } mapState_t;
+
+// amber that reads on both light and dark backgrounds
+static NSColor *AmberColor( void )
+{
+	return [NSColor colorWithName: nil dynamicProvider: ^NSColor *( NSAppearance *a ) {
+		BOOL dark = [[a bestMatchFromAppearancesWithNames: @[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]]
+			isEqualToString: NSAppearanceNameDarkAqua];
+		return dark ? [NSColor systemYellowColor] : [NSColor colorWithSRGBRed: 0.70 green: 0.47 blue: 0.0 alpha: 1];
+	}];
+}
+
 @interface VSPServerInfo : NSObject
 @property (nonatomic, copy) NSString *address, *name, *map;
 @property (nonatomic) NSInteger players, maxPlayers, humans, gametype, ping;	// humans -1: not reported
@@ -4504,6 +4529,7 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 
 @interface VSPBrowserController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate>
 @property (nonatomic, readonly) NSWindow *panel;
+- (instancetype)initWithDataFolder: (NSString *)dataFolder;
 @property (nonatomic, copy) void ( ^done )( NSString *address, NSString *password );
 - (void)selectSource: (NSInteger)source;
 - (BOOL)busy;
@@ -4519,6 +4545,7 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	NSMutableDictionary<NSNumber *, VSPFetch *> *fetches;	// the ones still running
 	NSArray<VSPServerInfo *> *shown;
 	BOOL reloadPending;
+	NSSet<NSString *> *haveMaps;		// lowercased, from the map catalog
 
 	NSSegmentedControl *tabs;
 	NSTextField *statusText;
@@ -4528,10 +4555,15 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	NSButton *joinButton, *connectButton, *refreshButton;
 }
 
-- (instancetype)init
+- (instancetype)initWithDataFolder: (NSString *)dataFolder
 {
+	NSMutableSet *have = [NSMutableSet set];
+
 	if( !( self = [super init] ) )
 		return nil;
+	for( VSPMapInfo *m in VSP_MapCatalog( dataFolder ) )
+		[have addObject: [m.name lowercaseString]];
+	haveMaps = have;
 	masters = VSP_MasterServers();
 	results = [NSMutableDictionary dictionary];
 	status = [NSMutableDictionary dictionary];
@@ -4830,7 +4862,23 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 		[l setToolTip: s.thisMac ? [NSString stringWithFormat: @"%@, hosted on this Mac (Loopback Host Fix)", s.address] : s.address];
 	}
 	else if( [ident isEqualToString: @"map"] )
+	{
+		mapState_t state = [self mapState: s.map];
 		[l setStringValue: s.map];
+		if( state == MAP_EXPANSION )
+		{
+			[l setTextColor: [NSColor systemPurpleColor]];
+			[l setToolTip: [NSString stringWithFormat: @"%@ is an Expansion Pack map, and the Expansion Pack isn't in "
+				@"your game files. Servers can't send it: add the Expansion Pack's files with Add Game Files… "
+				@"in the launcher to join.", s.map]];
+		}
+		else if( state == MAP_MISSING )
+		{
+			[l setTextColor: AmberColor()];
+			[l setToolTip: [NSString stringWithFormat: @"%@ isn't in your game files. It downloads when you join, "
+				@"if the server allows downloads.", s.map]];
+		}
+	}
 	else if( [ident isEqualToString: @"players"] )
 	{
 		[l setStringValue: s.playersText];
@@ -4845,6 +4893,14 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 		[l setTextColor: s.ping < 80 ? [NSColor systemGreenColor] : s.ping < 160 ? [NSColor labelColor] : [NSColor systemOrangeColor]];
 	}
 	return l;
+}
+
+- (mapState_t)mapState: (NSString *)map
+{
+	NSString *m = [map lowercaseString];
+	if( ![m length] || [haveMaps containsObject: m] )
+		return MAP_HAVE;
+	return [ExpansionMaps() containsObject: m] ? MAP_EXPANSION : MAP_MISSING;
 }
 
 // --- joining ---
@@ -4897,11 +4953,44 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 {
 	VSPServerInfo *s;
 	NSAlert *a;
-	NSSecureTextField *pw;
 
 	if( row < 0 || row >= (NSInteger)[shown count] )
 		return;
 	s = shown[row];
+	if( [self mapState: s.map] != MAP_EXPANSION )
+	{
+		[self joinServer: s];
+		return;
+	}
+	// an Expansion Pack map without the Expansion Pack: the game can't load it
+	a = [[NSAlert alloc] init];
+	[a setAlertStyle: NSAlertStyleWarning];
+	[a setMessageText: @"This server's map is from the Expansion Pack."];
+	[a setInformativeText: [NSString stringWithFormat: @"“%@” is running %@, which isn't in your game files. Servers "
+		@"can't send the Expansion Pack's maps, so joining will fail. Add the Expansion Pack's files with "
+		@"Add Game Files… in the launcher, or pick another server.", s.name, s.map]];
+	[a addButtonWithTitle: @"Cancel"];
+	[a addButtonWithTitle: @"Join Anyway"];
+	if( getenv( "VOYAGERSP_TEST_BROWSER_EXPANSION" ) )
+	{
+		BOOL anyway = VSP_TestEnvIs( "VOYAGERSP_TEST_BROWSER_EXPANSION", "anyway" );
+		LLog( @"[test] Expansion Pack warning: \"%@\" \"%@\", answering %@", [a messageText], [a informativeText],
+			anyway ? @"Join Anyway" : @"Cancel" );
+		if( anyway )
+			[self joinServer: s];
+		return;
+	}
+	[a beginSheetModalForWindow: _panel completionHandler: ^( NSModalResponse r ) {
+		if( r == NSAlertSecondButtonReturn )
+			dispatch_async( dispatch_get_main_queue(), ^{ [self joinServer: s]; } );
+	}];
+}
+
+- (void)joinServer: (VSPServerInfo *)s
+{
+	NSAlert *a;
+	NSSecureTextField *pw;
+
 	if( !s.needPass )
 	{
 		[self finish: s.address password: nil];
@@ -4924,9 +5013,9 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 
 @end
 
-void VSP_ShowServerBrowser( NSWindow *parent, void ( ^done )( NSString *address, NSString *password ) )
+void VSP_ShowServerBrowser( NSWindow *parent, NSString *dataFolder, void ( ^done )( NSString *address, NSString *password ) )
 {
-	VSPBrowserController *c = [[VSPBrowserController alloc] init];
+	VSPBrowserController *c = [[VSPBrowserController alloc] initWithDataFolder: dataFolder];
 
 	c.done = done;
 	[c selectSource: [VSP_MasterServers() count] ? 1 : 0];		// Internet 1
@@ -4938,9 +5027,10 @@ void VSP_ShowServerBrowser( NSWindow *parent, void ( ^done )( NSString *address,
 
 // For tests: show source (local, or 1-16) once its answers are in, render it, and
 // with join, join that row (as a double-click would; done gets the address).
-BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, void ( ^done )( NSString *address, NSString *password ) )
+BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, NSString *dataFolder,
+	void ( ^done )( NSString *address, NSString *password ) )
 {
-	VSPBrowserController *c = [[VSPBrowserController alloc] init];
+	VSPBrowserController *c = [[VSPBrowserController alloc] initWithDataFolder: dataFolder];
 	BOOL ok = YES;
 
 	c.done = done;
