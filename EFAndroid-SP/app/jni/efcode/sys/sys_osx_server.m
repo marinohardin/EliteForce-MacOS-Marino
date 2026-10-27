@@ -414,26 +414,37 @@ static NSString *TextFromData( NSData *d )
 	return s ? s : [[NSString alloc] initWithData: d encoding: NSISOLatin1StringEncoding];
 }
 
-// Without Quake 3 color codes (^1 etc.).
-static NSString *StripColors( NSString *s )
+// Quake 3 color codes (^1 etc.) taken out of s, with each remaining
+// character's color index (7, white, until a code) put in colors when it's
+// given. A ^ left next to a letter or digit once a code is gone makes a code
+// too, as in the game: "^^071v1" is "1v1" in white, not "^71v1".
+static NSString *DecodeColors( NSString *s, NSMutableData *colors )
 {
-	NSMutableString *o;
 	NSUInteger i, n = [s length];
+	NSMutableString *o = [NSMutableString stringWithCapacity: n];
+	uint8_t c = 7;
 
-	if( [s rangeOfString: @"^"].location == NSNotFound )
-		return s;
-	o = [NSMutableString stringWithCapacity: n];
 	for( i = 0; i < n; i++ )
 	{
-		unichar c = [s characterAtIndex: i];
-		if( c == '^' && i + 1 < n && [s characterAtIndex: i + 1] != '^' && isalnum( [s characterAtIndex: i + 1] ) )
+		unichar ch = [s characterAtIndex: i];
+
+		if( ch < 128 && isalnum( ch ) && [o length] && [o characterAtIndex: [o length] - 1] == '^' )
 		{
-			i++;
+			[o deleteCharactersInRange: NSMakeRange( [o length] - 1, 1 )];
+			[colors setLength: [o length]];
+			c = ( ch - '0' ) & 7;
 			continue;
 		}
-		[o appendFormat: @"%C", c];
+		[o appendFormat: @"%C", ch];
+		[colors appendBytes: &c length: 1];
 	}
 	return o;
+}
+
+// Without Quake 3 color codes.
+static NSString *StripColors( NSString *s )
+{
+	return [s rangeOfString: @"^"].location == NSNotFound ? s : DecodeColors( s, nil );
 }
 
 /* ------------------------------------------------------------------------
@@ -4373,6 +4384,7 @@ static NSColor *AmberColor( void )
 
 @interface VSPServerInfo : NSObject
 @property (nonatomic, copy) NSString *address, *name, *map;
+@property (nonatomic, copy) NSString *hostname;		// name with its color codes
 @property (nonatomic, copy) NSArray<NSString *> *listedOn;		// Combined: the masters listing it
 @property (nonatomic) NSInteger players, maxPlayers, humans, gametype, ping;	// humans -1: not reported
 @property (nonatomic) BOOL needPass, thisMac, favorite;
@@ -4437,10 +4449,10 @@ static VSPServerInfo *ParseInfoResponse( const char *buf, ssize_t n, NSString *f
 	for( NSUInteger i = 1; i + 1 < [parts count]; i += 2 )
 		kv[[parts[i] lowercaseString]] = parts[i + 1];
 	info.address = from;
-	info.name = [StripColors( kv[@"hostname"] ? kv[@"hostname"] : @"" ) stringByTrimmingCharactersInSet:
-		[NSCharacterSet whitespaceCharacterSet]];
+	info.hostname = kv[@"hostname"] ? kv[@"hostname"] : @"";
+	info.name = [StripColors( info.hostname ) stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceCharacterSet]];
 	if( ![info.name length] )
-		info.name = from;
+		info.name = info.hostname = from;
 	info.map = kv[@"mapname"] ? [kv[@"mapname"] lowercaseString] : @"";
 	info.players = [kv[@"clients"] integerValue];
 	info.maxPlayers = [kv[@"sv_maxclients"] integerValue];
@@ -4625,30 +4637,31 @@ static void QueryServerStatus( NSString *address, void ( ^done )( VSPServerStatu
 	} );
 }
 
-// A name with its Quake 3 color codes (^1 red...) as colors; white and black
-// become the label colors so names read in light and dark.
+// A name with its Quake 3 color codes (^1 red...) as colors, trimmed; white
+// and black become the label colors so names read in light and dark.
 static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 {
 	NSArray<NSColor *> *colors = @[ [NSColor secondaryLabelColor], [NSColor systemRedColor], [NSColor systemGreenColor],
 		[NSColor systemYellowColor], [NSColor systemBlueColor], [NSColor systemTealColor], [NSColor systemPinkColor],
 		[NSColor labelColor] ];
-	NSMutableAttributedString *o = [[NSMutableAttributedString alloc] init];
-	NSColor *c = [NSColor labelColor];
-	NSUInteger i, n = [s length];
+	NSMutableData *index = [NSMutableData data];
+	NSString *plain = DecodeColors( s, index );
+	NSMutableAttributedString *o = [[NSMutableAttributedString alloc] initWithString: plain
+		attributes: @{ NSFontAttributeName: font, NSForegroundColorAttributeName: [NSColor labelColor] }];
+	const uint8_t *c = [index bytes];
+	NSCharacterSet *space = [[NSCharacterSet whitespaceCharacterSet] invertedSet];
+	NSRange first, last;
 
-	for( i = 0; i < n; i++ )
+	for( NSUInteger i = 0, run; i < [plain length]; i = run )
 	{
-		unichar ch = [s characterAtIndex: i];
-
-		if( ch == '^' && i + 1 < n && [s characterAtIndex: i + 1] != '^' && isalnum( [s characterAtIndex: i + 1] ) )
-		{
-			c = colors[( [s characterAtIndex: ++i] - '0' ) & 7];
-			continue;
-		}
-		[o appendAttributedString: [[NSAttributedString alloc] initWithString: [NSString stringWithCharacters: &ch length: 1]
-			attributes: @{ NSFontAttributeName: font, NSForegroundColorAttributeName: c }]];
+		for( run = i + 1; run < [plain length] && c[run] == c[i]; run++ )
+			;
+		[o addAttribute: NSForegroundColorAttributeName value: colors[c[i]] range: NSMakeRange( i, run - i )];
 	}
-	return o;
+	first = [plain rangeOfCharacterFromSet: space];
+	last = [plain rangeOfCharacterFromSet: space options: NSBackwardsSearch];
+	return first.location == NSNotFound ? [[NSAttributedString alloc] init] :
+		[o attributedSubstringFromRange: NSMakeRange( first.location, NSMaxRange( last ) - first.location )];
 }
 
 // efservers.com's page for a map (screenshots, its files, a 3D preview), in a
@@ -5439,7 +5452,12 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	[l setToolTip: nil];
 	if( [ident isEqualToString: @"name"] )
 	{
-		[l setStringValue: s.thisMac ? [s.name stringByAppendingString: @" (this Mac)"] : s.name];
+		NSMutableAttributedString *name = [ColoredName( s.hostname, Body() ) mutableCopy];
+
+		if( s.thisMac )
+			[name appendAttributedString: [[NSAttributedString alloc] initWithString: @" (this Mac)"
+				attributes: @{ NSFontAttributeName: Body(), NSForegroundColorAttributeName: [NSColor labelColor] }]];
+		[l setAttributedStringValue: name];
 		[l setToolTip: [NSString stringWithFormat: @"%@%@", s.thisMac ? [NSString stringWithFormat:
 			@"%@, hosted on this Mac (Loopback Host Fix)", s.address] : s.address, [s.listedOn count] ?
 			[@"\nListed on " stringByAppendingString: [s.listedOn componentsJoinedByString: @", "]] : @""]];
