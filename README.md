@@ -83,7 +83,12 @@ simplifying hosting servers compared to the original game.
     **Patch 1.2 missing**, and **Add Game Files…** adds them.
   - `pak3.pk3` and other extra paks, if you have them.
 
-  GOG and Steam copies work. A full install from the original CD works too. A
+  GOG and Steam copies work. **GOG's Windows installer** (the offline setup `.exe`)
+  works without a PC: choose the `.exe` itself with **Choose…** or **Add Game Files…** and the
+  app unpacks its `.pk3` files (pak0–pak3 and playermaps, so the Expansion Pack too), checking
+  each against the installer's own checksums. If an installer can't be read, the app says so
+  and asks for a `BaseEF` folder from a PC install instead. A full install from the original
+  CD works too. A
   **minimum install from the CD does not copy `pak0.pk3` to disk**: it stays on the CD, at
   `BaseEF/pak0.pk3`. Copy it from the CD yourself.
 
@@ -102,7 +107,7 @@ simplifying hosting servers compared to the original game.
    signed and notarized by Apple, so macOS opens them without warnings.
 3. Open the app. The launcher opens. It looks for your game data, and if it can't find it,
    click **Choose…** under **Game Files** and pick **the folder where Elite Force is
-   installed** (the folder that contains `BaseEF`):
+   installed** (the folder that contains `BaseEF`), or GOG's setup `.exe`:
    - By default the app **copies** the game files (`*.pk3`) and any saves from that
      `BaseEF` into its own data folder, so you can delete or move the original afterwards.
    - Tick **"Use BaseEF files in place rather than copy"** to read them from where they

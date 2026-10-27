@@ -16,7 +16,9 @@ without any UI, for BaseEF/pak0.pk3 in:
 If none has it, an NSOpenPanel asks for the Elite Force install (or its
 BaseEF folder). By default the .pk3 files (and old saves) are copied into (b);
 the "Use BaseEF files in place rather than copy" checkbox instead remembers
-the chosen folder and uses it as fs_basepath.
+the chosen folder and uses it as fs_basepath. GOG's Windows installer
+(setup_….exe) can be chosen too: its BaseEF .pk3 files are unpacked into (b)
+(sys_osx_gog.c), and Add Game Files… takes it as well.
 
 Normally the launcher (sys_osx_launcher.m) runs first: it shows where the
 game data was found (VSP_FindGameData, the same lookup) and offers the
@@ -53,6 +55,7 @@ Test hooks (environment variables, for automated tests without clicking):
 #include "../qcommon/q_shared.h"
 #include "../qcommon/qcommon.h"
 #include "sys_local.h"
+#include "sys_osx_gog.h"
 
 #import <Cocoa/Cocoa.h>
 #include <sys/stat.h>
@@ -80,6 +83,7 @@ void SNDDMA_PauseOutput( qboolean pause );	// sdl_snd.c
 
 #define KEY_GAMEFOLDER	@"GameFolder"
 #define KEY_PANELSIZERESET	@"ChooserPanelSizeReset"
+#define MSG_USE_BASEEF	@"Install the game on a Windows PC instead (from GOG, or the CD with the 1.2 patch), copy its BaseEF folder to this Mac, and choose that folder."
 #define MSG_PAK0_ON_CD	@"pak0.pk3 is missing — minimum CD installs leave it on the CD; copy it from BaseEF on the CD into this BaseEF folder, or choose a full installation."
 
 extern NSString *Sys_MacAppBundlePath( void );
@@ -212,10 +216,23 @@ static void ErrorAlert( NSString *title, NSString *text )
    Copying game files into the homepath
    ------------------------------------------------------------------------ */
 
+// A file to unpack from GOG's installer, in a copy job's src
+@interface VSPGogItem : NSObject
+{
+@public
+	NSString *installer;	// retained
+	gogFile_t file;			// parts malloc'd, owned
+}
+@end
+
+@implementation VSPGogItem
+- (void)dealloc { [installer release]; free( file.parts ); [super dealloc]; }
+@end
+
 @interface VSPCopyJob : NSObject
 {
 @public
-	NSArray *src, *dst;		// parallel arrays of paths
+	NSArray *src, *dst;		// parallel arrays of paths (src: or a VSPGogItem)
 	unsigned long long total;
 	volatile unsigned long long copied;
 	volatile BOOL cancel, done, failed;
@@ -305,10 +322,14 @@ static void CopyWorker( VSPCopyJob *job )
 			NSString *to = [job->dst objectAtIndex: i];
 			BOOL existed = [fm fileExistsAtPath: to];
 
+			id from = [job->src objectAtIndex: i];
+
 			[fm createDirectoryAtPath: [to stringByDeletingLastPathComponent]
 				withIntermediateDirectories: YES attributes: nil error: NULL];
-			if( !CopyOneFile( job, [[job->src objectAtIndex: i] fileSystemRepresentation],
-					[to fileSystemRepresentation], err, sizeof( err ) ) )
+			if( [from isKindOfClass: [VSPGogItem class]] ?
+				!GOG_ExtractFile( [((VSPGogItem *)from)->installer fileSystemRepresentation], &((VSPGogItem *)from)->file,
+					[to fileSystemRepresentation], &job->copied, &job->cancel, err, sizeof( err ) ) :
+				!CopyOneFile( job, [from fileSystemRepresentation], [to fileSystemRepresentation], err, sizeof( err ) ) )
 			{
 				job->failed = YES;
 				break;
@@ -338,7 +359,7 @@ static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NS
 	NSTextField *label;
 	NSButton *cancel;
 	NSModalSession session;
-	BOOL ok;
+	BOOL ok, unpack = [src count] && [[src objectAtIndex: 0] isKindOfClass: [VSPGogItem class]];
 
 	job = [[[VSPCopyJob alloc] init] autorelease];
 	job->src = [src copy];
@@ -348,8 +369,9 @@ static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NS
 
 	panel = [[[NSPanel alloc] initWithContentRect: NSMakeRect( 0, 0, 440, 120 )
 		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO] autorelease];
-	[panel setTitle: @"Copying game files"];
-	label = [NSTextField labelWithString: [NSString stringWithFormat: @"Copying game files to %@ …", dstBase]];
+	[panel setTitle: unpack ? @"Unpacking the GOG installer" : @"Copying game files"];
+	label = [NSTextField labelWithString: [NSString stringWithFormat: unpack ? @"Unpacking game files to %@ …" :
+		@"Copying game files to %@ …", dstBase]];
 	[label setFrame: NSMakeRect( 20, 80, 400, 20 )];
 	[label setLineBreakMode: NSLineBreakByTruncatingMiddle];
 	bar = [[[NSProgressIndicator alloc] initWithFrame: NSMakeRect( 20, 52, 400, 20 )] autorelease];
@@ -383,7 +405,11 @@ static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NS
 	if( !ok )
 	{
 		MacLog( @"Copy failed: %@", job->error );
-		if( !job->cancel )
+		if( !job->cancel && unpack )
+			ErrorAlert( @"Unpacking the GOG installer failed",
+				[NSString stringWithFormat: @"%@.\n\nThe partly unpacked files were removed. If the download is "
+					"damaged, download it again from GOG; otherwise: %@", job->error, MSG_USE_BASEEF] );
+		else if( !job->cancel )
 			ErrorAlert( @"Copying the game files failed",
 				[NSString stringWithFormat: @"%@\n\nThe partial copy was removed.", job->error] );
 	}
@@ -481,6 +507,80 @@ static BOOL CopyGameFiles( NSString *srcBase )
 	return YES;
 }
 /* ------------------------------------------------------------------------
+   GOG's installer
+   ------------------------------------------------------------------------ */
+
+static BOOL IsInstaller( NSString *path )
+{
+	return !IsDir( path ) && [[path pathExtension] caseInsensitiveCompare: @"exe"] == NSOrderedSame;
+}
+
+// Unpack the BaseEF .pk3 files of GOG's setup_….exe into HomeBase(), with a
+// progress panel; with onlyNew, the ones the game doesn't have yet (same name
+// and size). Says why when it can't. Returns the number of files unpacked, or
+// -1 on failure.
+static int UnpackInstaller( NSString *exe, BOOL onlyNew, NSString *external )
+{
+	NSFileManager *fm = [NSFileManager defaultManager];
+	NSString *dstBase = HomeBase();
+	NSMutableArray *src = [NSMutableArray array], *dst = [NSMutableArray array];
+	unsigned long long total = 0, copied = 0, freeBytes;
+	gogInstaller_t inst;
+	char err[512];
+	int present = 0;
+
+	MacLog( @"GOG installer: reading \"%@\"", exe );
+	if( !GOG_ReadInstaller( [exe fileSystemRepresentation], &inst, err, sizeof( err ) ) )
+	{
+		MacLog( @"GOG installer: can't be used: %s", err );
+		ErrorAlert( @"This installer can't be used",
+			[NSString stringWithFormat: @"%@\n\nThis app can't unpack it: %s.\n\n%@", [exe lastPathComponent], err, MSG_USE_BASEEF] );
+		return -1;
+	}
+	for( int i = 0; i < inst.numFiles; i++ )
+	{
+		NSString *name = [NSString stringWithUTF8String: inst.files[i].name], *have;
+		VSPGogItem *item;
+
+		if( onlyNew && ( ( have = ChildCI( dstBase, name ) ) || ( external && ( have = ChildCI( external, name ) ) ) ) &&
+			[[fm attributesOfItemAtPath: [have stringByResolvingSymlinksInPath] error: NULL] fileSize] == inst.files[i].size )
+		{
+			present++;
+			continue;
+		}
+		item = [[[VSPGogItem alloc] init] autorelease];
+		item->installer = [exe retain];
+		item->file = inst.files[i];
+		item->file.parts = malloc( sizeof( gogPart_t ) * inst.files[i].numParts );
+		memcpy( item->file.parts, inst.files[i].parts, sizeof( gogPart_t ) * inst.files[i].numParts );
+		[src addObject: item];
+		[dst addObject: ChildCI( dstBase, name ) ? ChildCI( dstBase, name ) : [dstBase stringByAppendingPathComponent: name]];
+		total += inst.files[i].size;
+	}
+	MacLog( @"GOG installer: %d .pk3 files (%@ to unpack), %d already present", inst.numFiles, FormatBytes( total ), present );
+	GOG_Free( &inst );
+	if( ![src count] )
+	{
+		ErrorAlert( @"Nothing to add", @"The game already has all of this installer's .pk3 files." );
+		return 0;
+	}
+	[fm createDirectoryAtPath: dstBase withIntermediateDirectories: YES attributes: nil error: NULL];
+	freeBytes = FreeSpace( dstBase );
+	if( freeBytes && freeBytes < total + 64ull * 1024 * 1024 )
+	{
+		ErrorAlert( @"Not enough disk space",
+			[NSString stringWithFormat: @"Unpacking the game files needs %@, but only %@ is free.",
+				FormatBytes( total + 64ull * 1024 * 1024 ), FormatBytes( freeBytes )] );
+		return -1;
+	}
+	if( !RunCopyJob( src, dst, total, dstBase, &copied ) )
+		return -1;
+	MacLog( @"GOG installer: unpacked %@ (%@) to \"%@\"", [[dst valueForKey: @"lastPathComponent"] componentsJoinedByString: @", "],
+		FormatBytes( copied ), dstBase );
+	return (int)[src count];
+}
+
+/* ------------------------------------------------------------------------
    Chooser
    ------------------------------------------------------------------------ */
 
@@ -521,7 +621,8 @@ static NSTextField *WrappingLabel( NSString *text, NSFont *font )
 	if( !( self = [super init] ) )
 		return nil;
 	info = WrappingLabel( @"Select the folder where Star Trek: Voyager – Elite Force is installed "
-		"(the one containing BaseEF with pak0.pk3), or the BaseEF folder itself. "
+		"(the one containing BaseEF with pak0.pk3), the BaseEF folder itself, or GOG's Windows installer "
+		"(the setup .exe). "
 		"By default the game files are copied into the app's own folder in Application Support, "
 		"so the original folder or CD is no longer needed.",
 		[NSFont systemFontOfSize: [NSFont smallSystemFontSize]] );
@@ -600,10 +701,11 @@ static BOOL RunChooser( NSString **outBasepath )
 			opts = [[[VSPChooserOptions alloc] init] autorelease];
 
 			[op setCanChooseDirectories: YES];
-			[op setCanChooseFiles: NO];
+			[op setCanChooseFiles: YES];		// GOG's installer; folders otherwise
+			[op setAllowedFileTypes: @[ @"exe" ]];
 			[op setAllowsMultipleSelection: NO];
 			[op setPrompt: @"Choose"];
-			[op setMessage: @"Choose your Elite Force folder"];
+			[op setMessage: @"Choose your Elite Force folder, or GOG's installer"];
 			[op setAccessoryView: [opts view]];
 			if( [op respondsToSelector: @selector(setAccessoryViewDisclosed:)] )
 				[op setAccessoryViewDisclosed: YES];
@@ -628,6 +730,20 @@ static BOOL RunChooser( NSString **outBasepath )
 			chosen = [[[op URLs] objectAtIndex: 0] path];
 			inPlace = [opts inPlace];
 			MacLog( @"Chosen game folder \"%@\" (in place: %d)", chosen, inPlace );
+		}
+
+		// GOG's installer: unpacked into the homepath (never in place)
+		if( IsInstaller( chosen ) )
+		{
+			if( UnpackInstaller( chosen, NO, nil ) > 0 && Pak0In( HomeBase() ) )
+			{
+				[[NSUserDefaults standardUserDefaults] removeObjectForKey: KEY_GAMEFOLDER];
+				[[NSUserDefaults standardUserDefaults] synchronize];
+				return YES;
+			}
+			if( testChoice )
+				return NO;
+			continue;
 		}
 
 		// accept the install folder or the BaseEF folder itself
@@ -817,7 +933,8 @@ int VSP_AddGameFiles( void )
 		[op setCanChooseFiles: YES];
 		[op setAllowsMultipleSelection: YES];
 		[op setPrompt: @"Add"];
-		[op setMessage: @"Choose .pk3 files, or a folder that contains them (such as BaseEF of the Expansion Pack or its CD)"];
+		[op setMessage: @"Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), "
+			"or GOG's installer (setup_….exe)"];
 		[NSApp activateIgnoringOtherApps: YES];
 		if( [op runModal] != NSModalResponseOK )
 			return 0;
@@ -827,6 +944,22 @@ int VSP_AddGameFiles( void )
 
 	if( ( remembered = [[NSUserDefaults standardUserDefaults] stringForKey: KEY_GAMEFOLDER] ) )
 		external = BaseIn( remembered );
+
+	// GOG's installer: its own way, one at a time
+	{
+		int unpacked = 0;
+		BOOL any = NO;
+		for( NSString *path in [[picked copy] autorelease] )
+			if( IsInstaller( path ) )
+			{
+				int n = UnpackInstaller( path, YES, external );
+				unpacked += MAX( n, 0 );
+				any = YES;
+				[picked removeObject: path];
+			}
+		if( any && ![picked count] )
+			return unpacked;
+	}
 
 	for( NSString *path in picked )
 	{

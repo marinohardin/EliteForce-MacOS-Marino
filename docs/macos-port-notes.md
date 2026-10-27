@@ -344,3 +344,25 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   what users are told about. Keep the tag format; a different prefix isn't seen.
 - **Tests.** `VOYAGERSP_TEST_UPDATE=<version>|none` answers instead of GitHub (not saved);
   `VOYAGERSP_TEST_UPDATE_ALERT=<file.png>` runs Check for Updates… and renders the alert.
+
+## GOG's installer (2026-10-26)
+
+- **What.** `sys_osx_gog.c` unpacks the game's `.pk3` files from GOG's offline Windows installer
+  (Inno Setup 5.6.2, Unicode), so Mac-only players can use the GOG download. **Choose…** and
+  **Add Game Files…** accept a `.exe`; it is always unpacked into the app's data folder, never
+  used in place. No new dependencies: the setup data is LZMA1 (system `/usr/lib/liblzma.5.dylib`,
+  declared by hand since the SDK has no header), file data is zlib (the engine's bundled zlib),
+  hashes are CommonCrypto.
+- **Format.** Inno's offset table (`rDlPtS\xcd\xe6\xd7\x7b\x0b\x2a`) points at the setup data:
+  two CRC-checked LZMA1 blocks (header + entries; 74-byte file locations). GOG doesn't use Inno's
+  own files for the game: each file is split into ≤10 MB parts, each zlib-compressed and stored
+  raw; the entries' scripts carry `before_install('<file md5>', 'BaseEF\<name>.pk3', <parts>)`
+  and `after_install('<part md5>', <stored>, <size>)`. The extractor finds those strings, maps each
+  to its location entry, and only accepts `BaseEF\*.pk3`.
+- **Checks.** Every block CRC, each part's SHA-1 (stored data) and MD5 (unpacked), and the whole
+  file's MD5. Anything unexpected (not a PE, not Inno 5.x Unicode, truncated, a part that fails a
+  check, an unknown layout) stops with an alert naming the problem and asking for a `BaseEF` folder
+  from a Windows install; partly unpacked files are removed. Verified with GOG's current 1.2 installer:
+  pak0–2 byte-identical to a PC install, about 7 s for 683 MB.
+- **Tests.** `VOYAGERSP_TEST_ADD=<installer.exe>` / `VOYAGERSP_TEST_CHOOSE=<installer.exe>`.
+  Never commit an installer or anything taken from one.

@@ -99,7 +99,8 @@ set(SDL_SRC ${EF}/sdl/sdl_input.c ${EF}/sdl/sdl_snd.c ${EF}/sdl/sdl_gamma.c ${EF
 set(SYS_SRC
   ${EF}/sys/con_log.c ${EF}/sys/con_tty.c ${EF}/sys/sys_autoupdater.c
   ${EF}/sys/sys_unix.c ${EF}/sys/sys_main.c ${EF}/sys/sys_osx.m
-  ${EF}/sys/sys_osx_data.m ${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m)
+  ${EF}/sys/sys_osx_data.m ${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m
+  ${EF}/sys/sys_osx_gog.c)
 set_source_files_properties(${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m
   PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 
@@ -162,7 +163,8 @@ target_compile_options(efsp PRIVATE
   -Wno-error=incompatible-function-pointer-types -Wno-error=int-conversion)
 
 target_link_libraries(efsp PRIVATE sp_game_bridge PkgConfig::SDL2
-  "-framework Cocoa" "-framework IOKit" dl m)
+  "-framework Cocoa" "-framework IOKit" dl m
+  lzma)		# the system's liblzma, for GOG installers (sys_osx_gog.c)
 if(EF_BINK)
   target_link_libraries(efsp PRIVATE PkgConfig::FFMPEG)
 endif()
