@@ -105,7 +105,8 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
    --draft --prerelease --target main --title "Elite Force for Mac <version>" --notes-file notes.md`.
    Notes: what's new, install (DMG drag, Gatekeeper), requirements (Apple Silicon, macOS, retail
    data), known issues, licenses and credits.
-6. Review the draft on GitHub and publish. Publishing creates the tag.
+6. Review the draft on GitHub and publish. Publishing creates the tag. Once it's published (and
+   not a pre-release), the launchers of earlier versions (1.2.1 on) announce it within a day.
 
 ## 4. Open doc TODO markers
 

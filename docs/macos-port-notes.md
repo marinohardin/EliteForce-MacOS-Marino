@@ -327,3 +327,20 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   then every listed server at once on one
   UDP socket (ping is the round trip), applying the loopback rewrite itself. Join plays
   Holomatch with `+connect` (and `+set password` when the server needs one).
+
+## Update check (2026-10-26)
+
+- **What.** The launcher (`sys_osx_launcher.m`, "Updates") asks
+  `api.github.com/repos/marinohardin/EliteForce-MacOS-Marino/releases` (unauthenticated, needs the
+  repo public) for the newest published release tagged `macos-v<version>`; drafts and
+  pre-releases are skipped, versions compare with `NSNumericSearch`. A newer one shows a badge in
+  the header ("Update available", Download… opens the release page). Nothing is downloaded or
+  installed; no Sparkle.
+- **When.** At most once a day (`UpdateLastCheck`); the last answer (`UpdateLatest`) shows at
+  once on the next start. A failed check is quiet and retried next start. The app menu gets
+  **Check for Updates…** (an alert with the answer) and **Check for Updates Automatically**
+  (`CheckForUpdates`, on unless set NO) while the launcher is up.
+- **Releasing.** Nothing extra: publishing a `macos-v<version>` release (not a pre-release) is
+  what users are told about. Keep the tag format; a different prefix isn't seen.
+- **Tests.** `VOYAGERSP_TEST_UPDATE=<version>|none` answers instead of GitHub (not saved);
+  `VOYAGERSP_TEST_UPDATE_ALERT=<file.png>` runs Check for Updates… and renders the alert.

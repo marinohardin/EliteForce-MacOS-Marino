@@ -17,7 +17,8 @@ menu does). It offers:
   - graphics: a quality preset, display (window / full screen), window size
     in points, Retina resolution, anti-aliasing, texture detail, V-Sync;
   - the Holomatch player name;
-  - where the game files are (sys_osx_data.m's lookup and chooser).
+  - where the game files are (sys_osx_data.m's lookup and chooser);
+  - a notice in the header when a newer release is on GitHub (see "Updates").
 Play appends +set com_holomatch, the graphics cvars, the name and
 fs_basepath (an in-place game folder) to the command line. Command-line
 +set values override the config files, and as archived cvars the engine
@@ -49,6 +50,10 @@ Test hooks (environment variables):
                                 "already running" question
   VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>    show it, choose About from the app
                                 menu, render the panel, close it and quit
+  VOYAGERSP_TEST_UPDATE=<version>|none  the latest release, instead of asking
+                                GitHub (none: no release found)
+  VOYAGERSP_TEST_UPDATE_ALERT=<file.png>  run Check for Updates…, render its
+                                answer and quit
 ===========================================================================
 */
 
@@ -70,6 +75,12 @@ Test hooks (environment variables):
 #include "sys_osx_launcher.h"
 
 #define KEY_LAUNCHERMODE	@"LauncherMode"
+#define KEY_UPDATECHECK		@"CheckForUpdates"		// NO: never ask GitHub on its own
+#define KEY_UPDATELAST		@"UpdateLastCheck"		// NSDate
+#define KEY_UPDATELATEST	@"UpdateLatest"			// @{ version, url } from the last check
+#define UPDATE_REPO			@"marinohardin/EliteForce-MacOS-Marino"
+#define UPDATE_TAG			@"macos-v"				// the release tags: macos-v1.2.1
+#define UPDATE_INTERVAL		( 24 * 60 * 60 )		// s between automatic checks
 
 extern NSString *Sys_MacAppBundlePath( void );
 // sys_osx_data.m
@@ -302,6 +313,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 - (void)addFiles: (id)sender;
 - (void)joinAddress: (NSString *)address password: (NSString *)password;
 - (void)browseServers: (id)sender;
+- (void)installUpdateMenu;
+- (void)removeUpdateMenu;
+- (void)checkForUpdates: (id)sender;
 @end
 
 @implementation VSPModeCard
@@ -453,6 +467,10 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSImageView *expansionIcon;
 	NSTextField *expansion;
 	BOOL updating;
+	NSView *updateBadge;
+	NSTextField *updateText;
+	NSString *updateURL;
+	NSArray<NSMenuItem *> *updateItems;	// in the app menu while the launcher runs
 }
 
 - (instancetype)initWithOverridden: (BOOL)overridden
@@ -484,6 +502,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 
 	[self refreshData];
 	[self showMasters];
+	[self startUpdateCheck];
 	[self showGraphics];
 	[self selectMode: mode];
 	if( getenv( "VOYAGERSP_TEST_LAUNCHER_PRESET" ) )
@@ -551,9 +570,10 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[headerText setOrientation: NSUserInterfaceLayoutOrientationVertical];
 	[headerText setAlignment: NSLayoutAttributeLeading];
 	[headerText setSpacing: 2];
-	header = [NSStackView stackViewWithViews: @[ appIcon, headerText ]];
+	header = [NSStackView stackViewWithViews: @[ appIcon, headerText, [NSView new], [self buildUpdateBadge] ]];
 	[header setSpacing: 14];
 	[header setAlignment: NSLayoutAttributeCenterY];
+	[[header views][2] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
 
 	// the three modes; hosting has its Config… right in its card
 	config = [NSButton buttonWithTitle: @"Config…" target: self action: @selector(configServer:)];
@@ -767,8 +787,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
 	[content addSubview: root];
 	for( NSView *v in [root views] )
-		if( v != header )
-			[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -56].active = YES;
+		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -56].active = YES;
 	[NSLayoutConstraint activateConstraints: @[
 		[[root leadingAnchor] constraintEqualToAnchor: [content leadingAnchor]],
 		[[root trailingAnchor] constraintEqualToAnchor: [content trailingAnchor]],
@@ -1218,6 +1237,274 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 
 - (NSWindow *)window	{ return window; }
 
+/* ------------------------------------------------------------------------
+   Updates: is there a newer release on GitHub?
+   ------------------------------------------------------------------------ */
+
+// At most once a day (and at once with Check for Updates… in the app menu), the
+// launcher asks GitHub's API for the repository's releases and takes the newest
+// published one tagged macos-v<version>; drafts and pre-releases don't count.
+// When it's newer than this app, the header shows it with a Download button,
+// which opens its release page. The answer is kept, so the notice shows at
+// once on the next start. Nothing is downloaded or installed here, and the
+// check is quiet when GitHub can't be reached.
+
+- (NSView *)buildUpdateBadge
+{
+	NSButton *download = [NSButton buttonWithTitle: @"Download…" target: self action: @selector(downloadUpdate:)];
+	NSImageView *icon = [NSImageView imageViewWithImage: [NSImage imageWithSystemSymbolName: @"arrow.down.circle.fill"
+		accessibilityDescription: nil]];
+	NSStackView *text, *row;
+	NSBox *box = [[NSBox alloc] init];
+
+	[icon setSymbolConfiguration: [NSImageSymbolConfiguration configurationWithPointSize: 20 weight: NSFontWeightRegular]];
+	[icon setContentTintColor: [NSColor controlAccentColor]];
+	updateText = VSP_Label( @"", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+	text = [NSStackView stackViewWithViews: @[ VSP_Label( @"Update available",
+		[NSFont systemFontOfSize: 12 weight: NSFontWeightSemibold], nil ), updateText ]];
+	[text setOrientation: NSUserInterfaceLayoutOrientationVertical];
+	[text setAlignment: NSLayoutAttributeLeading];
+	[text setSpacing: 1];
+	[download setControlSize: NSControlSizeSmall];
+	[download setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+	[download setToolTip: @"Open the release page on GitHub"];
+	row = [NSStackView stackViewWithViews: @[ icon, text, download ]];
+	[row setSpacing: 8];
+	[row setAlignment: NSLayoutAttributeCenterY];
+	[row setEdgeInsets: NSEdgeInsetsMake( 7, 10, 7, 10 )];
+	[box setBoxType: NSBoxCustom];
+	[box setBorderWidth: 0];
+	[box setCornerRadius: 9];
+	[box setFillColor: [[NSColor controlAccentColor] colorWithAlphaComponent: 0.13]];
+	[box setContentViewMargins: NSZeroSize];
+	[box setContentView: row];
+	[row setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[NSLayoutConstraint activateConstraints: @[
+		[[row leadingAnchor] constraintEqualToAnchor: [box leadingAnchor]],
+		[[row trailingAnchor] constraintEqualToAnchor: [box trailingAnchor]],
+		[[row topAnchor] constraintEqualToAnchor: [box topAnchor]],
+		[[row bottomAnchor] constraintEqualToAnchor: [box bottomAnchor]],
+	]];
+	[box setHidden: YES];
+	updateBadge = box;
+	return box;
+}
+
+static NSString *AppVersion( void )
+{
+	return [[NSBundle mainBundle] objectForInfoDictionaryKey: @"CFBundleShortVersionString"];
+}
+
+static BOOL IsNewer( NSString *version )
+{
+	NSString *mine = AppVersion();
+	return [version length] && [mine length] && [version compare: mine options: NSNumericSearch] == NSOrderedDescending;
+}
+
+// The newest published macOS release: done( version, page URL ), or ( nil, nil )
+// when there's none, or ( nil, error ) when GitHub couldn't be asked. On the main queue.
+static void FetchLatestRelease( void ( ^done )( NSString *version, NSString *urlOrError ) )
+{
+	NSMutableURLRequest *req;
+	NSURLSessionConfiguration *cfg;
+
+	if( getenv( "VOYAGERSP_TEST_UPDATE" ) )
+	{
+		NSString *v = VSP_TestEnvIs( "VOYAGERSP_TEST_UPDATE", "none" ) ? nil : @( getenv( "VOYAGERSP_TEST_UPDATE" ) );
+		// at once, so a launcher snapshot shows it
+		done( v, v ? [NSString stringWithFormat: @"https://github.com/%@/releases/tag/%@%@", UPDATE_REPO, UPDATE_TAG, v] : nil );
+		return;
+	}
+	req = [NSMutableURLRequest requestWithURL: [NSURL URLWithString:
+		[NSString stringWithFormat: @"https://api.github.com/repos/%@/releases?per_page=30", UPDATE_REPO]]];
+	[req setValue: @"application/vnd.github+json" forHTTPHeaderField: @"Accept"];
+	[req setValue: [NSString stringWithFormat: @"EliteForce-MacOS/%@", AppVersion()] forHTTPHeaderField: @"User-Agent"];
+	cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+	[cfg setTimeoutIntervalForRequest: 15];
+	[[[NSURLSession sessionWithConfiguration: cfg] dataTaskWithRequest: req completionHandler:
+		^( NSData *data, NSURLResponse *response, NSError *error ) {
+		NSInteger code = [response isKindOfClass: [NSHTTPURLResponse class]] ? [(NSHTTPURLResponse *)response statusCode] : 0;
+		id list = data && code == 200 ? [NSJSONSerialization JSONObjectWithData: data options: 0 error: NULL] : nil;
+		NSString *version = nil, *url = nil, *problem = nil;
+
+		if( ![list isKindOfClass: [NSArray class]] )
+			problem = error ? [error localizedDescription] : [NSString stringWithFormat: @"GitHub answered %ld.", (long)code];
+		else
+			for( NSDictionary *r in list )
+			{
+				NSString *tag = [r isKindOfClass: [NSDictionary class]] ? r[@"tag_name"] : nil;
+				NSString *v;
+				if( ![tag isKindOfClass: [NSString class]] || ![tag hasPrefix: UPDATE_TAG] ||
+					[r[@"draft"] boolValue] || [r[@"prerelease"] boolValue] )
+					continue;
+				v = [tag substringFromIndex: [UPDATE_TAG length]];
+				if( !version || [v compare: version options: NSNumericSearch] == NSOrderedDescending )
+				{
+					version = v;
+					url = [r[@"html_url"] isKindOfClass: [NSString class]] ? r[@"html_url"] : nil;
+				}
+			}
+		dispatch_async( dispatch_get_main_queue(), ^{
+			if( problem )
+				done( nil, problem );
+			else
+				done( version, url ? url : [NSString stringWithFormat: @"https://github.com/%@/releases", UPDATE_REPO] );
+		} );
+	}] resume];
+}
+
+static BOOL UpdateCheckEnabled( void )
+{
+	NSNumber *on = [[NSUserDefaults standardUserDefaults] objectForKey: KEY_UPDATECHECK];
+	return on ? [on boolValue] : YES;
+}
+
+- (void)showUpdate: (NSString *)version url: (NSString *)url
+{
+	BOOL newer = IsNewer( version );
+
+	updateURL = newer ? url : nil;
+	[updateText setStringValue: newer ? [NSString stringWithFormat: @"Version %@ · you have %@", version, AppVersion()] : @""];
+	[updateBadge setToolTip: newer ? [NSString stringWithFormat: @"Elite Force for Mac %@ is on GitHub", version] : nil];
+	[updateBadge setHidden: !newer];
+}
+
+- (void)startUpdateCheck
+{
+	NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+	NSDictionary *latest = [d dictionaryForKey: KEY_UPDATELATEST];
+	NSDate *last = [d objectForKey: KEY_UPDATELAST];
+
+	if( !UpdateCheckEnabled() )
+		return;
+	if( latest )
+		[self showUpdate: latest[@"version"] url: latest[@"url"]];		// from the last check
+	if( !getenv( "VOYAGERSP_TEST_UPDATE" ) && [last isKindOfClass: [NSDate class]] &&
+		-[last timeIntervalSinceNow] < UPDATE_INTERVAL && -[last timeIntervalSinceNow] >= 0 )
+		return;
+	FetchLatestRelease( ^( NSString *version, NSString *urlOrError ) {
+		if( !version && urlOrError && ![urlOrError hasPrefix: @"https:"] )
+		{
+			LLog( @"Updates: couldn't check (%@)", urlOrError );
+			return;		// quiet; try again next start
+		}
+		[self saveLatest: version url: urlOrError];
+		[self showUpdate: version url: urlOrError];
+	} );
+}
+
+- (void)saveLatest: (NSString *)version url: (NSString *)url
+{
+	NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+
+	LLog( @"Updates: latest release %@, this is %@", version ? version : @"(none)", AppVersion() );
+	if( getenv( "VOYAGERSP_TEST_UPDATE" ) )
+		return;		// a made-up answer: not kept
+	[d setObject: [NSDate date] forKey: KEY_UPDATELAST];
+	if( version && url )
+		[d setObject: @{ @"version": version, @"url": url } forKey: KEY_UPDATELATEST];
+	else
+		[d removeObjectForKey: KEY_UPDATELATEST];
+}
+
+- (void)downloadUpdate: (id)sender
+{
+	if( updateURL )
+		[[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString: updateURL]];
+}
+
+// Check for Updates…: ask now, and say what came back
+- (void)checkForUpdates: (id)sender
+{
+	FetchLatestRelease( ^( NSString *version, NSString *urlOrError ) {
+		NSAlert *a = [[NSAlert alloc] init];
+		BOOL failed = !version && urlOrError && ![urlOrError hasPrefix: @"https:"];
+		BOOL newer = !failed && IsNewer( version );
+
+		if( !failed )
+		{
+			[self saveLatest: version url: urlOrError];
+			[self showUpdate: version url: urlOrError];
+		}
+		if( failed )
+		{
+			[a setMessageText: @"Couldn't check for updates."];
+			[a setInformativeText: [NSString stringWithFormat: @"%@ Check your internet connection and try again.", urlOrError]];
+		}
+		else if( newer )
+		{
+			[a setMessageText: [NSString stringWithFormat: @"Elite Force for Mac %@ is available.", version]];
+			[a setInformativeText: [NSString stringWithFormat: @"You have version %@. Download the new version from its "
+				@"release page on GitHub, then replace the app in Applications. Your settings and saves are kept.", AppVersion()]];
+			[a addButtonWithTitle: @"Download…"];
+			[a addButtonWithTitle: @"Later"];
+		}
+		else
+		{
+			[a setMessageText: @"You're up to date."];
+			[a setInformativeText: [NSString stringWithFormat: @"Elite Force for Mac %@ is the newest version.", AppVersion()]];
+		}
+		if( getenv( "VOYAGERSP_TEST_UPDATE_ALERT" ) )
+		{
+			[a layout];
+			LLog( @"[test] Check for Updates: \"%@\" \"%@\"", [a messageText], [a informativeText] );
+			VSP_SnapshotWindow( [a window], getenv( "VOYAGERSP_TEST_UPDATE_ALERT" ) );
+			[NSApp stopModalWithCode: NSModalResponseCancel];
+			return;
+		}
+		[a beginSheetModalForWindow: self->window completionHandler: ^( NSModalResponse r ) {
+			if( newer && r == NSAlertFirstButtonReturn )
+				[self downloadUpdate: nil];
+		}];
+	} );
+}
+
+- (void)toggleUpdateCheck: (id)sender
+{
+	BOOL on = !UpdateCheckEnabled();
+
+	[[NSUserDefaults standardUserDefaults] setBool: on forKey: KEY_UPDATECHECK];
+	LLog( @"Updates: automatic check %@", on ? @"on" : @"off" );
+	if( on )
+		[self startUpdateCheck];
+	else
+		[self showUpdate: nil url: nil];
+}
+
+// the app menu's update items, while the launcher is up
+- (BOOL)worksWhenModal	{ return YES; }
+
+- (BOOL)validateMenuItem: (NSMenuItem *)item
+{
+	if( [item action] == @selector(toggleUpdateCheck:) )
+		[item setState: UpdateCheckEnabled() ? NSControlStateValueOn : NSControlStateValueOff];
+	return YES;
+}
+
+- (void)installUpdateMenu
+{
+	NSMenu *appMenu = [[[NSApp mainMenu] itemArray] count] ? [[[NSApp mainMenu] itemAtIndex: 0] submenu] : nil;
+	NSMenuItem *check = [[NSMenuItem alloc] initWithTitle: @"Check for Updates…" action: @selector(checkForUpdates:) keyEquivalent: @""];
+	NSMenuItem *automatic = [[NSMenuItem alloc] initWithTitle: @"Check for Updates Automatically"
+		action: @selector(toggleUpdateCheck:) keyEquivalent: @""];
+	NSInteger at = 1;		// after About
+
+	if( !appMenu || updateItems )
+		return;
+	[check setTarget: self];
+	[automatic setTarget: self];
+	updateItems = @[ check, automatic ];
+	for( NSMenuItem *item in updateItems )
+		[appMenu insertItem: item atIndex: MIN( at++, [appMenu numberOfItems] )];
+}
+
+- (void)removeUpdateMenu
+{
+	for( NSMenuItem *item in updateItems )
+		[[item menu] removeItem: item];
+	updateItems = nil;
+}
+
 @end
 
 /* ------------------------------------------------------------------------
@@ -1519,6 +1806,15 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 			{
 				id menu = VSP_BeginModalMenu( ^{ [NSApp stopModalWithCode: NSModalResponseCancel]; } );
 
+				[l installUpdateMenu];
+				if( getenv( "VOYAGERSP_TEST_UPDATE_ALERT" ) )
+				{
+					NSTimer *t = [NSTimer timerWithTimeInterval: 0.5 repeats: NO block: ^( NSTimer *timer ) {
+						[l checkForUpdates: nil];
+					}];
+					[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
+				}
+
 				if( getenv( "VOYAGERSP_TEST_LAUNCHER_ABOUT" ) )
 				{
 					NSTimer *t = [NSTimer timerWithTimeInterval: 1 repeats: NO block: ^( NSTimer *timer ) {
@@ -1561,6 +1857,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 				[NSApp activateIgnoringOtherApps: YES];
 				[[l window] makeKeyAndOrderFront: nil];
 				r = [NSApp runModalForWindow: [l window]];
+				[l removeUpdateMenu];
 				VSP_EndModalMenu( menu );
 				[[l window] orderOut: nil];
 			}
