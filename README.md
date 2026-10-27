@@ -77,8 +77,11 @@ simplifying hosting servers compared to the original game.
 - **macOS 12 Monterey or later.**
 - **The retail game.** Copy these files from the `BaseEF` folder of a PC installation:
   - `pak0.pk3` (about 541 MB, the main game data). This one is required.
-  - The patch paks, such as `pak1.pk3` and `pak2.pk3` (and `pak3.pk3` if you have it).
-    Recommended: they carry the 1.1/1.2 patch content.
+  - `pak1.pk3` and `pak2.pk3`, from the 1.1 and 1.2 patches. Also required, for single
+    player too: they carry the patched maps and Holomatch's game code. The original CD has
+    only `pak0.pk3`; GOG and Steam copies come patched. Without them the launcher says
+    **Patch 1.2 missing**, and **Add Game Files…** adds them.
+  - `pak3.pk3` and other extra paks, if you have them.
 
   GOG and Steam copies work. A full install from the original CD works too. A
   **minimum install from the CD does not copy `pak0.pk3` to disk**: it stays on the CD, at
@@ -105,7 +108,9 @@ simplifying hosting servers compared to the original game.
    - Tick **"Use BaseEF files in place rather than copy"** to read them from where they
      are instead (no copy, nothing extra on disk). The app remembers that folder.
    - If the chosen `BaseEF` has no `pak0.pk3` (a minimum CD install), the app says so;
-     copy `pak0.pk3` from the CD and try again.
+     copy `pak0.pk3` from the CD and try again. If it has `pak0.pk3` but not the patch's
+     `pak1.pk3` and `pak2.pk3` (files from the CD alone), the launcher says **Patch 1.2
+     missing** and keeps Play off until you add them with **Add Game Files…**.
 
    Then pick **Single Player** or **Holomatch**, adjust the graphics if you like, and
    click **Play**.

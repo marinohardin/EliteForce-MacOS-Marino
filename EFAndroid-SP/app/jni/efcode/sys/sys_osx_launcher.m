@@ -445,7 +445,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 @implementation VSPLauncher
 {
 	launchMode_t mode;
-	BOOL dataOverridden, haveData;
+	BOOL dataOverridden, haveData, missingPatch;	// missingPatch: only the CD's pak0.pk3
 	NSString *basepath;				// fs_basepath to pass, or nil
 	NSString *dataFolder;			// the BaseEF folder found
 	gfx_t gfx;
@@ -1015,10 +1015,27 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	else
 	{
 		NSString *bp, *base;
+		NSArray<NSString *> *patch;
 		haveData = VSP_FindGameData( &bp, &base );
 		basepath = bp;
 		dataFolder = base;
-		if( haveData )
+		patch = haveData ? VSP_MissingPatchPaks( dataFolder ) : @[];
+		missingPatch = [patch count] > 0;
+		[status setToolTip: nil];
+		if( missingPatch )
+		{
+			// the engine would stop at once (FS_CheckPak0): say so here, before Play
+			shown = [dataFolder stringByAbbreviatingWithTildeInPath];
+			[status setStringValue: [NSString stringWithFormat: @"Patch 1.2 missing · add %@ with Add Game Files…",
+				[patch componentsJoinedByString: @" and "]]];
+			[status setToolTip: [NSString stringWithFormat: @"These game files are from the original CD (version 1.0). "
+				@"The game also needs %@ from the 1.1 and 1.2 patches: copy them from a patched installation "
+				@"(GOG, Steam, or a PC with patch 1.2) with Add Game Files….", [patch componentsJoinedByString: @" and "]]];
+			symbol = @"exclamationmark.triangle.fill";
+			color = [NSColor systemOrangeColor];
+			LLog( @"Launcher: patch files missing (%@) in \"%@\"", [patch componentsJoinedByString: @", "], dataFolder );
+		}
+		else if( haveData )
 		{
 			shown = [dataFolder stringByAbbreviatingWithTildeInPath];
 			[status setStringValue: bp ? @"Ready · using the files in this folder"
@@ -1055,7 +1072,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	}
 	[changeButton setEnabled: !dataOverridden];
 	[changeButton setTitle: haveData ? @"Change…" : @"Choose…"];
-	[playButton setEnabled: haveData];
+	[playButton setEnabled: haveData && !missingPatch];
+	[playButton setToolTip: missingPatch ? @"Add the 1.2 patch files first (see Game Files)" : nil];
 }
 
 - (void)showFolder: (id)sender
@@ -1095,7 +1113,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 
 - (void)play: (id)sender
 {
-	if( !haveData )
+	if( !haveData || missingPatch )
 		return;
 	if( mode == MODE_HOST )
 		[self startServer];

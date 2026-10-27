@@ -964,6 +964,25 @@ BOOL VSP_HasExpansion( NSString *base )
 	return NO;
 }
 
+/*
+=================
+VSP_MissingPatchPaks
+
+The patch paks the engine insists on (FS_CheckPak0: pak1.pk3 from patch 1.1,
+pak2.pk3 from 1.2, which also carry Holomatch's game code) that are in
+neither the homepath's baseEF nor base. A CD's BaseEF has only pak0.pk3.
+=================
+*/
+NSArray<NSString *> *VSP_MissingPatchPaks( NSString *base )
+{
+	NSMutableArray<NSString *> *missing = [NSMutableArray array];
+
+	for( NSString *pak in @[ @"pak1.pk3", @"pak2.pk3" ] )
+		if( !ChildCI( HomeBase(), pak ) && !( base && ChildCI( base, pak ) ) )
+			[missing addObject: pak];
+	return missing;
+}
+
 void VSP_Log( NSString *msg )
 {
 	MacLog( @"%@", msg );

@@ -13,7 +13,7 @@ project(efsp_macos C CXX OBJC)
 # ---------------------------------------------------------------------------
 
 # the app's version (make-app.sh passes its VERSION), shown as "Elite Force for Mac <version>"
-set(EF_APP_VERSION "1.2.1" CACHE STRING "App version shown in the console and to server browsers")
+set(EF_APP_VERSION "1.2.2" CACHE STRING "App version shown in the console and to server browsers")
 option(EF_BINK "Bink cinematics via Homebrew FFmpeg (OFF = stub, no movies)" ON)
 option(EF_VM_JIT "aarch64 QVM JIT (needs MAP_JIT work on macOS)" OFF)
 

@@ -17,6 +17,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 NSString *VSP_HomeBase( void );
 void VSP_Log( NSString *msg );
 BOOL VSP_HasExpansion( NSString *base );
+NSArray<NSString *> *VSP_MissingPatchPaks( NSString *base );	// of pak1.pk3, pak2.pk3
 
 #define LLog( ... ) VSP_Log( [NSString stringWithFormat: __VA_ARGS__] )
 
