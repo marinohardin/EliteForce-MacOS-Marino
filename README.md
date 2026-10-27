@@ -36,8 +36,8 @@ simplifying hosting servers compared to the original game.
 - **Launcher.** Choose Single Player or Holomatch; a graphics **Quality** preset
   (Performance, Balanced, Best) or the individual settings: window or full screen, window
   size, full Retina resolution, anti-aliasing, texture detail and V-Sync; your Holomatch
-  player name and internet master servers (**Servers…**); **Host a Server** with its
-  **Config…**; and where the game files are, whether the Expansion Pack was found, and
+  player name, internet master servers (**Servers…**) and a server browser (**Browse…**);
+  **Host a Server** with its **Config…**; and where the game files are, whether the Expansion Pack was found, and
   **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last
   used, including changes made in the game's own Video menu.
   
@@ -45,6 +45,8 @@ simplifying hosting servers compared to the original game.
 - **Holomatch (multiplayer).** Join games on your local network (LAN party, see
   [Holomatch and LAN parties](#holomatch-and-lan-parties)), on the internet through the Join
   menu's Internet sources (live community master servers), or by IP address, with bots.
+  **Browse…** in the launcher lists every server on your network and each master at once,
+  with players, map and ping, and joins one directly.
   It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection.
@@ -147,8 +149,10 @@ Notes:
 
 Instead of hosting from inside the game, pick **Host a Server** in the launcher. **Config…**
 sets the map rotation, game type, Holomatch modifiers, limits, bots, name, password and network.
-**Start Server** runs a standalone server (no game window) and shows its address, the players
-and its console; **Play on This Mac** joins it from the same Mac. It also runs from Terminal:
+**Start Server** runs a standalone server (no game window) in a window of its own, with its
+address, the players and its console; **Play on This Mac** joins it from the same Mac. The
+launcher stays open, so you can play single player while friends play on your server. Starting
+a second server asks first, since players would see both. It also runs from Terminal:
 `"/Applications/Elite Force.app/Contents/MacOS/Elite Force" +set dedicated 1 +map hm_voy1`
 (`dedicated 2` for the internet), with console commands typed into Terminal.
 
@@ -163,9 +167,11 @@ connection through to your Mac:
   port on my router automatically** on. While the server runs, the app asks your router
   (NAT-PMP / UPnP, which most home routers support) to forward the port, and the server window
   shows your public address to give friends. The port closes again when the server stops.
-  Its **Listed** row confirms the master server reached your server, which proves the port is
-  open. Your own Mac usually won't see it in the Internet list (most routers don't loop their
-  public address back), so use **Play on This Mac**.
+  Its **Listed** row names every master that lists your server (proof the port is open) and
+  any that don't yet; some masters list new servers late, or only copy another master's list.
+  Most routers don't loop their public address back, so your own Mac couldn't reach your server
+  through the Internet list. **Loopback Host Fix** (in the launcher, on by default) lists it as
+  this Mac instead, so you see it too, marked *(this Mac)* in **Browse…**.
 - **If the router refuses** (the feature is off or unsupported, or your provider puts you
   behind a second NAT), the server window says why. Then either forward **UDP 27960** (or your
   chosen port) to your Mac by hand in the router's settings, or use a private network like
@@ -192,7 +198,7 @@ The sheet shows which ones answer and how many games each lists. Add a master (u
 the community starts new ones, drag them into the order you want, or go back with **Restore
 Recommended Defaults** or **Restore Original Defaults** (the game's own: Raven's, then tjps). A
 server you host for the internet announces itself to every master in the list; only the first
-five appear in the Join menu.
+five appear in the Join menu, while **Browse…** has a tab for each.
 
 ### Uninstall
 

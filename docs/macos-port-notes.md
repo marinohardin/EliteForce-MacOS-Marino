@@ -303,5 +303,23 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   `+set`s don't fit the engine's 1024-character command line, so the launcher writes
   `baseEF/vsp_masters.cfg` (all 16 slots, blanks included, so a removed master doesn't linger)
   and adds `+exec vsp_masters.cfg` for Holomatch and Play on This Mac; a hosted server gets the
-  same lines in `vsp_server.cfg`. The server window's Listed check asks the same list and names
-  the Internet N it found the server under.
+  same lines in `vsp_server.cfg`. The server window's Listed check asks every master in the
+  list at once and names each Internet N that lists the server, and those that don't (yet).
+
+## Hosting, loopback and the server browser (2026-10-26)
+
+- **Start Server** opens the server window in an app instance of its own (`--host-server`,
+  `sys_osx_launcher.m` → `VSP_RunServerWindow`), so the launcher stays open and can start the
+  game while the server runs. Each instance records itself in
+  `EliteForce-MacOS/RunningServers/<pid>.plist` (name, port; stale pids are pruned), which the
+  launcher reads to ask before starting a second server. The instance stops its server on its
+  own Quit, the Dock's Quit (kAEQuitApplication) and SIGTERM.
+- **Loopback Host Fix** (launcher, defaults key `LoopbackHostFix`, on unless set to NO): the
+  launcher looks up the public address with an address-only NAT-PMP request and passes
+  `+set cl_loopbackHostIP <ip>`; `CL_ServersResponsePacket` (`cl_main.c`, `__APPLE__`) rewrites
+  master-list entries with that address to `127.0.0.1`, keeping the port. A server on another
+  Mac behind the same router would be rewritten wrongly; the checkbox turns it off.
+- **Browse…** (`VSPBrowserController`, `sys_osx_server.m`): Local broadcasts `getinfo` on ports
+  27960–27963; Internet N asks master N (`QueryMaster`), then every listed server at once on one
+  UDP socket (ping is the round trip), applying the loopback rewrite itself. Join plays
+  Holomatch with `+connect` (and `+set password` when the server needs one).

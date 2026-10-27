@@ -111,11 +111,34 @@ NSInteger VSP_QueryMasterCount( NSString *master );
 void VSP_ShowMasterServers( NSWindow *parent, void ( ^done )( BOOL saved ) );
 BOOL VSP_SnapshotMasterServers( const char *path );		// after checking each master
 
+// Loopback Host Fix (the launcher's Holomatch group, on by default): the game
+// swaps this network's public address in the masters' lists for 127.0.0.1, so
+// a server hosted here shows up in the host's own internet lists. The public
+// address comes from the router (NAT-PMP), looked up in the background.
+BOOL VSP_LoopbackFix( void );
+void VSP_SetLoopbackFix( BOOL on );
+void VSP_StartPublicAddressLookup( void );
+NSString *VSP_PublicAddress( void );			// nil until the router answered
+NSArray<NSString *> *VSP_LoopbackArgs( void );	// +set cl_loopbackHostIP <ip>, or none
+
+// The Browse… sheet: Holomatch servers on this network (Local) and on each
+// master (Internet 1, 2…), Internet 1 first. done gets the address to join and
+// the password the user typed (or nil), only when the user picked one.
+void VSP_ShowServerBrowser( NSWindow *parent, void ( ^done )( NSString *address, NSString *password ) );
+BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join,
+	void ( ^done )( NSString *address, NSString *password ) );
+
 // The server window: starts the server as a child process (the app's own
-// executable, dedicated), shows it until it stops, and returns
-// NSModalResponseStop to go back to the launcher or NSModalResponseCancel to
-// quit. clientArgs are the graphics/name arguments for Play on This Mac.
-NSModalResponse VSP_RunServerWindow( VSPServerSettings *settings, NSString *basepath, NSString *dataFolder,
+// executable, dedicated) and shows it until it stops or the window closes.
+// It runs in an app instance of its own (VSP_HOST_SERVER_ARG), so the
+// launcher stays free to play. clientArgs are the graphics/name arguments for
+// Play on This Mac.
+#define VSP_HOST_SERVER_ARG	"--host-server"
+void VSP_RunServerWindow( VSPServerSettings *settings, NSString *basepath, NSString *dataFolder,
 	NSArray<NSString *> *clientArgs );
+
+// The servers that app instances on this Mac are running: pid, name, port
+// (NSNumber, NSString, NSNumber), oldest first.
+NSArray<NSDictionary *> *VSP_RunningServers( void );
 
 #endif

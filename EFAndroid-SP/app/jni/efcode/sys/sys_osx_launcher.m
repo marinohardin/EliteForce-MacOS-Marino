@@ -11,9 +11,9 @@ menu does). It offers:
   - the mode: Single Player, Holomatch (multiplayer) or Host a Server,
     remembered (NSUserDefaults key LauncherMode: 0, 1, 2). Hosting shows the
     server's settings in place of the graphics, a Config… sheet, and Start
-    Server, which runs the server window of sys_osx_server.m in this
-    process (the game itself never starts) and comes back here when the
-    server stops;
+    Server, which opens the server window of sys_osx_server.m in an app
+    instance of its own (started with --host-server, it shows nothing else),
+    so the launcher stays open and can still play;
   - graphics: a quality preset, display (window / full screen), window size
     in points, Retina resolution, anti-aliasing, texture detail, V-Sync;
   - the Holomatch player name;
@@ -37,6 +37,12 @@ Test hooks (environment variables):
   VOYAGERSP_TEST_ADD=<path>                   press Add Game Files… with <path>
   VOYAGERSP_TEST_MASTERS=a,b,... / VOYAGERSP_TEST_MASTERS_SNAPSHOT=<file.png>
                                               see sys_osx_server.m
+  VOYAGERSP_TEST_BROWSER_SNAPSHOT=<file.png>  render the Browse… sheet once its
+                                servers answered, and quit (or go on with ..._JOIN)
+  VOYAGERSP_TEST_BROWSER_TAB=local|<n>  its source (default local)
+  VOYAGERSP_TEST_BROWSER_JOIN=<row>     join that row: play Holomatch, connecting
+  VOYAGERSP_TEST_SERVER_RUNNING=show|another|cancel  answer Start Server's
+                                "already running" question
   VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>    show it, choose About from the app
                                 menu, render the panel, close it and quit
 ===========================================================================
@@ -71,9 +77,6 @@ extern int VSP_AddGameFiles( void );
 
 // the three choices (NSUserDefaults LauncherMode)
 typedef enum { MODE_SP, MODE_HOLOMATCH, MODE_HOST, NUM_MODES } launchMode_t;
-
-// runModalForWindow results besides OK (play) and Cancel (quit)
-#define RESPONSE_HOST	1000
 
 typedef enum { PRESET_PERFORMANCE, PRESET_BALANCED, PRESET_BEST, PRESET_CUSTOM } preset_t;
 
@@ -292,6 +295,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 - (void)selectMode: (launchMode_t)mode;
 - (void)play: (id)sender;
 - (void)addFiles: (id)sender;
+- (void)joinAddress: (NSString *)address password: (NSString *)password;
 @end
 
 @implementation VSPModeCard
@@ -435,6 +439,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSPopUpButton *display, *size, *msaa, *texture;
 	NSButton *retina, *vsync;
 	NSTextField *nameLabel, *name, *nameHint, *mastersSummary;
+	NSButton *loopbackFix;
+	NSString *joinAddress, *joinPassword;	// from Browse…: connect there on Play
 	NSImageView *folderIcon, *statusIcon;
 	NSTextField *folderPath, *status;
 	NSButton *showButton, *addButton, *changeButton, *playButton;
@@ -465,6 +471,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	if( getenv( "VOYAGERSP_TEST_SERVER_PORT" ) )
 		server.port = atoi( getenv( "VOYAGERSP_TEST_SERVER_PORT" ) );
 	[self buildWindow];
+	VSP_StartPublicAddressLookup();		// for the Loopback Host Fix
 
 	hm = ReadConfig( ConfigPath( YES ) );
 	[name setStringValue: hm[@"name"] && ![hm[@"name"] isEqualToString: @"UnnamedPlayer"] ? hm[@"name"] : DefaultPlayerName()];
@@ -509,7 +516,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSView *content;
 	NSStackView *root, *header, *headerText, *cardRow, *folderRow, *folderText, *footer;
 	NSGridView *grid, *nameGrid, *serverGrid;
-	NSButton *config;
+	NSButton *config, *browse;
 	NSImageView *appIcon;
 	NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey: @"CFBundleShortVersionString"];
 	NSButton *quit;
@@ -549,8 +556,12 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[config setToolTip: @"Maps, game type, bots and the server's name, password and network"];
 	cards[MODE_SP] = [[VSPModeCard alloc] initWithSymbol: @"person.fill" title: @"Single Player"
 		detail: @"The Voyager campaign, your saves and the Virtual Voyager." accessory: nil];
+	browse = [NSButton buttonWithTitle: @"Browse…" target: self action: @selector(browseServers:)];
+	[browse setControlSize: NSControlSizeSmall];
+	[browse setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+	[browse setToolTip: @"See the games on your network and the internet, and join one"];
 	cards[MODE_HOLOMATCH] = [[VSPModeCard alloc] initWithSymbol: @"person.3.fill" title: @"Holomatch"
-		detail: @"Join games on your network or the internet, or play with bots." accessory: nil];
+		detail: @"Join games on your network or the internet, or play with bots." accessory: browse];
 	cards[MODE_HOST] = [[VSPModeCard alloc] initWithSymbol: @"server.rack" title: @"Host a Server"
 		detail: @"Run a Holomatch server on this Mac for friends." accessory: config];
 	cardRow = [NSStackView stackViewWithViews: @[ cards[MODE_SP], cards[MODE_HOLOMATCH], cards[MODE_HOST] ]];
@@ -640,9 +651,18 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		row = [NSStackView stackViewWithViews: @[ mastersSummary, servers ]];
 		[row setSpacing: 10];
 		[row setAlignment: NSLayoutAttributeFirstBaseline];
+		// and seeing a server hosted on this Mac in the internet lists
+		loopbackFix = [NSButton checkboxWithTitle: @"Loopback Host Fix" target: self action: @selector(loopbackChanged:)];
+		[loopbackFix setState: VSP_LoopbackFix() ? NSControlStateValueOn : NSControlStateValueOff];
+		[loopbackFix setToolTip: @"Most routers don't route this Mac back to its own public address, so a server "
+			@"hosted here wouldn't answer in your own internet lists. This lists it as this Mac (127.0.0.1) instead."];
 		nameGrid = [NSGridView gridViewWithViews: @[ @[ nameLabel, name ], @[ [NSGridCell emptyContentView], nameHint ],
-			@[ VSP_Label( @"Internet games:", [NSFont systemFontOfSize: 13], nil ), row ] ]];
+			@[ VSP_Label( @"Internet games:", [NSFont systemFontOfSize: 13], nil ), row ],
+			@[ [NSGridCell emptyContentView], loopbackFix ],
+			@[ [NSGridCell emptyContentView], VSP_Label( @"Shows a server you host on this Mac in your own internet lists.",
+				[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ] ]];
 		[[nameGrid rowAtIndex: 2] setTopPadding: 8];
+		[[nameGrid rowAtIndex: 3] setTopPadding: 4];
 	}
 	[nameGrid setRowSpacing: 4];
 	[nameGrid setColumnSpacing: 10];
@@ -920,6 +940,28 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[mastersSummary setToolTip: [m componentsJoinedByString: @"\n"]];
 }
 
+- (void)loopbackChanged: (id)sender
+{
+	VSP_SetLoopbackFix( [loopbackFix state] == NSControlStateValueOn );
+}
+
+- (void)browseServers: (id)sender
+{
+	[self selectMode: MODE_HOLOMATCH];
+	VSP_ShowServerBrowser( window, ^( NSString *address, NSString *password ) {
+		[self joinAddress: address password: password];
+		[self play: nil];
+	} );
+}
+
+// Play goes straight into that server
+- (void)joinAddress: (NSString *)address password: (NSString *)password
+{
+	joinAddress = address;
+	joinPassword = password;
+	[self selectMode: MODE_HOLOMATCH];
+}
+
 - (void)editMasters: (id)sender
 {
 	VSP_ShowMasterServers( window, ^( BOOL saved ) {
@@ -1028,8 +1070,85 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 {
 	if( !haveData )
 		return;
-	[NSApp stopModalWithCode: mode == MODE_HOST ? RESPONSE_HOST : NSModalResponseOK];
+	if( mode == MODE_HOST )
+		[self startServer];
+	else
+		[NSApp stopModalWithCode: NSModalResponseOK];
 }
+
+// Start Server: the server window runs in an app instance of its own, so this
+// launcher stays open and can still play (single player while friends play on
+// the server, say). A second server on this Mac is allowed, but asked about.
+- (void)startServer
+{
+	NSArray<NSDictionary *> *running = VSP_RunningServers();
+	NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
+	NSMutableDictionary *env = [[[NSProcessInfo processInfo] environment] mutableCopy];
+
+	[[NSUserDefaults standardUserDefaults] setInteger: MODE_HOST forKey: KEY_LAUNCHERMODE];
+	[server save];
+	[[NSUserDefaults standardUserDefaults] synchronize];
+	if( [running count] )
+	{
+		NSDictionary *last = [running lastObject];
+		NSAlert *a = [[NSAlert alloc] init];
+		NSModalResponse r;
+		[a setMessageText: [running count] == 1 ? @"A server is already running on this Mac." :
+			[NSString stringWithFormat: @"%lu servers are already running on this Mac.", (unsigned long)[running count]]];
+		[a setInformativeText: [NSString stringWithFormat: @"“%@” is running on port %@. Another server would start "
+			@"on the next free port, with the settings in Config…; players would see both in the server list.",
+			[last[@"name"] length] ? last[@"name"] : @"Server", last[@"port"]]];
+		[a addButtonWithTitle: @"Show Running Server"];
+		[a addButtonWithTitle: @"Start Another"];
+		[a addButtonWithTitle: @"Cancel"];
+		[[a buttons][2] setKeyEquivalent: @"\033"];
+		if( getenv( "VOYAGERSP_TEST_SERVER_RUNNING" ) )
+		{
+			r = VSP_TestEnvIs( "VOYAGERSP_TEST_SERVER_RUNNING", "show" ) ? NSAlertFirstButtonReturn :
+				VSP_TestEnvIs( "VOYAGERSP_TEST_SERVER_RUNNING", "another" ) ? NSAlertSecondButtonReturn : NSAlertThirdButtonReturn;
+			LLog( @"[test] already running: \"%@\" \"%@\", answering %s", [a messageText], [a informativeText],
+				getenv( "VOYAGERSP_TEST_SERVER_RUNNING" ) );
+		}
+		else
+			r = [a runModal];
+		if( r == NSAlertFirstButtonReturn )
+		{
+			NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:
+				[last[@"pid"] intValue]];
+			LLog( @"Launcher: showing the running server (pid %@)", last[@"pid"] );
+			[app activateWithOptions: NSApplicationActivateAllWindows];
+			return;
+		}
+		if( r != NSAlertSecondButtonReturn )
+			return;
+	}
+	// a new instance gets LaunchServices' environment, not ours: pass it on
+	// (HOME and the like), without the test hooks
+	for( NSString *k in [env allKeys] )
+		if( [k hasPrefix: @"VOYAGERSP_TEST_"] )
+			[env removeObjectForKey: k];
+	[cfg setCreatesNewApplicationInstance: YES];
+	[cfg setArguments: @[ @VSP_HOST_SERVER_ARG ]];
+	[cfg setEnvironment: env];
+	[cfg setActivates: YES];
+	LLog( @"Launcher: starting the server in its own window" );
+	[[NSWorkspace sharedWorkspace] openApplicationAtURL: [[NSBundle mainBundle] bundleURL] configuration: cfg
+		completionHandler: ^( NSRunningApplication *app, NSError *error ) {
+		dispatch_async( dispatch_get_main_queue(), ^{
+			if( !error )
+			{
+				LLog( @"Launcher: server window started, pid %d", [app processIdentifier] );
+				return;
+			}
+			NSAlert *a = [[NSAlert alloc] init];
+			[a setMessageText: @"The server couldn't be started."];
+			[a setInformativeText: [error localizedDescription]];
+			[a beginSheetModalForWindow: self->window completionHandler: nil];
+		} );
+	}];
+}
+
+- (BOOL)hasData	{ return haveData; }
 
 - (launchMode_t)mode	{ return mode; }
 - (VSPServerSettings *)server	{ return server; }
@@ -1050,6 +1169,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		[a addObjectsFromArray: @[ @"+set", @"fs_basepath", basepath ]];
 	if( VSP_WriteMastersConfig() )
 		[a addObjectsFromArray: @[ @"+exec", VSP_MASTERS_CFG ]];
+	[a addObjectsFromArray: VSP_LoopbackArgs()];
 	return a;
 }
 
@@ -1075,7 +1195,16 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	// the Servers… list: sv_master1-16 in a cfg file (too long for this line)
 	if( holomatch && VSP_WriteMastersConfig() )
 		[args appendFormat: @"+exec %@ ", VSP_MASTERS_CFG];
-	LLog( @"Launcher: %@", args );
+	if( holomatch && [VSP_LoopbackArgs() count] )
+		[args appendFormat: @"+set cl_loopbackHostIP %@ ", VSP_PublicAddress()];
+	// Browse…: straight into the chosen server
+	if( holomatch && joinAddress )
+	{
+		if( joinPassword )
+			[args appendFormat: @"+set password \"%@\" ", joinPassword];
+		[args appendFormat: @"+connect %@ ", joinAddress];
+	}
+	LLog( @"Launcher: %@", joinPassword ? [args stringByReplacingOccurrencesOfString: joinPassword withString: @"••••"] : args );
 	Q_strcat( commandLine, size, [args UTF8String] );
 }
 
@@ -1291,6 +1420,11 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 		NSModalResponse r;
 		id monitor;
 		BOOL testHost = getenv( "VOYAGERSP_TEST_SERVER_START" ) != NULL;
+		BOOL hostOnly = testHost;
+
+		for( i = 1; i < argc; i++ )
+			if( !strcmp( argv[i], VSP_HOST_SERVER_ARG ) )
+				hostOnly = YES;
 
 		if( !Sys_MacAppBundlePath() )
 			return qfalse;
@@ -1310,6 +1444,23 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 				SDL_Quit( );
 				exit( 0 );
 			}
+		}
+		if( getenv( "VOYAGERSP_TEST_BROWSER_SNAPSHOT" ) || getenv( "VOYAGERSP_TEST_BROWSER_JOIN" ) )
+		{
+			__block BOOL joined = NO;
+			VSP_SnapshotServerBrowser( getenv( "VOYAGERSP_TEST_BROWSER_SNAPSHOT" ), getenv( "VOYAGERSP_TEST_BROWSER_TAB" ),
+				getenv( "VOYAGERSP_TEST_BROWSER_JOIN" ) ? atoi( getenv( "VOYAGERSP_TEST_BROWSER_JOIN" ) ) : -1,
+				^( NSString *address, NSString *password ) {
+					joined = address != nil;
+					[l joinAddress: address password: password];
+				} );
+			if( !joined )
+			{
+				SDL_Quit( );
+				exit( 0 );
+			}
+			[l selectMode: MODE_HOLOMATCH];
+			setenv( "VOYAGERSP_TEST_LAUNCHER_PLAY", "1", 1 );
 		}
 		if( getenv( "VOYAGERSP_TEST_SERVER_CONFIG_SNAPSHOT" ) )
 		{
@@ -1331,6 +1482,17 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 			}
 		}
 
+		// Host a Server's instance (started by the launcher's Start Server):
+		// only the server window, never the launcher or the game
+		if( hostOnly )
+		{
+			if( ![l hasData] )
+				LLog( @"Server: no game files found" );
+			VSP_RunServerWindow( [l server], [l basepath], [l dataFolder], [l clientArgs] );
+			SDL_Quit( );
+			exit( 0 );
+		}
+
 		// Cmd+Q: SDL's Quit menu item only posts an SDL event, which nothing
 		// reads yet
 		monitor = [NSEvent addLocalMonitorForEventsMatchingMask: NSEventMaskKeyDown handler: ^NSEvent *( NSEvent *e ) {
@@ -1345,11 +1507,6 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 		{
 			if( getenv( "VOYAGERSP_TEST_LAUNCHER_PLAY" ) )
 				r = NSModalResponseOK;
-			else if( testHost )
-			{
-				[l selectMode: MODE_HOST];
-				r = RESPONSE_HOST;
-			}
 			else
 			{
 				id menu = VSP_BeginModalMenu( ^{ [NSApp stopModalWithCode: NSModalResponseCancel]; } );
@@ -1376,19 +1533,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 				VSP_EndModalMenu( menu );
 				[[l window] orderOut: nil];
 			}
-			if( r != RESPONSE_HOST )
-				break;
-
-			// Host a Server: this process shows the server, never the game
-			[[NSUserDefaults standardUserDefaults] setInteger: MODE_HOST forKey: KEY_LAUNCHERMODE];
-			[[l server] save];
-			r = VSP_RunServerWindow( [l server], [l basepath], [l dataFolder], [l clientArgs] );
-			if( r != NSModalResponseStop || testHost )
-			{
-				r = NSModalResponseCancel;
-				break;
-			}
-			// back to the launcher
+			break;
 		}
 		[NSEvent removeMonitor: monitor];
 

@@ -2751,6 +2751,29 @@ void CL_ServersResponsePacket( const netadr_t* from, msg_t *msg, qboolean extend
 			break;
 	}
 
+#ifdef __APPLE__
+	// The macOS launcher's Loopback Host Fix: a server hosted on this network is
+	// listed under the network's public address, which most routers don't route
+	// back in from inside. List it as this Mac (127.0.0.1) instead, so the host
+	// sees their own server, with a ping, and can join it.
+	{
+		const char *own = Cvar_VariableString( "cl_loopbackHostIP" );
+		netadr_t ownAdr;
+
+		if ( *own && NET_StringToAdr( own, &ownAdr, NA_IP ) && ownAdr.type == NA_IP ) {
+			for ( i = 0; i < numservers; i++ ) {
+				if ( addresses[i].type == NA_IP && NET_CompareBaseAdr( addresses[i], ownAdr ) ) {
+					Com_Printf( "Loopback Host Fix: %s is this network, listed as ", NET_AdrToStringwPort( addresses[i] ) );
+					addresses[i].ip[0] = 127;
+					addresses[i].ip[1] = addresses[i].ip[2] = 0;
+					addresses[i].ip[3] = 1;
+					Com_Printf( "%s\n", NET_AdrToStringwPort( addresses[i] ) );
+				}
+			}
+		}
+	}
+#endif
+
 	count = cls.numglobalservers;
 
 	for (i = 0; i < numservers && count < MAX_GLOBAL_SERVERS; i++) {

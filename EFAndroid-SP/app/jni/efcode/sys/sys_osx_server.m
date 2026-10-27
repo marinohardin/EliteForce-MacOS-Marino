@@ -16,7 +16,11 @@ It is compiled with ARC (see the macOS CMakeLists.txt).
   - The master servers and the launcher's Servers… sheet: the list in the
     app's defaults (key MasterServers), passed to the game as
     baseEF/vsp_masters.cfg (+exec) and to a server in vsp_server.cfg.
-  - The server window: runs the app's own executable as a dedicated server
+  - The launcher's Browse… sheet: a server browser over Local and each
+    master, all servers asked at once (see its section).
+  - Loopback Host Fix: the public address (NAT-PMP) for cl_loopbackHostIP.
+  - The server window, in an app instance of its own (--host-server): runs
+    the app's own executable as a dedicated server
     child process, with the settings in baseEF/vsp_server.cfg (+exec), talks
     to its console over stdin/stdout, polls "status" for the map and
     players, and offers Play on This Mac (a second instance of the app as
@@ -89,6 +93,7 @@ With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 #include <netdb.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include "sys_osx_launcher.h"
 
@@ -1877,6 +1882,8 @@ NSString *VSP_LANAddress( void )
 	return best ? best : other;
 }
 
+static void RegisterRunningServer( NSString *name, NSInteger port );		// below
+
 // The child's environment: ours, without the test hooks.
 static NSDictionary *ChildEnvironment( void )
 {
@@ -1977,6 +1984,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	NSMutableData *pending;
 	srvState_t state;
 	NSModalResponse afterStop;
+	dispatch_source_t termSource;
 	NSTimer *pollTimer, *killTimer;
 	int autoStatus, userStatus;			// status answers still to come
 	BOOL inStatus, statusShown;
@@ -1996,7 +2004,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	NSTimer *listTimer;
 	int listChecks;
 	BOOL listChecking, listFound, listMasterDown;
-	NSString *listedOn;
+	NSArray<NSString *> *listedOn, *listMissing, *listDown;	// masters that list it, don't, don't answer
 	BOOL echo, readyLogged;
 	NSDate *lastPoll;
 
@@ -2296,7 +2304,7 @@ typedef enum { SRV_STARTING, SRV_RUNNING, SRV_IDLE, SRV_STOPPING, SRV_STOPPED, S
 	[playButton setEnabled: s == SRV_RUNNING];
 	[command setEnabled: s == SRV_STARTING || s == SRV_RUNNING || s == SRV_IDLE];
 	[sendButton setEnabled: [command isEnabled]];
-	[stopButton setTitle: s == SRV_STOPPED || s == SRV_FAILED ? @"Back to Launcher" : @"Stop Server"];
+	[stopButton setTitle: s == SRV_STOPPED || s == SRV_FAILED ? @"Close" : @"Stop Server"];
 	[stopButton setEnabled: s != SRV_STOPPING];
 	[self updateControls];
 }
@@ -2943,7 +2951,7 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 	[self stopListCheck];
 	listChecks = 0;
 	listFound = listMasterDown = NO;
-	listedOn = nil;
+	listedOn = listMissing = listDown = nil;
 	listChecking = YES;
 	// the public address, to find in the lists (the port mapping reports it too)
 	if( !addrRef && DNSServiceNATPortMappingCreate( &addrRef, 0, 0, 0, 0, 0, 0, AddrCallback, (__bridge void *)self ) == kDNSServiceErr_NoError )
@@ -2971,53 +2979,111 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 	NSString *ip = [self publicIP];
 	NSString *want = ip ? [NSString stringWithFormat: @"%@:%ld", ip, (long)( publicAddress ? publicPort : port )] : nil;
 	NSString *wantIP = ip ? [ip stringByAppendingString: @":"] : nil;
+	NSArray<NSString *> *masters = VSP_MasterServers();
 
 	listTimer = nil;
 	if( !task || !listChecking )
 		return;
 	listChecks++;
+	// every master, all at once: each answers within QueryMaster's timeout
 	dispatch_async( dispatch_get_global_queue( QOS_CLASS_UTILITY, 0 ), ^{
-		NSString *found = nil;
-		BOOL anyAnswer = NO;
-		for( NSString *m in VSP_MasterServers() )
-		{
-			NSSet *list = QueryMaster( m );
-			if( !list )
-				continue;
-			anyAnswer = YES;
-			for( NSString *e in list )
-				if( want && ( [e isEqualToString: want] || [e hasPrefix: wantIP] ) )
-					found = m;
+		NSMutableArray *answers = [NSMutableArray array];
+		NSLock *lock = [[NSLock alloc] init];
+		NSMutableArray *listed = [NSMutableArray array], *missing = [NSMutableArray array], *down = [NSMutableArray array];
+
+		for( NSUInteger i = 0; i < [masters count]; i++ )
+			[answers addObject: [NSNull null]];
+		dispatch_apply( [masters count], dispatch_get_global_queue( QOS_CLASS_UTILITY, 0 ), ^( size_t i ) {
+			NSSet *list = QueryMaster( masters[i] );
+			NSNumber *found = nil;
+			if( list )
+			{
+				found = @NO;
+				for( NSString *e in list )
+					if( want && ( [e isEqualToString: want] || [e hasPrefix: wantIP] ) )
+						found = @YES;
+			}
+			[lock lock];
 			if( found )
-				break;
-		}
-		dispatch_async( dispatch_get_main_queue(), ^{ [self listResult: found anyAnswer: anyAnswer]; } );
+				answers[i] = found;
+			[lock unlock];
+		} );
+		for( NSUInteger i = 0; i < [masters count]; i++ )
+			[answers[i] isEqual: @YES] ? [listed addObject: masters[i]] :
+				[answers[i] isEqual: @NO] ? [missing addObject: masters[i]] : [down addObject: masters[i]];
+		dispatch_async( dispatch_get_main_queue(), ^{ [self listResult: listed missing: missing down: down]; } );
 	} );
 }
 
-- (void)listResult: (NSString *)master anyAnswer: (BOOL)anyAnswer
+// "Internet 2" for the browser's sources (the first five masters), else the master's name
+static NSString *MasterLabel( NSString *master )
 {
+	NSUInteger slot = [VSP_MasterServers() indexOfObject: master];
+	return slot < 5 ? [NSString stringWithFormat: @"Internet %lu", (unsigned long)slot + 1] : master;
+}
+
+// "Internet 2 and 3", "Internet 1, 2 and master.example.org"
+static NSString *MasterLabels( NSArray<NSString *> *masters )
+{
+	NSMutableArray *slots = [NSMutableArray array], *names = [NSMutableArray array];
+	NSMutableArray *parts = [NSMutableArray array];
+
+	for( NSString *m in masters )
+	{
+		NSString *l = MasterLabel( m );
+		[l hasPrefix: @"Internet "] ? [slots addObject: [l substringFromIndex: 9]] : [names addObject: l];
+	}
+	if( [slots count] )
+		[parts addObject: [@"Internet " stringByAppendingString: [slots componentsJoinedByString: @", "]]];
+	[parts addObjectsFromArray: names];
+	if( [parts count] < 2 )
+		return [parts firstObject] ? [parts firstObject] : @"";
+	// "Internet 2, 3" -> "Internet 2 and 3" when it ends the list
+	NSString *last = [parts lastObject];
+	NSString *head = [[parts subarrayWithRange: NSMakeRange( 0, [parts count] - 1 )] componentsJoinedByString: @", "];
+	return [NSString stringWithFormat: @"%@ and %@", head, last];
+}
+
+static NSString *MasterLabelsWithNames( NSArray<NSString *> *masters )
+{
+	NSMutableArray *a = [NSMutableArray array];
+	for( NSString *m in masters )
+	{
+		NSString *l = MasterLabel( m );
+		[a addObject: [l isEqualToString: m] ? m : [NSString stringWithFormat: @"%@ (%@)", l, m]];
+	}
+	return [a componentsJoinedByString: @", "];
+}
+
+- (void)listResult: (NSArray<NSString *> *)listed missing: (NSArray<NSString *> *)missing down: (NSArray<NSString *> *)down
+{
+	NSArray *added;
+
 	if( !task || !listChecking )
 		return;
-	LLog( @"Server: internet list check %d: %@", listChecks, master ? [@"listed on " stringByAppendingString: master] :
-		anyAnswer ? @"not listed" : @"no master answered" );
-	if( master )
+	LLog( @"Server: internet list check %d: listed on [%@], not on [%@], no answer from [%@]", listChecks,
+		[listed componentsJoinedByString: @", "], [missing componentsJoinedByString: @", "], [down componentsJoinedByString: @", "] );
+	added = [listed filteredArrayUsingPredicate: [NSPredicate predicateWithFormat: @"NOT (SELF IN %@)", listedOn ? listedOn : @[]]];
+	if( [added count] )
+		[self appendLog: [NSString stringWithFormat: @"Internet: listed on %@, so players anywhere can reach it.",
+			MasterLabelsWithNames( added )] color: [NSColor systemGreenColor]];
+	listedOn = listed;
+	listMissing = missing;
+	listDown = down;
+	listFound = [listed count] > 0;
+	listMasterDown = ![listed count] && ![missing count];
+	// done when every master that answers lists it; else keep looking (a master can be slow,
+	// or only copy another master's list now and then)
+	if( ( listFound && ![missing count] ) || listChecks >= LIST_MAX_CHECKS )
 	{
-		listFound = YES;
-		listedOn = master;
 		listChecking = NO;
-		[self appendLog: [NSString stringWithFormat: @"Internet: listed on %@, so players anywhere can reach it.", master]
-			color: [NSColor systemGreenColor]];
-		[self showList];
-		return;
-	}
-	listMasterDown = !anyAnswer;
-	if( listChecks >= LIST_MAX_CHECKS )
-	{
-		listChecking = NO;
-		[self appendLog: listMasterDown ? @"Internet: no master server answered, so the listing couldn't be checked." :
-			@"Internet: not on the server list. The master server couldn't reach this server from the internet."
-			color: [NSColor systemOrangeColor]];
+		if( !listFound )
+			[self appendLog: listMasterDown ? @"Internet: no master server answered, so the listing couldn't be checked." :
+				@"Internet: not on the server list. The master server couldn't reach this server from the internet."
+				color: [NSColor systemOrangeColor]];
+		else if( [missing count] )
+			[self appendLog: [NSString stringWithFormat: @"Internet: not listed on %@ (yet).", MasterLabelsWithNames( missing )]
+				color: [NSColor secondaryLabelColor]];
 		[self showList];
 		return;
 	}
@@ -3043,13 +3109,17 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 		return;
 	if( listFound )
 	{
-		value = [NSString stringWithFormat: @"Yes, on %@", listedOn];
-		NSUInteger slot = [VSP_MasterServers() indexOfObject: listedOn];
-		hint = [NSString stringWithFormat: @"The master server reached your server from the internet: players anywhere "
-			@"find it in Holomatch's internet list (%@). This Mac itself won't see it there when "
-			@"your router doesn't loop its public address back: use Play on This Mac.",
-			slot < 5 ? [NSString stringWithFormat: @"Internet %lu for this master", (unsigned long)slot + 1] :
-			@"Internet 1 to 5 for the masters that list it"];
+		NSMutableString *h = [NSMutableString stringWithFormat: @"Players anywhere find it in the Join menu under %@.",
+			MasterLabelsWithNames( listedOn )];
+		value = [NSString stringWithFormat: @"Yes, on %@%@", MasterLabels( listedOn ),
+			listChecking ? @" · checking the others…" : @""];
+		if( [listMissing count] )
+			[h appendFormat: @" Not%@ on %@: some masters list new servers late, or copy another master's list.",
+				listChecking ? @" yet" : @"", MasterLabelsWithNames( listMissing )];
+		if( [listDown count] )
+			[h appendFormat: @" %@ %@ answer.", MasterLabels( listDown ), [listDown count] > 1 ? @"don't" : @"doesn't"];
+		[h appendString: @" On this Mac, Loopback Host Fix (in the launcher) shows it in your list too."];
+		hint = h;
 		symbol = @"checkmark.circle.fill";
 		tint = [NSColor systemGreenColor];
 	}
@@ -3083,7 +3153,7 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 	[listIcon setImage: symbol ? [NSImage imageWithSystemSymbolName: symbol accessibilityDescription: nil] : nil];
 	[listIcon setHidden: !symbol];
 	[listIcon setContentTintColor: tint];
-	[checkAgainButton setHidden: !task || listChecking || listFound];
+	[checkAgainButton setHidden: !task || listChecking || ( listFound && ![listMissing count] )];
 	[listHint setStringValue: hint];
 	[listHint setHidden: ![hint length]];
 	[listHint setTextColor: ( listChecks && !listFound && !listChecking && !listMasterDown ) ?
@@ -3104,6 +3174,7 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 		return;
 	readyLogged = YES;
 	LLog( @"Server: ready on %@ (map %@)", [self addressString], currentMap );
+	RegisterRunningServer( settings.hostname, port );		// the port it got
 	if( settings.internet && settings.openPort )
 		[self openRouterPort];
 	if( settings.internet )
@@ -3334,6 +3405,12 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 	[[NSRunLoop currentRunLoop] addTimer: killTimer forMode: NSRunLoopCommonModes];
 }
 
+- (void)quitEvent: (NSAppleEventDescriptor *)event reply: (NSAppleEventDescriptor *)reply
+{
+	LLog( @"Server: asked to quit, stopping the server" );
+	[self stopThen: NSModalResponseCancel];
+}
+
 // --- actions ---
 
 - (void)stop: (id)sender
@@ -3482,8 +3559,20 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 	}
 
 	menu = VSP_BeginModalMenu( ^{ [weakSelf stopThen: NSModalResponseCancel]; } );
+	// This instance has a Dock icon of its own: its Quit, logging out and SIGTERM
+	// stop the server cleanly too (SDL's handlers only post events nobody reads here)
+	[[NSAppleEventManager sharedAppleEventManager] setEventHandler: self andSelector: @selector(quitEvent:reply:)
+		forEventClass: kCoreEventClass andEventID: kAEQuitApplication];
+	signal( SIGTERM, SIG_IGN );
+	termSource = dispatch_source_create( DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue() );
+	dispatch_source_set_event_handler( termSource, ^{
+		LLog( @"Server: SIGTERM, stopping the server" );
+		[weakSelf stopThen: NSModalResponseCancel];
+	} );
+	dispatch_resume( termSource );
 	[self start];
 	r = [NSApp runModalForWindow: _window];
+	dispatch_source_cancel( termSource );
 	VSP_EndModalMenu( menu );
 	[NSEvent removeMonitor: monitor];
 	[_window orderOut: nil];
@@ -3492,15 +3581,65 @@ static void AddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifI
 
 @end
 
-NSModalResponse VSP_RunServerWindow( VSPServerSettings *settings, NSString *basepath, NSString *dataFolder,
+// --- which app instances run a server: a small plist per process ---
+
+static NSString *RunningServersDir( void )
+{
+	return [[VSP_HomeBase() stringByDeletingLastPathComponent] stringByAppendingPathComponent: @"RunningServers"];
+}
+
+static NSString *RunningServerFile( pid_t pid )
+{
+	return [RunningServersDir() stringByAppendingPathComponent: [NSString stringWithFormat: @"%d.plist", pid]];
+}
+
+static void RegisterRunningServer( NSString *name, NSInteger port )
+{
+	[[NSFileManager defaultManager] createDirectoryAtPath: RunningServersDir() withIntermediateDirectories: YES
+		attributes: nil error: NULL];
+	[@{ @"name": name ? name : @"", @"port": @( port ), @"started": [NSDate date] }
+		writeToFile: RunningServerFile( getpid() ) atomically: YES];
+}
+
+static void UnregisterRunningServer( void )
+{
+	[[NSFileManager defaultManager] removeItemAtPath: RunningServerFile( getpid() ) error: NULL];
+}
+
+NSArray<NSDictionary *> *VSP_RunningServers( void )
+{
+	NSMutableArray *a = [NSMutableArray array];
+
+	for( NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: RunningServersDir() error: NULL] )
+	{
+		pid_t pid = [f intValue];
+		NSDictionary *d;
+		if( ![f hasSuffix: @".plist"] || pid <= 0 )
+			continue;
+		if( kill( pid, 0 ) && errno == ESRCH )
+		{
+			// that instance is gone (crashed or killed): forget it
+			[[NSFileManager defaultManager] removeItemAtPath: RunningServerFile( pid ) error: NULL];
+			continue;
+		}
+		if( ( d = [NSDictionary dictionaryWithContentsOfFile: RunningServerFile( pid )] ) )
+			[a addObject: @{ @"pid": @( pid ), @"name": d[@"name"] ? d[@"name"] : @"",
+				@"port": d[@"port"] ? d[@"port"] : @0, @"started": d[@"started"] ? d[@"started"] : [NSDate distantPast] }];
+	}
+	[a sortUsingDescriptors: @[ [NSSortDescriptor sortDescriptorWithKey: @"started" ascending: YES] ]];
+	return a;
+}
+
+void VSP_RunServerWindow( VSPServerSettings *settings, NSString *basepath, NSString *dataFolder,
 	NSArray<NSString *> *clientArgs )
 {
 	@autoreleasepool {
 		VSPServerWindowController *c = [[VSPServerWindowController alloc] initWithSettings: settings basepath: basepath
 			dataFolder: dataFolder clientArgs: clientArgs];
-		NSModalResponse r = [c run];
-		LLog( @"Server: window closed, %@", r == NSModalResponseStop ? @"back to the launcher" : @"quitting" );
-		return r;
+		RegisterRunningServer( settings.hostname, settings.port );
+		[c run];
+		UnregisterRunningServer();
+		LLog( @"Server: window closed" );
 	}
 }
 
@@ -4128,4 +4267,690 @@ BOOL VSP_SnapshotMasterServers( const char *path )
 		[c testActions: getenv( "VOYAGERSP_TEST_MASTERS_ACTIONS" )];
 	[c checkAllWaiting: YES];
 	return VSP_SnapshotWindow( [c panel], path );
+}
+
+/* ------------------------------------------------------------------------
+   Loopback Host Fix: this network's public address, for the game
+   ------------------------------------------------------------------------ */
+
+#define KEY_LOOPBACKFIX		@"LoopbackHostFix"
+
+static DNSServiceRef publicAddrRef;
+static NSString *routerAddress;
+
+BOOL VSP_LoopbackFix( void )
+{
+	NSNumber *on = [[NSUserDefaults standardUserDefaults] objectForKey: KEY_LOOPBACKFIX];
+	return on ? [on boolValue] : YES;
+}
+
+void VSP_SetLoopbackFix( BOOL on )
+{
+	if( on )
+		[[NSUserDefaults standardUserDefaults] removeObjectForKey: KEY_LOOPBACKFIX];
+	else
+		[[NSUserDefaults standardUserDefaults] setBool: NO forKey: KEY_LOOPBACKFIX];
+}
+
+static void PublicAddrCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifIndex, DNSServiceErrorType err,
+	uint32_t externalAddress, DNSServiceProtocol protocol, uint16_t internalPort, uint16_t externalPort,
+	uint32_t ttl, void *context )
+{
+	char buf[INET_ADDRSTRLEN];
+
+	if( err != kDNSServiceErr_NoError || !externalAddress )
+		return;
+	routerAddress = @( inet_ntop( AF_INET, &externalAddress, buf, sizeof( buf ) ) );
+	LLog( @"Public address (from the router): %@", routerAddress );
+	DNSServiceRefDeallocate( publicAddrRef );
+	publicAddrRef = NULL;
+}
+
+// An address-only NAT-PMP request (protocol and ports 0): nothing is opened.
+void VSP_StartPublicAddressLookup( void )
+{
+	if( TestEnvSet( "VOYAGERSP_TEST_NAT" ) && !VSP_TestEnvIs( "VOYAGERSP_TEST_NAT", "fail" ) )
+	{
+		routerAddress = @( getenv( "VOYAGERSP_TEST_NAT" ) );
+		return;
+	}
+	if( routerAddress || publicAddrRef )
+		return;
+	if( DNSServiceNATPortMappingCreate( &publicAddrRef, 0, 0, 0, 0, 0, 0, PublicAddrCallback, NULL ) == kDNSServiceErr_NoError )
+		DNSServiceSetDispatchQueue( publicAddrRef, dispatch_get_main_queue() );
+	else
+		publicAddrRef = NULL;
+}
+
+NSString *VSP_PublicAddress( void )	{ return routerAddress; }
+
+NSArray<NSString *> *VSP_LoopbackArgs( void )
+{
+	NSDate *until = [NSDate dateWithTimeIntervalSinceNow: 1.5];
+
+	if( !VSP_LoopbackFix() )
+		return @[];
+	// Play pressed right away: give the router a moment to answer
+	while( !routerAddress && publicAddrRef && [until timeIntervalSinceNow] > 0 )
+		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
+	if( !routerAddress )
+		return @[];
+	return @[ @"+set", @"cl_loopbackHostIP", routerAddress ];
+}
+
+/* ------------------------------------------------------------------------
+   The launcher's Browse… sheet: a server browser
+   ------------------------------------------------------------------------ */
+
+// Holomatch's own Join menu waits for each source in turn. This asks a master for
+// its list, then every server on it for its info (getinfo) at once, in the
+// background, and fills the table as the answers come in. Local asks the network
+// by broadcast on Holomatch's LAN ports (27960-27963), as the game does.
+
+#define BROWSER_WAIT		2.5		// s to wait for the servers' answers
+#define BROWSER_WAIT_LOCAL	1.5
+
+@interface VSPServerInfo : NSObject
+@property (nonatomic, copy) NSString *address, *name, *map;
+@property (nonatomic) NSInteger players, maxPlayers, humans, gametype, ping;	// humans -1: not reported
+@property (nonatomic) BOOL needPass, thisMac;
+@property (nonatomic, readonly) NSString *gametypeName, *playersText;
+@end
+
+@implementation VSPServerInfo
+- (NSString *)gametypeName
+{
+	return _gametype == 2 ? @"Single Player" : _gametype > 4 ? [NSString stringWithFormat: @"Type %ld", (long)_gametype] :
+		[VSPServerSettings gametypeName: _gametype];
+}
+- (NSString *)playersText
+{
+	NSInteger bots = _humans >= 0 ? _players - _humans : 0;
+	NSString *n = _maxPlayers > 0 ? [NSString stringWithFormat: @"%ld/%ld", (long)_players, (long)_maxPlayers] :
+		[NSString stringWithFormat: @"%ld", (long)_players];
+	return bots > 0 ? [NSString stringWithFormat: @"%@ (%ld %@)", n, (long)bots, bots == 1 ? @"bot" : @"bots"] : n;
+}
+@end
+
+// a fetch for one source, so a newer one (Refresh) or closing the sheet can stop it
+@interface VSPFetch : NSObject
+@property (atomic) BOOL cancelled;
+@end
+@implementation VSPFetch
+@end
+
+static BOOL ParseAddress( NSString *address, struct sockaddr_in *sa )
+{
+	NSRange colon = [address rangeOfString: @":" options: NSBackwardsSearch];
+	NSString *host = colon.location == NSNotFound ? address : [address substringToIndex: colon.location];
+	int port = colon.location == NSNotFound ? PORT_SERVER : [[address substringFromIndex: colon.location + 1] intValue];
+
+	memset( sa, 0, sizeof( *sa ) );
+	sa->sin_family = AF_INET;
+	sa->sin_len = sizeof( *sa );
+	sa->sin_port = htons( (uint16_t)port );
+	return port > 0 && port < 65536 && inet_pton( AF_INET, [host UTF8String], &sa->sin_addr ) == 1;
+}
+
+static VSPServerInfo *ParseInfoResponse( const char *buf, ssize_t n, NSString *from )
+{
+	static const char head[] = "\xff\xff\xff\xffinfoResponse";
+	NSString *text;
+	NSArray *parts;
+	NSMutableDictionary *kv = [NSMutableDictionary dictionary];
+	VSPServerInfo *info = [[VSPServerInfo alloc] init];
+	const char *p;
+
+	if( n < (ssize_t)sizeof( head ) || memcmp( buf, head, sizeof( head ) - 1 ) )
+		return nil;
+	if( !( p = memchr( buf, '\\', n ) ) )
+		return nil;
+	text = [[NSString alloc] initWithBytes: p length: buf + n - p encoding: NSISOLatin1StringEncoding];
+	parts = [text componentsSeparatedByString: @"\\"];
+	for( NSUInteger i = 1; i + 1 < [parts count]; i += 2 )
+		kv[[parts[i] lowercaseString]] = parts[i + 1];
+	info.address = from;
+	info.name = [StripColors( kv[@"hostname"] ? kv[@"hostname"] : @"" ) stringByTrimmingCharactersInSet:
+		[NSCharacterSet whitespaceCharacterSet]];
+	if( ![info.name length] )
+		info.name = from;
+	info.map = kv[@"mapname"] ? [kv[@"mapname"] lowercaseString] : @"";
+	info.players = [kv[@"clients"] integerValue];
+	info.maxPlayers = [kv[@"sv_maxclients"] integerValue];
+	info.humans = kv[@"g_humanplayers"] ? [kv[@"g_humanplayers"] integerValue] : -1;
+	info.gametype = [kv[@"gametype"] integerValue];
+	info.needPass = [kv[@"g_needpass"] integerValue] != 0 || [kv[@"needpass"] integerValue] != 0;
+	return info;
+}
+
+// Ask every address (and with broadcast, the network) for its info, all at once.
+// Runs on the calling (background) thread; got and done run on the main queue.
+static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSPFetch *fetch,
+	void ( ^got )( VSPServerInfo *info ), void ( ^done )( NSUInteger answered ) )
+{
+	static const char q[] = "\xff\xff\xff\xffgetinfo browse";
+	NSMutableDictionary<NSString *, NSNumber *> *sent = [NSMutableDictionary dictionary];
+	CFAbsoluteTime start = CFAbsoluteTimeGetCurrent(), deadline;
+	NSUInteger answered = 0, asked = 0;
+	int fd = socket( AF_INET, SOCK_DGRAM, 0 ), on = 1;
+
+	if( fd < 0 )
+	{
+		dispatch_async( dispatch_get_main_queue(), ^{ done( 0 ); } );
+		return;
+	}
+	if( broadcast )
+	{
+		struct sockaddr_in sa;
+		setsockopt( fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof( on ) );
+		for( int port = PORT_SERVER; port < PORT_SERVER + 4; port++ )
+		{
+			ParseAddress( [NSString stringWithFormat: @"255.255.255.255:%d", port], &sa );
+			sendto( fd, q, sizeof( q ) - 1, 0, (struct sockaddr *)&sa, sizeof( sa ) );
+		}
+	}
+	for( NSString *a in addresses )
+	{
+		struct sockaddr_in sa;
+		if( !ParseAddress( a, &sa ) )
+			continue;
+		sent[a] = @( CFAbsoluteTimeGetCurrent() );
+		sendto( fd, q, sizeof( q ) - 1, 0, (struct sockaddr *)&sa, sizeof( sa ) );
+		if( ++asked % 32 == 0 )
+			usleep( 2000 );		// don't flood a home router
+	}
+	deadline = CFAbsoluteTimeGetCurrent() + ( broadcast ? BROWSER_WAIT_LOCAL : BROWSER_WAIT );
+	while( !fetch.cancelled && CFAbsoluteTimeGetCurrent() < deadline && ( broadcast || answered < asked ) )
+	{
+		struct pollfd pfd = { fd, POLLIN, 0 };
+		char buf[4096], host[INET_ADDRSTRLEN];
+		struct sockaddr_in from;
+		socklen_t fromLen = sizeof( from );
+		ssize_t n;
+		NSString *key;
+		NSNumber *t;
+		VSPServerInfo *info;
+
+		if( poll( &pfd, 1, 100 ) <= 0 )
+			continue;
+		if( ( n = recvfrom( fd, buf, sizeof( buf ), 0, (struct sockaddr *)&from, &fromLen ) ) <= 0 )
+			continue;
+		inet_ntop( AF_INET, &from.sin_addr, host, sizeof( host ) );
+		key = [NSString stringWithFormat: @"%s:%d", host, ntohs( from.sin_port )];
+		if( !( info = ParseInfoResponse( buf, n, key ) ) )
+			continue;
+		t = sent[key];
+		info.ping = (NSInteger)( ( CFAbsoluteTimeGetCurrent() - ( t ? [t doubleValue] : start ) ) * 1000 );
+		if( t )
+		{
+			[sent removeObjectForKey: key];		// one answer each
+			answered++;
+		}
+		else if( !broadcast )
+			continue;
+		else
+			answered++;
+		dispatch_async( dispatch_get_main_queue(), ^{
+			if( !fetch.cancelled )
+				got( info );
+		} );
+	}
+	close( fd );
+	dispatch_async( dispatch_get_main_queue(), ^{
+		if( !fetch.cancelled )
+			done( answered );
+	} );
+}
+
+@interface VSPBrowserController : NSObject <NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate>
+@property (nonatomic, readonly) NSWindow *panel;
+@property (nonatomic, copy) void ( ^done )( NSString *address, NSString *password );
+- (void)selectSource: (NSInteger)source;
+- (BOOL)busy;
+- (void)joinRow: (NSInteger)row;
+@end
+
+@implementation VSPBrowserController
+{
+	NSArray<NSString *> *masters;
+	NSInteger source;				// 0 Local, n: masters[n - 1]
+	NSMutableDictionary<NSNumber *, NSMutableArray<VSPServerInfo *> *> *results;
+	NSMutableDictionary<NSNumber *, NSString *> *status;
+	NSMutableDictionary<NSNumber *, VSPFetch *> *fetches;	// the ones still running
+	NSArray<VSPServerInfo *> *shown;
+	BOOL reloadPending;
+
+	NSSegmentedControl *tabs;
+	NSTextField *statusText;
+	NSProgressIndicator *spinner;
+	NSTableView *table;
+	NSTextField *addressField;
+	NSButton *joinButton, *connectButton, *refreshButton;
+}
+
+- (instancetype)init
+{
+	if( !( self = [super init] ) )
+		return nil;
+	masters = VSP_MasterServers();
+	results = [NSMutableDictionary dictionary];
+	status = [NSMutableDictionary dictionary];
+	fetches = [NSMutableDictionary dictionary];
+	shown = @[];
+	[self build];
+	return self;
+}
+
+- (NSString *)labelForSource: (NSInteger)s
+{
+	return s == 0 ? @"Local" : [NSString stringWithFormat: @"Internet %ld", (long)s];
+}
+
+- (NSTableColumn *)column: (NSString *)ident title: (NSString *)title width: (CGFloat)width sortKey: (NSString *)key
+	ascending: (BOOL)ascending
+{
+	NSTableColumn *c = [[NSTableColumn alloc] initWithIdentifier: ident];
+	[c setTitle: title];
+	[c setWidth: width];
+	[c setMinWidth: MIN( width, 40 )];
+	if( key )
+		[c setSortDescriptorPrototype: [NSSortDescriptor sortDescriptorWithKey: key ascending: ascending
+			selector: [key isEqualToString: @"name"] || [key isEqualToString: @"map"] ? @selector(localizedCaseInsensitiveCompare:) :
+			@selector(compare:)]];
+	[table addTableColumn: c];
+	return c;
+}
+
+- (void)build
+{
+	NSView *content, *box;
+	NSStackView *root, *top, *footer;
+	NSButton *cancel;
+	NSMutableArray *labels = [NSMutableArray arrayWithObject: @"Local"];
+
+	_panel = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 780, 540 )
+		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO];
+	[_panel setTitle: @"Holomatch Servers"];
+	VSP_ApplyTestAppearance( _panel );
+	content = [_panel contentView];
+
+	// the sources: Local and every master, as the Join menu numbers them
+	for( NSUInteger i = 0; i < [masters count]; i++ )
+		[labels addObject: [masters count] > 7 ? [NSString stringWithFormat: @"%lu", (unsigned long)i + 1] :
+			[self labelForSource: i + 1]];
+	tabs = [NSSegmentedControl segmentedControlWithLabels: labels trackingMode: NSSegmentSwitchTrackingSelectOne
+		target: self action: @selector(sourceChanged:)];
+	[tabs setToolTip: @"Local: this network. Internet 1, 2…: the master servers, in the order set in Servers…"];
+	[tabs setToolTip: @"Your network" forSegment: 0];
+	for( NSUInteger i = 0; i < [masters count]; i++ )
+		[tabs setToolTip: masters[i] forSegment: i + 1];
+	refreshButton = [NSButton buttonWithImage: Symbol( @"arrow.clockwise", 12 ) target: self action: @selector(refresh:)];
+	[refreshButton setBezelStyle: NSBezelStyleRounded];
+	[refreshButton setToolTip: @"Ask again"];
+	[refreshButton setAccessibilityLabel: @"Refresh"];
+	[refreshButton setKeyEquivalent: @"r"];
+	[refreshButton setKeyEquivalentModifierMask: NSEventModifierFlagCommand];
+	top = HStack( @[ tabs, [NSView new], refreshButton ], 8 );
+	[top setAlignment: NSLayoutAttributeCenterY];
+	[[top views][1] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+
+	spinner = [[NSProgressIndicator alloc] init];
+	[spinner setStyle: NSProgressIndicatorStyleSpinning];
+	[spinner setControlSize: NSControlSizeSmall];
+	[spinner setDisplayedWhenStopped: NO];
+	statusText = VSP_Label( @"", Small(), [NSColor secondaryLabelColor] );
+	[statusText setLineBreakMode: NSLineBreakByTruncatingTail];
+	[statusText setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow
+		forOrientation: NSLayoutConstraintOrientationHorizontal];
+
+	table = [[NSTableView alloc] init];
+	[table setStyle: NSTableViewStyleFullWidth];
+	[table setBackgroundColor: [NSColor clearColor]];
+	[table setUsesAlternatingRowBackgroundColors: NO];
+	[table setRowHeight: 22];
+	[table setIntercellSpacing: NSMakeSize( 10, 0 )];
+	[table setColumnAutoresizingStyle: NSTableViewFirstColumnOnlyAutoresizingStyle];
+	[self column: @"name" title: @"Server" width: 240 sortKey: @"name" ascending: YES];
+	[self column: @"lock" title: @"" width: 14 sortKey: @"needPass" ascending: NO];
+	[[[table tableColumnWithIdentifier: @"lock"] headerCell] setImage: Symbol( @"lock.fill", 10 )];
+	[[table tableColumnWithIdentifier: @"lock"] setHeaderToolTip: @"Needs a password"];
+	[self column: @"map" title: @"Map" width: 110 sortKey: @"map" ascending: YES];
+	[self column: @"players" title: @"Players" width: 100 sortKey: @"players" ascending: NO];
+	[self column: @"type" title: @"Game" width: 120 sortKey: @"gametype" ascending: YES];
+	[self column: @"ping" title: @"Ping" width: 40 sortKey: @"ping" ascending: YES];
+	[[table tableColumnWithIdentifier: @"name"] setResizingMask: NSTableColumnAutoresizingMask | NSTableColumnUserResizingMask];
+	[table setSortDescriptors: @[ [NSSortDescriptor sortDescriptorWithKey: @"players" ascending: NO],
+		[NSSortDescriptor sortDescriptorWithKey: @"ping" ascending: YES] ]];
+	[table setDataSource: self];
+	[table setDelegate: self];
+	[table setTarget: self];
+	[table setDoubleAction: @selector(joinClicked:)];
+	box = Boxed( Scrolled( table ) );
+
+	addressField = [NSTextField textFieldWithString: @""];
+	[addressField setPlaceholderString: @"Or an address, like 203.0.113.5:27960"];
+	[addressField setDelegate: self];
+	[[addressField widthAnchor] constraintEqualToConstant: 260].active = YES;
+	connectButton = [NSButton buttonWithTitle: @"Connect" target: self action: @selector(connectAddress:)];
+	[connectButton setEnabled: NO];
+	cancel = [NSButton buttonWithTitle: @"Cancel" target: self action: @selector(cancel:)];
+	[cancel setKeyEquivalent: @"\033"];
+	joinButton = [NSButton buttonWithTitle: @"Join" target: self action: @selector(joinClicked:)];
+	[joinButton setKeyEquivalent: @"\r"];
+	[joinButton setEnabled: NO];
+	[[joinButton widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
+	[[cancel widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
+	footer = HStack( @[ addressField, connectButton, [NSView new], cancel, joinButton ], 10 );
+	[footer setAlignment: NSLayoutAttributeCenterY];
+	[[footer views][2] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+
+	root = VStack( @[ top, HStack( @[ spinner, statusText ], 6 ), box, footer ], 8 );
+	[(NSStackView *)[root views][1] setAlignment: NSLayoutAttributeCenterY];
+	[root setCustomSpacing: 18 afterView: box];
+	[root setEdgeInsets: NSEdgeInsetsMake( 18, 20, 20, 20 )];
+	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[content addSubview: root];
+	for( NSView *v in @[ top, box, footer ] )
+		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -40].active = YES;
+	[NSLayoutConstraint activateConstraints: @[
+		[[root leadingAnchor] constraintEqualToAnchor: [content leadingAnchor]],
+		[[root trailingAnchor] constraintEqualToAnchor: [content trailingAnchor]],
+		[[root topAnchor] constraintEqualToAnchor: [content topAnchor]],
+		[[root bottomAnchor] constraintEqualToAnchor: [content bottomAnchor]],
+		[[root widthAnchor] constraintEqualToConstant: 780],
+		[[[(NSStackView *)box views][1] heightAnchor] constraintEqualToConstant: 360],
+	]];
+	[_panel setContentSize: [root fittingSize]];
+	[_panel setInitialFirstResponder: table];
+}
+
+// --- sources and fetching ---
+
+- (void)sourceChanged: (id)sender	{ [self selectSource: [tabs selectedSegment]]; }
+
+- (void)selectSource: (NSInteger)s
+{
+	source = MAX( 0, MIN( s, (NSInteger)[masters count] ) );
+	[tabs setSelectedSegment: source];
+	if( !results[@( source )] )
+		[self fetch: source];
+	[self show];
+}
+
+- (void)refresh: (id)sender	{ [self fetch: source]; }
+
+- (BOOL)busy	{ return [fetches count] > 0; }
+
+- (void)fetch: (NSInteger)s
+{
+	NSNumber *key = @( s );
+	VSPFetch *fetch = [[VSPFetch alloc] init];
+	NSString *master = s ? masters[s - 1] : nil;
+	BOOL loopbackFix = VSP_LoopbackFix();
+
+	fetches[key].cancelled = YES;
+	fetches[key] = fetch;
+	results[key] = [NSMutableArray array];
+	status[key] = s ? [NSString stringWithFormat: @"Asking %@ for its servers…", master] : @"Looking on your network…";
+	[self show];
+	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
+		NSMutableArray<NSString *> *addresses = [NSMutableArray array];
+		NSMutableSet<NSString *> *thisMac = [NSMutableSet set];
+		NSUInteger listed;
+
+		if( master )
+		{
+			NSSet<NSString *> *list = QueryMaster( master );
+			NSString *own;
+			// the router's answer (from the launcher's start) is usually in by now
+			for( int i = 0; loopbackFix && !VSP_PublicAddress() && i < 20; i++ )
+				usleep( 50000 );
+			own = loopbackFix ? VSP_PublicAddress() : nil;
+			if( !list )
+			{
+				dispatch_async( dispatch_get_main_queue(), ^{
+					if( fetch.cancelled )
+						return;
+					[self->fetches removeObjectForKey: key];
+					self->status[key] = [NSString stringWithFormat: @"%@ didn't answer. It may be offline: try another "
+						@"source, or change the list in Servers….", master];
+					[self show];
+				} );
+				return;
+			}
+			for( NSString *a in list )
+			{
+				// Loopback Host Fix: a server on this network, listed under its public address
+				if( own && [a hasPrefix: [own stringByAppendingString: @":"]] )
+				{
+					NSString *local = [@"127.0.0.1" stringByAppendingString: [a substringFromIndex: [own length]]];
+					[thisMac addObject: local];
+					[addresses addObject: local];
+				}
+				else
+					[addresses addObject: a];
+			}
+			dispatch_async( dispatch_get_main_queue(), ^{
+				if( fetch.cancelled )
+					return;
+				self->status[key] = [NSString stringWithFormat: @"%@ lists %lu %@, asking each…", master,
+					(unsigned long)[list count], [list count] == 1 ? @"server" : @"servers"];
+				[self show];
+			} );
+		}
+		listed = [addresses count];
+		QueryServerInfo( addresses, !master, fetch, ^( VSPServerInfo *info ) {
+			info.thisMac = [thisMac containsObject: info.address];
+			[self->results[key] addObject: info];
+			[self scheduleReload];
+		}, ^( NSUInteger answered ) {
+			NSUInteger n = [self->results[key] count];
+			[self->fetches removeObjectForKey: key];
+			if( master )
+				self->status[key] = !listed ? [NSString stringWithFormat: @"%@ lists no servers right now.", master] :
+					[NSString stringWithFormat: @"%@ · %lu %@%@", master, (unsigned long)n, n == 1 ? @"server" : @"servers",
+						listed > answered ? [NSString stringWithFormat: @" · %lu listed didn't answer", (unsigned long)( listed - answered )] : @""];
+			else
+				self->status[key] = n ? [NSString stringWithFormat: @"Your network · %lu %@", (unsigned long)n,
+					n == 1 ? @"server" : @"servers"] :
+					@"No servers on your network (Holomatch looks on ports 27960 to 27963). Type an address below to join another.";
+			LLog( @"Browser: %@", self->status[key] );
+			[self show];
+		} );
+	} );
+}
+
+- (void)scheduleReload
+{
+	if( reloadPending )
+		return;
+	reloadPending = YES;
+	dispatch_after( dispatch_time( DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC ), dispatch_get_main_queue(), ^{
+		self->reloadPending = NO;
+		[self show];
+	} );
+}
+
+- (void)show
+{
+	VSPServerInfo *selected = [table selectedRow] >= 0 && [table selectedRow] < (NSInteger)[shown count] ?
+		shown[[table selectedRow]] : nil;
+	NSUInteger again;
+
+	shown = [results[@( source )] sortedArrayUsingDescriptors: [table sortDescriptors]];
+	[table reloadData];
+	if( selected && ( again = [shown indexOfObjectPassingTest: ^BOOL( VSPServerInfo *i, NSUInteger idx, BOOL *stop ) {
+			return [i.address isEqualToString: selected.address]; }] ) != NSNotFound )
+		[table selectRowIndexes: [NSIndexSet indexSetWithIndex: again] byExtendingSelection: NO];
+	[statusText setStringValue: status[@( source )] ? status[@( source )] : @""];
+	fetches[@( source )] ? [spinner startAnimation: nil] : [spinner stopAnimation: nil];
+	[spinner setHidden: !fetches[@( source )]];
+	[joinButton setEnabled: [table selectedRow] >= 0];
+}
+
+- (void)tableView: (NSTableView *)t sortDescriptorsDidChange: (NSArray *)old	{ [self show]; }
+- (void)tableViewSelectionDidChange: (NSNotification *)n	{ [joinButton setEnabled: [table selectedRow] >= 0]; }
+
+// --- the table ---
+
+- (NSInteger)numberOfRowsInTableView: (NSTableView *)t	{ return (NSInteger)[shown count]; }
+
+- (NSView *)tableView: (NSTableView *)t viewForTableColumn: (NSTableColumn *)col row: (NSInteger)row
+{
+	NSString *ident = [col identifier];
+	VSPServerInfo *s = shown[row];
+	NSTextField *l;
+
+	if( [ident isEqualToString: @"lock"] )
+	{
+		NSImageView *v = [t makeViewWithIdentifier: ident owner: self];
+		if( !v )
+		{
+			v = [NSImageView imageViewWithImage: Symbol( @"lock.fill", 10 )];
+			[v setIdentifier: ident];
+			[v setContentTintColor: [NSColor secondaryLabelColor]];
+		}
+		[v setHidden: !s.needPass];
+		[v setToolTip: s.needPass ? @"Needs a password" : nil];
+		return v;
+	}
+	if( !( l = [t makeViewWithIdentifier: ident owner: self] ) )
+	{
+		l = VSP_Label( @"", Body(), nil );
+		[l setIdentifier: ident];
+		[l setLineBreakMode: NSLineBreakByTruncatingTail];
+		if( [ident isEqualToString: @"ping"] || [ident isEqualToString: @"players"] )
+			[l setAlignment: NSTextAlignmentRight];
+	}
+	[l setTextColor: [NSColor labelColor]];
+	[l setToolTip: nil];
+	if( [ident isEqualToString: @"name"] )
+	{
+		[l setStringValue: s.thisMac ? [s.name stringByAppendingString: @" (this Mac)"] : s.name];
+		[l setToolTip: s.thisMac ? [NSString stringWithFormat: @"%@, hosted on this Mac (Loopback Host Fix)", s.address] : s.address];
+	}
+	else if( [ident isEqualToString: @"map"] )
+		[l setStringValue: s.map];
+	else if( [ident isEqualToString: @"players"] )
+	{
+		[l setStringValue: s.playersText];
+		if( !s.players )
+			[l setTextColor: [NSColor secondaryLabelColor]];
+	}
+	else if( [ident isEqualToString: @"type"] )
+		[l setStringValue: s.gametypeName];
+	else if( [ident isEqualToString: @"ping"] )
+	{
+		[l setStringValue: [NSString stringWithFormat: @"%ld", (long)s.ping]];
+		[l setTextColor: s.ping < 80 ? [NSColor systemGreenColor] : s.ping < 160 ? [NSColor labelColor] : [NSColor systemOrangeColor]];
+	}
+	return l;
+}
+
+// --- joining ---
+
+- (void)controlTextDidChange: (NSNotification *)n
+{
+	[connectButton setEnabled: [[[addressField stringValue] stringByTrimmingCharactersInSet:
+		[NSCharacterSet whitespaceCharacterSet]] length] > 0];
+}
+
+- (void)finish: (NSString *)address password: (NSString *)password
+{
+	for( VSPFetch *f in [fetches allValues] )
+		f.cancelled = YES;
+	[fetches removeAllObjects];
+	LLog( @"Browser: %@", address ? [@"join " stringByAppendingString: address] : @"cancelled" );
+	if( _done )
+		_done( address, password );
+	_done = nil;
+	if( [_panel sheetParent] )
+		[[_panel sheetParent] endSheet: _panel returnCode: address ? NSModalResponseOK : NSModalResponseCancel];
+}
+
+- (void)cancel: (id)sender	{ [self finish: nil password: nil]; }
+
+- (void)connectAddress: (id)sender
+{
+	NSString *a = [[addressField stringValue] stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceCharacterSet]];
+	NSCharacterSet *bad = [[NSCharacterSet characterSetWithCharactersInString:
+		@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]_"] invertedSet];
+
+	if( ![a length] )
+		return;
+	if( [a rangeOfCharacterFromSet: bad].location != NSNotFound )
+	{
+		NSBeep();
+		return;
+	}
+	[self finish: a password: nil];
+}
+
+- (void)joinClicked: (id)sender
+{
+	if( sender == table && [table clickedRow] < 0 )
+		return;		// a double-click on the header
+	[self joinRow: [table selectedRow]];
+}
+
+- (void)joinRow: (NSInteger)row
+{
+	VSPServerInfo *s;
+	NSAlert *a;
+	NSSecureTextField *pw;
+
+	if( row < 0 || row >= (NSInteger)[shown count] )
+		return;
+	s = shown[row];
+	if( !s.needPass )
+	{
+		[self finish: s.address password: nil];
+		return;
+	}
+	a = [[NSAlert alloc] init];
+	[a setMessageText: [NSString stringWithFormat: @"“%@” needs a password.", s.name]];
+	[a setInformativeText: @"Ask the person running the server for it."];
+	pw = [[NSSecureTextField alloc] initWithFrame: NSMakeRect( 0, 0, 240, 22 )];
+	[a setAccessoryView: pw];
+	[a addButtonWithTitle: @"Join"];
+	[a addButtonWithTitle: @"Cancel"];
+	[[a window] setInitialFirstResponder: pw];
+	[a beginSheetModalForWindow: _panel completionHandler: ^( NSModalResponse r ) {
+		NSString *p = [[pw stringValue] stringByReplacingOccurrencesOfString: @"\"" withString: @""];
+		if( r == NSAlertFirstButtonReturn )
+			[self finish: s.address password: [p length] ? p : nil];
+	}];
+}
+
+@end
+
+void VSP_ShowServerBrowser( NSWindow *parent, void ( ^done )( NSString *address, NSString *password ) )
+{
+	VSPBrowserController *c = [[VSPBrowserController alloc] init];
+
+	c.done = done;
+	[c selectSource: [VSP_MasterServers() count] ? 1 : 0];		// Internet 1
+	// the block keeps the controller alive until the sheet ends
+	[parent beginSheet: [c panel] completionHandler: ^( NSModalResponse r ) {
+		[[c panel] orderOut: nil];
+	}];
+}
+
+// For tests: show source (local, or 1-16) once its answers are in, render it, and
+// with join, join that row (as a double-click would; done gets the address).
+BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, void ( ^done )( NSString *address, NSString *password ) )
+{
+	VSPBrowserController *c = [[VSPBrowserController alloc] init];
+	BOOL ok = YES;
+
+	c.done = done;
+	[c selectSource: !tab || !Q_stricmp( tab, "local" ) ? 0 : atoi( tab )];
+	while( [c busy] )
+		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
+	[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.2]];
+	if( path )
+		ok = VSP_SnapshotWindow( [c panel], path );
+	if( join >= 0 )
+		[c joinRow: join];
+	return ok;
 }
