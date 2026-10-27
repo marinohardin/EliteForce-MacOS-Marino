@@ -32,7 +32,7 @@ DIST="$ROOT/dist"
 FINAL="$DIST/$APP_NAME.app"
 APP="$DIST/.assembling-$$.app"
 # the macOS port's own version (not the Android app's versionName)
-VERSION="${VERSION:-1.2.2}"
+VERSION="${VERSION:-1.2.3}"
 BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 # ---- 1. build ---------------------------------------------------------------

@@ -4372,7 +4372,7 @@ static NSColor *AmberColor( void )
 @property (nonatomic, copy) NSArray<NSString *> *listedOn;		// Combined: the masters listing it
 @property (nonatomic) NSInteger players, maxPlayers, humans, gametype, ping;	// humans -1: not reported
 @property (nonatomic) BOOL needPass, thisMac;
-@property (nonatomic, readonly) NSString *gametypeName, *playersText;
+@property (nonatomic, readonly) NSString *gametypeName, *playersText, *humansText;
 @end
 
 @implementation VSPServerInfo
@@ -4383,10 +4383,13 @@ static NSColor *AmberColor( void )
 }
 - (NSString *)playersText
 {
-	NSInteger bots = _humans >= 0 ? _players - _humans : 0;
-	NSString *n = _maxPlayers > 0 ? [NSString stringWithFormat: @"%ld/%ld", (long)_players, (long)_maxPlayers] :
+	return _maxPlayers > 0 ? [NSString stringWithFormat: @"%ld/%ld", (long)_players, (long)_maxPlayers] :
 		[NSString stringWithFormat: @"%ld", (long)_players];
-	return bots > 0 ? [NSString stringWithFormat: @"%@ (%ld %@)", n, (long)bots, bots == 1 ? @"bot" : @"bots"] : n;
+}
+// people, without bots; "?" when the server doesn't say (no g_humanplayers)
+- (NSString *)humansText
+{
+	return _humans >= 0 ? [NSString stringWithFormat: @"%ld", (long)_humans] : @"?";
 }
 @end
 
@@ -4651,7 +4654,10 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	[[[table tableColumnWithIdentifier: @"lock"] headerCell] setImage: Symbol( @"lock.fill", 10 )];
 	[[table tableColumnWithIdentifier: @"lock"] setHeaderToolTip: @"Needs a password"];
 	[self column: @"map" title: @"Map" width: 110 sortKey: @"map" ascending: YES];
-	[self column: @"players" title: @"Players" width: 100 sortKey: @"players" ascending: NO];
+	[self column: @"players" title: @"Players" width: 74 sortKey: @"players" ascending: NO];
+	[[table tableColumnWithIdentifier: @"players"] setHeaderToolTip: @"Players on the server, bots included, and its maximum"];
+	[self column: @"humans" title: @"Humans" width: 54 sortKey: @"humans" ascending: NO];
+	[[table tableColumnWithIdentifier: @"humans"] setHeaderToolTip: @"People playing, without bots (? if the server doesn't say)"];
 	[self column: @"type" title: @"Game" width: 120 sortKey: @"gametype" ascending: YES];
 	[self column: @"ping" title: @"Ping" width: 40 sortKey: @"ping" ascending: YES];
 	[[table tableColumnWithIdentifier: @"name"] setResizingMask: NSTableColumnAutoresizingMask | NSTableColumnUserResizingMask];
@@ -4883,7 +4889,7 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 		l = VSP_Label( @"", Body(), nil );
 		[l setIdentifier: ident];
 		[l setLineBreakMode: NSLineBreakByTruncatingTail];
-		if( [ident isEqualToString: @"ping"] || [ident isEqualToString: @"players"] )
+		if( [ident isEqualToString: @"ping"] || [ident isEqualToString: @"players"] || [ident isEqualToString: @"humans"] )
 			[l setAlignment: NSTextAlignmentRight];
 	}
 	[l setTextColor: [NSColor labelColor]];
@@ -4918,6 +4924,17 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 		[l setStringValue: s.playersText];
 		if( !s.players )
 			[l setTextColor: [NSColor secondaryLabelColor]];
+		if( s.humans >= 0 && s.players > s.humans )
+			[l setToolTip: [NSString stringWithFormat: @"%ld %@, %ld %@", (long)s.humans, s.humans == 1 ? @"person" : @"people",
+				(long)( s.players - s.humans ), s.players - s.humans == 1 ? @"bot" : @"bots"]];
+	}
+	else if( [ident isEqualToString: @"humans"] )
+	{
+		[l setStringValue: s.humansText];
+		if( s.humans <= 0 )
+			[l setTextColor: [NSColor secondaryLabelColor]];
+		if( s.humans < 0 )
+			[l setToolTip: @"This server doesn't say how many of its players are bots"];
 	}
 	else if( [ident isEqualToString: @"type"] )
 		[l setStringValue: s.gametypeName];
