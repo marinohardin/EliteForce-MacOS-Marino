@@ -391,10 +391,12 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   Answers are kept for the sheet's life (the small refresh asks again). Bots have ping 0, the only
   tell: rows get a "bot" tag only when the count of players with a ping matches `g_humanplayers`
   (from the answer, else from `getinfo`), or when the server doesn't say.
-- **Preview Map.** For maps that aren't the game's own (pak0-pak3 and the Expansion Pack list),
-  a sheet with a `WKWebView` (WebKit, a system framework) shows
-  `efservers.com/pk3.php?preview&popup=1&map=<map>` (files, a Render BSP button for the 3D view),
-  with Open in Browser. A sheet, since the launcher is app modal. The globe button opens
+- **Map Info and 3D Map Preview.** For maps that aren't the game's own (pak0-pak3 and the
+  Expansion Pack list), a sheet with a `WKWebView` (WebKit, a system framework) shows
+  `efservers.com/pk3.php?preview&popup=1&map=<map>` (Map Info: screenshots, files), with Open in
+  Browser. On selecting such a server, `efservers.com/getPK3info.php?pk3=<map>&preview` is fetched
+  once per map; when it links `bsp/index.php?pk3=…&file=maps/….bsp`, **3D Map Preview** shows
+  that page the same way. A sheet, since the launcher is app modal. The globe button opens
   efservers.com.
 - **Join links owner.** When `URLForApplicationToOpenURL:` says another app (cMod claims `stvef`
   too) opens `stvef://`, a row offers **Open Join Links with Elite Force**

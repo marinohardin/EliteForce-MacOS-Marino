@@ -53,7 +53,8 @@ Test hooks (environment variables):
   VOYAGERSP_TEST_UPDATE=<version>|none  the latest release, instead of asking
                                 GitHub (none: no release found)
   VOYAGERSP_TEST_BROWSER_SELECT=<row>  select that row (and wait for its players) first
-  VOYAGERSP_TEST_BROWSER_PREVIEW=<file.png>  then open its map preview, save the page, close it
+  VOYAGERSP_TEST_BROWSER_PREVIEW=<file.png>  then open its Map Info, save the page, close it
+  VOYAGERSP_TEST_BROWSER_PREVIEW_3D=1  ...its 3D Map Preview instead
   VOYAGERSP_TEST_LINK_HANDLER=<app>  Browse… acts as if <app> opened stvef:// links
   VOYAGERSP_TEST_LINK=<stvef://...>  open that link once the launcher is up
   VOYAGERSP_TEST_UPDATE_ALERT=<file.png>  run Check for Updates…, render its

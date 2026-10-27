@@ -54,7 +54,8 @@ simplifying hosting servers compared to the original game.
   included, and **Humans** only the people (**?** when a server doesn't say). Star servers to
   keep them at the top, and filter to **Only favorites** or **Only servers with people**.
   Selecting a server shows who's playing (names, scores, pings, which are bots), and for custom
-  maps **Preview Map** opens the map's page on efservers.com (files and a 3D preview); the globe
+  maps **Map Info** opens the map's page on efservers.com and **3D Map Preview** (when efservers
+  has one) lets you look around it in 3D; the globe
   button opens efservers.com itself. **Join links**
   (`stvef://connect/<address>`, as on [efservers.com](https://efservers.com)) open the app and
   join that server, or switch to it from a Holomatch game. Maps you don't have are shown in amber

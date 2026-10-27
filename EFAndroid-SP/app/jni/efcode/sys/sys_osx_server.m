@@ -4664,10 +4664,10 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 		[o attributedSubstringFromRange: NSMakeRange( first.location, NSMaxRange( last ) - first.location )];
 }
 
-// efservers.com's page for a map (screenshots, its files, a 3D preview), in a
-// sheet: the launcher is app modal, so a window of its own couldn't be used
+// efservers.com's page for a map (screenshots, its files) or its 3D view, in
+// a sheet: the launcher is app modal, so a window of its own couldn't be used
 @interface VSPMapPreview : NSObject
-+ (void)showMap: (NSString *)map onWindow: (NSWindow *)parent;
++ (void)showURL: (NSURL *)url title: (NSString *)title onWindow: (NSWindow *)parent;
 @end
 
 @interface VSPMapPreview () <WKNavigationDelegate>
@@ -4701,24 +4701,30 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	LLog( @"Browser: map preview failed: %@", [e localizedDescription] );
 }
 
-+ (void)showMap: (NSString *)map onWindow: (NSWindow *)parent
++ (void)showURL: (NSURL *)url title: (NSString *)title onWindow: (NSWindow *)parent
 {
 	VSPMapPreview *p = [[VSPMapPreview alloc] init];
-	NSString *m = [map stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet alphanumericCharacterSet]];
-	WKWebView *web = [[WKWebView alloc] initWithFrame: NSMakeRect( 0, 0, 720, 520 )
-		configuration: [[WKWebViewConfiguration alloc] init]];
+	WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+	WKWebView *web;
 	NSButton *done = [NSButton buttonWithTitle: @"Done" target: p action: @selector(done:)];
 	NSButton *browser = [NSButton buttonWithTitle: @"Open in Browser" target: p action: @selector(openInBrowser:)];
 	NSStackView *buttons, *root;
 
-	p->url = [NSURL URLWithString: [NSString stringWithFormat: @"https://efservers.com/pk3.php?preview&popup=1&map=%@", m]];
+	// The 3D view stops at "Loading..." in WebKit, which has navigator.xr
+	// without isSessionSupported; say there's no VR so it goes on.
+	[[config userContentController] addUserScript: [[WKUserScript alloc] initWithSource:
+		@"if( navigator.xr && !navigator.xr.isSessionSupported ) "
+		@"navigator.xr.isSessionSupported = function() { return Promise.resolve( false ); };"
+		injectionTime: WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly: NO]];
+	web = [[WKWebView alloc] initWithFrame: NSMakeRect( 0, 0, 720, 520 ) configuration: config];
+	p->url = url;
 	p->sheet = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 720, 580 ) styleMask: NSWindowStyleMaskTitled
 		backing: NSBackingStoreBuffered defer: NO];
 	[done setKeyEquivalent: @"\r"];
 	[web setTranslatesAutoresizingMaskIntoConstraints: NO];
 	[[web widthAnchor] constraintEqualToConstant: 720].active = YES;
 	[[web heightAnchor] constraintEqualToConstant: 520].active = YES;
-	buttons = HStack( @[ VSP_Label( [NSString stringWithFormat: @"%@ on efservers.com", map], Small(),
+	buttons = HStack( @[ VSP_Label( [NSString stringWithFormat: @"%@ on efservers.com", title], Small(),
 		[NSColor secondaryLabelColor] ), [NSView new], browser, done ], 10 );
 	[buttons setAlignment: NSLayoutAttributeCenterY];
 	[[buttons views][1] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
@@ -4728,6 +4734,7 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	[[buttons widthAnchor] constraintEqualToAnchor: [root widthAnchor]].active = YES;
 	[p->sheet setContentView: root];
 	[p->sheet setContentSize: [root fittingSize]];
+	[p->sheet setInitialFirstResponder: web];		// keys move you around in 3D
 	[web setNavigationDelegate: p];
 	[web loadRequest: [NSURLRequest requestWithURL: p->url]];
 	LLog( @"Browser: map preview %@", p->url );
@@ -4777,6 +4784,8 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	NSMutableSet<NSString *> *favorites;	// addresses
 	NSMutableDictionary<NSString *, VSPServerStatus *> *statuses;	// who's playing, by address
 	NSString *asking;					// the address a getstatus is out for
+	NSMutableDictionary<NSString *, id> *views3D;	// map: its efservers 3D view's URL, or NSNull
+	NSString *checking3D;				// the map that's being looked up
 
 	NSSegmentedControl *tabs;
 	NSTextField *statusText;
@@ -4788,7 +4797,7 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	NSArray<VSPPlayer *> *players;		// the selected server's
 	BOOL tagBots;
 	NSTextField *playersTitle, *playersNote;
-	NSButton *playersRefresh, *previewButton;
+	NSButton *playersRefresh, *infoButton, *previewButton;
 	NSStackView *linkRow;				// "Join links open in <other app>"
 }
 
@@ -4810,6 +4819,7 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	builtinMaps = builtin;
 	favorites = [NSMutableSet setWithArray: [[NSUserDefaults standardUserDefaults] stringArrayForKey: KEY_FAVORITES] ?: @[]];
 	statuses = [NSMutableDictionary dictionary];
+	views3D = [NSMutableDictionary dictionary];
 	players = @[];
 	masters = VSP_MasterServers();
 	results = [NSMutableDictionary dictionary];
@@ -4969,10 +4979,15 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	[playersRefresh setBordered: NO];
 	[playersRefresh setToolTip: @"Ask the server again"];
 	[playersRefresh setAccessibilityLabel: @"Ask again who's playing"];
-	previewButton = [NSButton buttonWithTitle: @"Preview Map" target: self action: @selector(previewMap:)];
-	[previewButton setControlSize: NSControlSizeSmall];
-	[previewButton setFont: Small()];
-	NSStackView *playersHead = HStack( @[ playersTitle, playersNote, playersRefresh, [NSView new], previewButton ], 6 );
+	infoButton = [NSButton buttonWithTitle: @"Map Info" target: self action: @selector(mapInfo:)];
+	previewButton = [NSButton buttonWithTitle: @"3D Map Preview" target: self action: @selector(previewMap:)];
+	for( NSButton *b in @[ infoButton, previewButton ] )
+	{
+		[b setControlSize: NSControlSizeSmall];
+		[b setFont: Small()];
+	}
+	NSStackView *playersHead = HStack( @[ playersTitle, playersNote, playersRefresh, [NSView new], infoButton,
+		previewButton ], 6 );
 	[playersHead setAlignment: NSLayoutAttributeCenterY];
 	[[playersHead views][3] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
 	NSView *playersBox = Boxed( Scrolled( playerTable ) );
@@ -5045,7 +5060,7 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 
 - (void)refresh: (id)sender	{ [self fetch: source]; }
 
-- (BOOL)busy	{ return [fetches count] > 0 || asking; }
+- (BOOL)busy	{ return [fetches count] > 0 || asking || checking3D; }
 
 - (void)selectRowForTest: (NSInteger)row
 {
@@ -5054,7 +5069,13 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	LLog( @"[test] selected %@", row < (NSInteger)[shown count] ? shown[row].name : @"nothing (no such row)" );
 }
 
-- (void)previewForTest	{ [self previewMap: nil]; }
+- (void)previewForTest
+{
+	if( VSP_TestEnvIs( "VOYAGERSP_TEST_BROWSER_PREVIEW_3D", "1" ) )
+		[self previewMap: nil];
+	else
+		[self mapInfo: nil];
+}
 
 - (void)fetch: (NSInteger)s
 {
@@ -5268,9 +5289,9 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	VSPServerStatus *st = s ? statuses[s.address] : nil;
 	NSInteger pinged = 0, humans;
 
-	[previewButton setHidden: !s || ![s.map length] || [builtinMaps containsObject: s.map]];
-	[previewButton setToolTip: s ? [NSString stringWithFormat: @"See %@ on efservers.com: screenshots, its files and a 3D "
-		@"preview", s.map] : nil];
+	[infoButton setHidden: !s || ![s.map length] || [builtinMaps containsObject: s.map]];
+	[infoButton setToolTip: s ? [NSString stringWithFormat: @"See %@ on efservers.com: screenshots and its files", s.map] : nil];
+	[self show3D];
 	[playersRefresh setHidden: !st];
 	players = @[];
 	if( !s )
@@ -5324,12 +5345,73 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 			dateStyle: NSDateFormatterNoStyle timeStyle: NSDateFormatterShortStyle]]];
 }
 
-- (void)previewMap: (id)sender
+// 3D Map Preview, once efservers says it has a 3D view of the selected map:
+// its page for the map links one when it does. Looked up once per map.
+- (void)show3D
+{
+	VSPServerInfo *s = [self selectedServer];
+	NSString *map = s.map;
+	NSURL *q;
+
+	[previewButton setHidden: YES];
+	if( [infoButton isHidden] )
+		return;
+	if( views3D[map] )
+	{
+		[previewButton setHidden: views3D[map] == [NSNull null]];
+		[previewButton setToolTip: [NSString stringWithFormat: @"Look around %@ in 3D, on efservers.com", map]];
+		return;
+	}
+	if( [checking3D isEqualToString: map] )
+		return;
+	checking3D = map;
+	q = [NSURL URLWithString: [NSString stringWithFormat: @"https://efservers.com/getPK3info.php?pk3=%@&preview",
+		[map stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet alphanumericCharacterSet]]]];
+	[[[NSURLSession sharedSession] dataTaskWithURL: q completionHandler: ^( NSData *d, NSURLResponse *r, NSError *e ) {
+		NSString *page = d ? [[NSString alloc] initWithData: d encoding: NSUTF8StringEncoding] : nil;
+		NSString *pk3 = nil, *file = nil;
+		NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:
+			@"bsp/index\\.php\\?pk3=([A-Za-z0-9_.+-]+)&(?:amp;)?file=(maps/[A-Za-z0-9_.+-]+\\.bsp)" options: 0 error: nil];
+		NSTextCheckingResult *m = page ? [re firstMatchInString: page options: 0 range: NSMakeRange( 0, [page length] )] : nil;
+
+		if( m )
+		{
+			pk3 = [page substringWithRange: [m rangeAtIndex: 1]];
+			file = [page substringWithRange: [m rangeAtIndex: 2]];
+		}
+		dispatch_async( dispatch_get_main_queue(), ^{
+			if( [self->checking3D isEqualToString: map] )
+				self->checking3D = nil;
+			if( m )
+				self->views3D[map] = [NSURL URLWithString: [NSString stringWithFormat:
+					@"https://efservers.com/bsp/index.php?pk3=%@&file=%@", pk3, file]];
+			else if( page )		// a failed lookup is tried again next time
+				self->views3D[map] = [NSNull null];
+			LLog( @"Browser: 3D view of %@: %@", map, m ? self->views3D[map] : page ? @"none" :
+				[e localizedDescription] );
+			if( [[self selectedServer].map isEqualToString: map] )
+				[self show3D];
+		} );
+	}] resume];
+}
+
+- (void)mapInfo: (id)sender
 {
 	VSPServerInfo *s = [self selectedServer];
 
 	if( s && [s.map length] )
-		[VSPMapPreview showMap: s.map onWindow: _panel];
+		[VSPMapPreview showURL: [NSURL URLWithString: [NSString stringWithFormat: @"https://efservers.com/pk3.php?preview&popup=1&map=%@",
+			[s.map stringByAddingPercentEncodingWithAllowedCharacters: [NSCharacterSet alphanumericCharacterSet]]]]
+			title: s.map onWindow: _panel];
+}
+
+- (void)previewMap: (id)sender
+{
+	VSPServerInfo *s = [self selectedServer];
+	id url = s ? views3D[s.map] : nil;
+
+	if( [url isKindOfClass: [NSURL class]] )
+		[VSPMapPreview showURL: url title: [s.map stringByAppendingString: @" in 3D"] onWindow: _panel];
 }
 
 // --- stvef:// links ---
