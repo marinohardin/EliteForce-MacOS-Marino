@@ -48,19 +48,10 @@ simplifying hosting servers compared to the original game.
 - **Holomatch (multiplayer).** Join games on your local network (LAN party, see
   [Holomatch and LAN parties](#holomatch-and-lan-parties)), on the internet through the Join
   menu's Internet sources (live community master servers), or by IP address, with bots.
-  **Browse…** in the launcher lists every server on your network, on all the masters together
-  (**Combined**, the default) or on each master, with players, map and ping, and joins one
-  directly. Servers with people on them come first: **Players** counts everyone, bots
-  included, and **Humans** only the people (**?** when a server doesn't say). Star servers to
-  keep them at the top, and filter to **Only favorites** or **Only servers with people**.
-  Selecting a server shows who's playing (names, scores, pings, which are bots), and for custom
-  maps **Map Info** opens the map's page on efservers.com and **3D Map Preview** (when efservers
-  has one) lets you look around it in 3D; the globe
-  button opens efservers.com itself. **Join links**
-  (`stvef://connect/<address>`, as on [efservers.com](https://efservers.com)) open the app and
-  join that server, or switch to it from a Holomatch game. Maps you don't have are shown in amber
-  (they download when you join, if the server allows it) and Expansion Pack maps you don't
-  have in purple: servers can't send those, so Join warns first.
+  **Browse…** in the launcher lists every server on your network or on the internet masters,
+  with who's playing, the map and ping, favorites and filters, a look at custom maps (even in
+  3D) and **Join links** from websites like [efservers.com](https://efservers.com). See
+  [Finding a game: Browse…](#finding-a-game-browse).
   It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection.
@@ -224,6 +215,34 @@ Recommended Defaults** or **Restore Original Defaults** (the game's own: Raven's
 server you host for the internet announces itself to every master in the list; only the first
 five appear in the Join menu, while **Browse…** has a tab for each, plus **Combined**, which
 merges all their lists.
+
+### Finding a game: Browse…
+
+**Browse…** (in the launcher, under Holomatch) lists the servers on your network (**Local**), on
+all the master servers together (**Combined**, the default) or on each master (**Internet 1**
+to **5**), and joins one directly. You can also type an address and click **Connect**.
+
+<img width="780" height="562" alt="Browse… with a server's players and its map" src="docs/images/browse.png" />
+
+- **Server names in their colors**, as the game shows them.
+- **Players** counts everyone on the server, bots included; **Humans** only the people (**?**
+  when a server doesn't say). Servers with people come first, then the fullest, then the
+  closest (ping).
+- **Star** a server to keep it at the top. **Only favorites** and **Only servers with people**
+  narrow the list; both are remembered.
+- **Who's playing.** Select a server to see its players with their scores and pings, people
+  first. Bots (ping 0) are tagged **bot** when that agrees with the server's own count of
+  people. Only the server you select is asked; the refresh button asks it again.
+- **Maps.** Maps you don't have are amber: they download when you join, if the server allows
+  it. Expansion Pack maps you don't have are purple: servers can't send those, so Join warns
+  first. For custom maps, **Map Info** shows the map's page on efservers.com (screenshots and
+  its files), and **3D Map Preview** lets you walk around it (WASD and the mouse) when
+  efservers has a 3D view. To know whether it has one, the app looks the map up on efservers
+  once when you select the server. The globe button opens efservers.com.
+- **Join links.** Websites like efservers.com have links such as
+  `stvef://connect/203.0.113.5:27960`. Clicking one opens the app and joins that server, or
+  switches to it from a Holomatch game. If another app opens these links (cMod claims them
+  too), Browse… says which and offers **Open Join Links with Elite Force**.
 
 ### Uninstall
 
