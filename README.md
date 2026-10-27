@@ -218,31 +218,20 @@ merges all their lists.
 
 ### Finding a game: Browse…
 
-**Browse…** (in the launcher, under Holomatch) lists the servers on your network (**Local**), on
-all the master servers together (**Combined**, the default) or on each master (**Internet 1**
-to **5**), and joins one directly. You can also type an address and click **Connect**.
+**Browse…** (in the launcher, under Holomatch) lists the servers on your network, on all the
+master servers together (**Combined**) or on each one, and joins one directly.
 
 <img width="780" height="562" alt="Browse… with a server's players and its map" src="docs/images/browse.png" />
 
-- **Server names in their colors**, as the game shows them.
-- **Players** counts everyone on the server, bots included; **Humans** only the people (**?**
-  when a server doesn't say). Servers with people come first, then the fullest, then the
-  closest (ping).
-- **Star** a server to keep it at the top. **Only favorites** and **Only servers with people**
-  narrow the list; both are remembered.
-- **Who's playing.** Select a server to see its players with their scores and pings, people
-  first. Bots (ping 0) are tagged **bot** when that agrees with the server's own count of
-  people. Only the server you select is asked; the refresh button asks it again.
-- **Maps.** Maps you don't have are amber: they download when you join, if the server allows
-  it. Expansion Pack maps you don't have are purple: servers can't send those, so Join warns
-  first. For custom maps, **Map Info** shows the map's page on efservers.com (screenshots and
-  its files), and **3D Map Preview** lets you walk around it (WASD and the mouse) when
-  efservers has a 3D view. To know whether it has one, the app looks the map up on efservers
-  once when you select the server. The globe button opens efservers.com.
-- **Join links.** Websites like efservers.com have links such as
-  `stvef://connect/203.0.113.5:27960`. Clicking one opens the app and joins that server, or
-  switches to it from a Holomatch game. If another app opens these links (cMod claims them
-  too), Browse… says which and offers **Open Join Links with Elite Force**.
+- **Humans** counts only the people, not bots (**?** when a server doesn't say). Servers with
+  people come first.
+- **Select a server** to see who's playing. Only that server is asked.
+- **Map colors:** amber maps download when you join (if the server allows it); purple ones are
+  Expansion Pack maps, which servers can't send. **Map Info** and **3D Map Preview** show a
+  custom map on efservers.com; the app looks the map up there when you select the server.
+- **Join links** (`stvef://…`) on websites like efservers.com open the app and join that
+  server. If another app such as cMod opens them, Browse… offers **Open Join Links with Elite
+  Force**.
 
 ### Uninstall
 
