@@ -1046,7 +1046,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		else
 		{
 			shown = @"No game files yet";
-			[status setStringValue: @"Choose the Elite Force folder (the one with BaseEF)."];
+			[status setStringValue: @"Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe."];
 			symbol = @"exclamationmark.triangle.fill";
 			color = [NSColor systemOrangeColor];
 		}
