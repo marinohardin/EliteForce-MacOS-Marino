@@ -401,6 +401,14 @@ do the appropriate things.
 void Com_Quit_f( void ) {
 	// don't try to shutdown if we are in a recursive error
 	char *p = Cmd_Args( );
+#if defined( __APPLE__ ) && !defined( DEDICATED )
+	// the game's own Quit (a plain "quit") goes back to the launcher; Cmd+Q and
+	// closing the window come here as "quit Closed window" and quit for good
+	if ( !Q_stricmp( Cmd_Argv( 0 ), "quit" ) && Cmd_Argc( ) == 1 ) {
+		extern void Sys_MacQuitToLauncher( void );
+		Sys_MacQuitToLauncher( );
+	}
+#endif
 	if ( !com_errorEntered ) {
 		// Some VMs might execute "quit" command directly,
 		// which would trigger an unload of active VM error.

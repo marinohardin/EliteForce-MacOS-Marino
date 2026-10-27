@@ -1047,6 +1047,25 @@ static void DoRelaunch( void )
 	}
 }
 
+// A game started from the launcher's Play (not Play on This Mac, Terminal or
+// a relaunch in a mode): its own Quit brings the launcher back.
+static qboolean fromLauncher;
+
+void Sys_MacSetFromLauncher( void )	{ fromLauncher = qtrue; }
+
+// The game's own Quit menu (a plain "quit", see Com_Quit_f): come back at the
+// launcher, unless something else already decided what happens at exit, or
+// the quit came from a signal (logging out, kill).
+void Sys_MacQuitToLauncher( void )
+{
+	extern volatile sig_atomic_t sys_quitSignal;
+
+	if( !fromLauncher || pendingRelaunch != -2 || pendingDelete || sys_quitSignal )
+		return;
+	atexit( DoRelaunch );
+	pendingRelaunch = -1;
+}
+
 // Quit and come back in mode (see DoRelaunch).
 static void RelaunchIn( int mode )
 {

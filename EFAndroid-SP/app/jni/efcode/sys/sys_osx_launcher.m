@@ -75,6 +75,7 @@ extern qboolean VSP_DataOverridden( int argc, char **argv );
 extern BOOL VSP_FindGameData( NSString **outBasepath, NSString **outBase );
 extern BOOL VSP_ChooseGameData( NSString **outBasepath );
 extern void VSP_RevealFolder( NSString *path );
+extern void Sys_MacSetFromLauncher( void );
 extern int VSP_AddGameFiles( void );
 
 // the three choices (NSUserDefaults LauncherMode)
@@ -1574,6 +1575,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 		[[NSUserDefaults standardUserDefaults] setInteger: [l mode] forKey: KEY_LAUNCHERMODE];
 		[[NSUserDefaults standardUserDefaults] synchronize];
 		[l appendTo: commandLine size: size];
+		Sys_MacSetFromLauncher();		// the game's Quit comes back here
 		SDL_QuitSubSystem( SDL_INIT_VIDEO );
 	}
 	return qtrue;
