@@ -85,6 +85,7 @@ With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <objc/runtime.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -1053,26 +1054,31 @@ static NSImage *NoLevelshot( BOOL missing )
 }
 @end
 
-// Overlay scrollers, even with Show scroll bars: Always: legacy ones put a
-// square corner beside a table's header that pokes over the box's rounded
-// corner. AppKit puts the preferred style back when it changes, so it's set
-// again then.
+// Clipped to the group box's rounded corners (Boxed insets it 1 pt), and with
+// Show scroll bars: Always, the square beside a table's header drawn as more
+// header instead of the corner view AppKit puts there.
 static NSScrollView *Scrolled( NSView *doc )
 {
 	NSScrollView *sv = [[NSScrollView alloc] init];
-	__weak NSScrollView *weak = sv;
 	[sv setDocumentView: doc];
 	[sv setHasVerticalScroller: YES];
 	[sv setAutohidesScrollers: YES];
 	[sv setBorderType: NSNoBorder];
 	[sv setDrawsBackground: NO];
-	[sv setScrollerStyle: NSScrollerStyleOverlay];
-	if( [doc isKindOfClass: [NSTableView class]] )
-		[(NSTableView *)doc setCornerView: nil];
-	[[NSNotificationCenter defaultCenter] addObserverForName: NSPreferredScrollerStyleDidChangeNotification object: nil
-		queue: [NSOperationQueue mainQueue] usingBlock: ^( NSNotification *n ) {
-		dispatch_async( dispatch_get_main_queue(), ^{ [weak setScrollerStyle: NSScrollerStyleOverlay]; } );
-	}];
+	[sv setWantsLayer: YES];
+	[[sv layer] setCornerRadius: 9];
+	[[sv layer] setMasksToBounds: YES];
+	if( [doc isKindOfClass: [NSTableView class]] && [(NSTableView *)doc headerView] )
+	{
+		// a header of a table without columns: all filler, as past the last column
+		NSTableHeaderView *corner = [[NSTableHeaderView alloc] initWithFrame:
+			NSMakeRect( 0, 0, 16, NSHeight( [[(NSTableView *)doc headerView] frame] ) )];
+		NSTableView *none = [[NSTableView alloc] init];
+
+		[corner setTableView: none];
+		objc_setAssociatedObject( corner, @selector(tableView), none, OBJC_ASSOCIATION_RETAIN );
+		[(NSTableView *)doc setCornerView: corner];
+	}
 	return sv;
 }
 
