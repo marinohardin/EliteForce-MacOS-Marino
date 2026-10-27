@@ -52,6 +52,7 @@ Test hooks (environment variables):
                                 menu, render the panel, close it and quit
   VOYAGERSP_TEST_UPDATE=<version>|none  the latest release, instead of asking
                                 GitHub (none: no release found)
+  VOYAGERSP_TEST_LINK=<stvef://...>  open that link once the launcher is up
   VOYAGERSP_TEST_UPDATE_ALERT=<file.png>  run Check for Updates…, render its
                                 answer and quit
 ===========================================================================
@@ -1619,6 +1620,100 @@ void VSP_EndModalMenu( id token )
 // VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>: while the launcher runs, check
 // that the app menu items are enabled, choose About, render the panel, close
 // it and quit.
+/* ------------------------------------------------------------------------
+   stvef:// links: "Join" links on efservers.com and the like
+   ------------------------------------------------------------------------ */
+
+// stvef://connect/<host>:<port>[?...][#<name>/<map>/...] (what efservers.com
+// uses; see github.com/stefansundin/stvef-protocol) and the older
+// stvef:<ip>;<port>;<name>;<map>;... Only the address is used. With the
+// launcher up it's Join (Holomatch, straight in); in a Holomatch game it's
+// /connect; in single player it can't join, and says so.
+
+static VSPLauncher *linkLauncher;		// while the launcher is up
+
+// the server address in a link, or nil; strict, since it goes on a command line
+static NSString *LinkAddress( NSString *link )
+{
+	NSString *rest, *addr;
+	NSRange r;
+
+	if( [link length] < 7 || [[link substringToIndex: 6] caseInsensitiveCompare: @"stvef:"] != NSOrderedSame )
+		return nil;
+	rest = [link substringFromIndex: 6];
+	while( [rest hasPrefix: @"/"] )
+		rest = [rest substringFromIndex: 1];
+	if( [[rest lowercaseString] hasPrefix: @"connect/"] )
+	{
+		addr = [rest substringFromIndex: 8];
+		if( ( r = [addr rangeOfCharacterFromSet: [NSCharacterSet characterSetWithCharactersInString: @"?#/"]] ).location != NSNotFound )
+			addr = [addr substringToIndex: r.location];
+		addr = [addr stringByRemovingPercentEncoding];
+	}
+	else
+	{
+		NSArray<NSString *> *f = [rest componentsSeparatedByString: @";"];
+		if( [f count] < 2 )
+			return nil;
+		addr = [NSString stringWithFormat: @"%@:%@", f[0], f[1]];
+	}
+	if( ![addr length] || [addr length] > 255 || [addr rangeOfString: @"^([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\])(:[0-9]{1,5})?$"
+		options: NSRegularExpressionSearch].location == NSNotFound )
+		return nil;
+	return addr;
+}
+
+@interface VSPLinkHandler : NSObject
+@end
+
+@implementation VSPLinkHandler
+- (void)handleURLEvent: (NSAppleEventDescriptor *)event withReplyEvent: (NSAppleEventDescriptor *)reply
+{
+	NSString *link = [[event paramDescriptorForKeyword: keyDirectObject] stringValue];
+	NSString *addr = LinkAddress( link );
+
+	LLog( @"Link: %@ -> %@", link, addr ? addr : @"not a server address" );
+	[NSApp activateIgnoringOtherApps: YES];
+	if( linkLauncher )
+	{
+		NSWindow *sheet = [[linkLauncher window] attachedSheet];
+
+		if( !addr )
+		{
+			NSAlert *a = [[NSAlert alloc] init];
+			[a setMessageText: @"This link can't be joined"];
+			[a setInformativeText: [NSString stringWithFormat: @"%@\n\nIt doesn't hold a server address.", link]];
+			LLog( @"[dialog] %@ — %@", [a messageText], link );
+			if( !getenv( "VOYAGERSP_TEST_CONFIRM" ) )
+				[a runModal];
+			return;
+		}
+		if( sheet )
+			[[linkLauncher window] endSheet: sheet returnCode: NSModalResponseCancel];
+		[linkLauncher joinAddress: addr password: nil];
+		[linkLauncher play: nil];
+	}
+	else if( !addr )
+		Com_Printf( "Link %s has no server address\n", [link UTF8String] );
+	else if( Cvar_VariableIntegerValue( "com_holomatch" ) )
+		Cbuf_AddText( va( "connect %s\n", [addr UTF8String] ) );
+	else
+		Sys_Dialog( DT_INFO, va( "Single player can't join servers. To join %s, quit and open the link "
+			"again, or pick Holomatch in the launcher.", [addr UTF8String] ), "Join a server" );
+}
+@end
+
+// after SDL's video init, which installs a handler of its own for links
+static void InstallLinkHandler( void )
+{
+	static VSPLinkHandler *handler;
+
+	if( !handler )
+		handler = [[VSPLinkHandler alloc] init];
+	[[NSAppleEventManager sharedAppleEventManager] setEventHandler: handler
+		andSelector: @selector(handleURLEvent:withReplyEvent:) forEventClass: kInternetEventClass andEventID: kAEGetURL];
+}
+
 static void TestAboutPanel( const char *path )
 {
 	NSMenu *appMenu = [[[NSApp mainMenu] itemAtIndex: 0] submenu];
@@ -1806,6 +1901,20 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 			exit( 0 );
 		}
 
+		InstallLinkHandler();
+		linkLauncher = l;
+		if( getenv( "VOYAGERSP_TEST_LINK" ) )
+		{
+			NSTimer *t = [NSTimer timerWithTimeInterval: 1 repeats: NO block: ^( NSTimer *timer ) {
+				NSAppleEventDescriptor *e = [NSAppleEventDescriptor appleEventWithEventClass: kInternetEventClass
+					eventID: kAEGetURL targetDescriptor: nil returnID: kAutoGenerateReturnID transactionID: kAnyTransactionID];
+				[e setParamDescriptor: [NSAppleEventDescriptor descriptorWithString: @( getenv( "VOYAGERSP_TEST_LINK" ) )]
+					forKeyword: keyDirectObject];
+				[[[VSPLinkHandler alloc] init] handleURLEvent: e withReplyEvent: nil];
+			}];
+			[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
+		}
+
 		// Cmd+Q: SDL's Quit menu item only posts an SDL event, which nothing
 		// reads yet
 		monitor = [NSEvent addLocalMonitorForEventsMatchingMask: NSEventMaskKeyDown handler: ^NSEvent *( NSEvent *e ) {
@@ -1882,6 +1991,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 			break;
 		}
 		[NSEvent removeMonitor: monitor];
+		linkLauncher = nil;
 
 		if( r != NSModalResponseOK )
 		{

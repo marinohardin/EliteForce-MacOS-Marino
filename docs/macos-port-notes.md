@@ -366,3 +366,19 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   pak0–2 byte-identical to a PC install, about 7 s for 683 MB.
 - **Tests.** `VOYAGERSP_TEST_ADD=<installer.exe>` / `VOYAGERSP_TEST_CHOOSE=<installer.exe>`.
   Never commit an installer or anything taken from one.
+
+## Join links and the Humans column (2026-10-27)
+
+- **stvef:// links.** `Info.plist` claims the `stvef` URL scheme (`CFBundleURLTypes`), so
+  efservers.com's Join links open the app. Formats, as in
+  [stvef-protocol](https://github.com/stefansundin/stvef-protocol): `stvef://connect/<host>:<port>[?…][#…]`
+  and the older `stvef:<ip>;<port>;<name>;<map>;…`; only the address is used, and it must match
+  `host:port` (letters, digits, `.`, `-`, or `[IPv6]`) since it ends up on a command line.
+  `sys_osx_launcher.m` installs a `kAEGetURL` handler right after SDL's video init (SDL installs its
+  own there, which it would otherwise keep). With the launcher up the link is Join (Holomatch,
+  straight in, closing any sheet); in a Holomatch game it is `connect <address>`; in single player
+  a dialog says it can't join. Verified with a cold start through LaunchServices and a second
+  link while in game, both against local servers. Test hook: `VOYAGERSP_TEST_LINK=<link>`.
+- **Players / Humans.** Players is `clients/sv_maxclients` (bots included); Humans is
+  `g_humanplayers`, or `?` when the server doesn't send it. Default sort: Humans (`?` as 0), then
+  Players, then ping.

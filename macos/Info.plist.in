@@ -32,6 +32,17 @@
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Star Trek Voyager: Elite Force server</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>stvef</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Holomatch finds and joins multiplayer games on your local network.</string>
 	<key>NSHumanReadableCopyright</key>

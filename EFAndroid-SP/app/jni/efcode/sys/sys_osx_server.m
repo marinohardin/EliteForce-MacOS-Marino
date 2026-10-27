@@ -4373,6 +4373,7 @@ static NSColor *AmberColor( void )
 @property (nonatomic) NSInteger players, maxPlayers, humans, gametype, ping;	// humans -1: not reported
 @property (nonatomic) BOOL needPass, thisMac;
 @property (nonatomic, readonly) NSString *gametypeName, *playersText, *humansText;
+@property (nonatomic, readonly) NSInteger knownHumans;	// for sorting: ? counts as 0
 @end
 
 @implementation VSPServerInfo
@@ -4386,6 +4387,7 @@ static NSColor *AmberColor( void )
 	return _maxPlayers > 0 ? [NSString stringWithFormat: @"%ld/%ld", (long)_players, (long)_maxPlayers] :
 		[NSString stringWithFormat: @"%ld", (long)_players];
 }
+- (NSInteger)knownHumans	{ return MAX( _humans, 0 ); }
 // people, without bots; "?" when the server doesn't say (no g_humanplayers)
 - (NSString *)humansText
 {
@@ -4656,12 +4658,14 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 	[self column: @"map" title: @"Map" width: 110 sortKey: @"map" ascending: YES];
 	[self column: @"players" title: @"Players" width: 74 sortKey: @"players" ascending: NO];
 	[[table tableColumnWithIdentifier: @"players"] setHeaderToolTip: @"Players on the server, bots included, and its maximum"];
-	[self column: @"humans" title: @"Humans" width: 54 sortKey: @"humans" ascending: NO];
+	[self column: @"humans" title: @"Humans" width: 68 sortKey: @"knownHumans" ascending: NO];
 	[[table tableColumnWithIdentifier: @"humans"] setHeaderToolTip: @"People playing, without bots (? if the server doesn't say)"];
 	[self column: @"type" title: @"Game" width: 120 sortKey: @"gametype" ascending: YES];
 	[self column: @"ping" title: @"Ping" width: 40 sortKey: @"ping" ascending: YES];
 	[[table tableColumnWithIdentifier: @"name"] setResizingMask: NSTableColumnAutoresizingMask | NSTableColumnUserResizingMask];
-	[table setSortDescriptors: @[ [NSSortDescriptor sortDescriptorWithKey: @"players" ascending: NO],
+	// people first, then everyone (bots included), then the nearest
+	[table setSortDescriptors: @[ [NSSortDescriptor sortDescriptorWithKey: @"knownHumans" ascending: NO],
+		[NSSortDescriptor sortDescriptorWithKey: @"players" ascending: NO],
 		[NSSortDescriptor sortDescriptorWithKey: @"ping" ascending: YES] ]];
 	[table setDataSource: self];
 	[table setDelegate: self];
