@@ -203,7 +203,7 @@ void SV_GetUserinfo( int index, char *buffer, int bufferSize ) {
 	}
 	Q_strncpyz( buffer, svs.clients[ index ].userinfo, bufferSize );
 
-	// From cMod (CMOD_BOT_PASSWORD_FIX): bots and the listen server's own player can't type
+	// From cMod by Noah Metzger (Chomenor), CMOD_BOT_PASSWORD_FIX: bots and the listen server's own player can't type
 	// the password, so hand the game the right one and let them join a passworded server
 	{
 		static cvar_t *passwordCvar;
@@ -459,7 +459,7 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 
 	// set nextmap to the same map, but it may be overriden
 	// by the game startup or another console command.
-	// Holomatch leaves nextmap alone, as cMod does (CMOD_NO_ENGINE_NEXTMAP_SET): resetting it
+	// Holomatch leaves nextmap alone, as cMod by Noah Metzger (Chomenor) does, CMOD_NO_ENGINE_NEXTMAP_SET: resetting it
 	// on every map load breaks server map rotations that set it once and leaves maps "stuck".
 	if ( !Com_Holomatch() )
 		Cvar_Set( "nextmap", "map_restart 0");
@@ -731,7 +731,7 @@ void SV_Init (void)
 	sv_mapChecksum = Cvar_Get ("sv_mapChecksum", "", CVAR_ROM);
 	sv_lanForceRate = Cvar_Get ("sv_lanForceRate", "1", CVAR_ARCHIVE );
 	sv_minSnaps = Cvar_Get ("sv_minSnaps", "50", CVAR_ARCHIVE );
-#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 	sv_strictAuth = Cvar_Get ("sv_strictAuth", "1", CVAR_ARCHIVE );
 #endif
 	sv_banFile = Cvar_Get("sv_banFile", "serverbans.dat", CVAR_ARCHIVE);

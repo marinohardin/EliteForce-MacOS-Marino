@@ -146,7 +146,7 @@ void MSG_WriteBits( msg_t *msg, int value, int bits ) {
 				if(write > nbits)
 					write = nbits;
 
-				// overflow check, as the other paths have (from cMod)
+				// overflow check, as the other paths have (from cMod by Noah Metzger (Chomenor))
 				if(location >= msg->maxsize)
 				{
 					msg->overflowed = qtrue;
@@ -252,7 +252,7 @@ int MSG_ReadBits( msg_t *msg, int bits ) {
 				if(get > bits - nbits)
 					get = bits - nbits;
 
-				// don't read past the end of the message (from cMod)
+				// don't read past the end of the message (from cMod by Noah Metzger (Chomenor))
 				if((msg->bit >> 3) >= msg->cursize)
 				{
 					msg->readcount = msg->cursize + 1;

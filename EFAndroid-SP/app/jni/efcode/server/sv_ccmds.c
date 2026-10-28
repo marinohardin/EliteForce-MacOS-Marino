@@ -277,7 +277,7 @@ static void SV_MapRestart_f( void ) {
 	// map_restart has happened
 	svs.snapFlagServerBit ^= SNAPFLAG_SERVERCOUNT;
 
-	// From cMod (CMOD_MAP_RESTART_STATIC_SERVERID): keep the serverid instead of generating a
+	// From cMod by Noah Metzger (Chomenor), CMOD_MAP_RESTART_STATIC_SERVERID: keep the serverid instead of generating a
 	// new one, so a map_restart needs no systeminfo update (which the EF 1.20 client can be
 	// buggy with). Instead, remember each client's netchan sequence and ignore movement it
 	// sent before it received the restart.
@@ -343,7 +343,7 @@ static void SV_MapRestart_f( void ) {
 			continue;
 		}
 
-		// a client still downloading enters the world when it's done (from cMod)
+		// a client still downloading enters the world when it's done (from cMod by Noah Metzger (Chomenor))
 		if ( *client->downloadName ) {
 			continue;
 		}
@@ -521,7 +521,7 @@ static void SV_KickNum_f( void ) {
 	cl->lastPacketTime = svs.time;	// in case there is a funny zombie
 }
 
-#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 // these functions require the auth server which of course is not available anymore for stand-alone games.
 
 /*
@@ -1545,7 +1545,7 @@ void SV_AddOperatorCommands( void ) {
 
 	Cmd_AddCommand ("heartbeat", SV_Heartbeat_f);
 	Cmd_AddCommand ("kick", SV_Kick_f);
-#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 	if(!com_standalone->integer)
 	{
 		Cmd_AddCommand ("banUser", SV_Ban_f);

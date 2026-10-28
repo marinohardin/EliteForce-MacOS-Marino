@@ -144,7 +144,7 @@ void SV_GetChallenge(netadr_t from)
 	challenge->wasrefused = qfalse;
 	challenge->time = svs.time;
 
-#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 	// Drop the authorize stuff if this client is coming in via v6 as the auth server does not support ipv6.
 	// Drop also for addresses coming in on local LAN and for stand-alone games independent from id's assets.
 	if(challenge->adr.type == NA_IP && !com_standalone->integer && !Sys_IsLANAddress(from))
@@ -209,7 +209,7 @@ void SV_GetChallenge(netadr_t from)
 			   challenge->challenge, clientChallenge, com_protocol->integer);
 }
 
-#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 /*
 ====================
 SV_AuthorizeIpPacket
@@ -372,7 +372,7 @@ void SV_DirectConnect( netadr_t from ) {
 			// Old iostvoyHM / ioEF clients (1.37, 1.38 before quake3-ef_1.38-iorev2110.diff) fall back
 			// to the legacy protocol when the reply starts with exactly this string:
 			// iostvoyHM 1.37: cl_main.c: if(!Q_strncmp(s, "Server uses protocol version 24.\n", 33))
-			// Send it for every mismatched version, not only 25, as cMod does (CMOD_PROTOCOL_MSG_FIX).
+			// Send it for every mismatched version, not only 25, as cMod by Noah Metzger (Chomenor) does, CMOD_PROTOCOL_MSG_FIX.
 			NET_OutOfBandPrint(NS_SERVER, from, "print\nServer uses protocol version %i.\n"
 				   "and protocol version %i (yours is %i).\n", PROTOCOL_LEGACY_VERSION, com_protocol->integer, version);
 #else
@@ -746,7 +746,7 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 ==================
 SV_CalcBaselineCutoff
 
-From cMod (CMOD_GAMESTATE_OVERFLOW_FIX): on maps with many configstrings and entities the
+From cMod by Noah Metzger (Chomenor), CMOD_GAMESTATE_OVERFLOW_FIX: on maps with many configstrings and entities the
 gamestate can overflow and the map fails to load for the client. Work out how many baselines
 still fit after the configstrings (msg is a copy, written to a scratch buffer) and set
 client->baselineCutoff; entities past it are sent from a null baseline instead, which only
@@ -815,7 +815,7 @@ static void SV_SendClientGameState( client_t *client ) {
 	client->gamestateMessageNum = client->netchan.outgoingSequence;
 
 	// Remember the pk3s this gamestate tells the client to download, so it can still get all
-	// of them if the map changes during a download of several (cMod's CMOD_PER_CLIENT_DOWNLOAD_MAP)
+	// of them if the map changes during a download of several (from cMod by Noah Metzger (Chomenor), CMOD_PER_CLIENT_DOWNLOAD_MAP)
 	if ( client->downloadPakNames ) {
 		Z_Free( client->downloadPakNames );
 	}
@@ -992,7 +992,7 @@ static void SV_DoneDownload_f( client_t *cl ) {
 		return;
 
 #ifdef ELITEFORCE
-	// From cMod (CMOD_DOWNLOAD_PROTOCOL_FIXES): make sure a legacy client doesn't try to
+	// From cMod by Noah Metzger (Chomenor), CMOD_DOWNLOAD_PROTOCOL_FIXES: make sure a legacy client doesn't try to
 	// delta from the dummy snapshots it got during the download
 	if ( cl->compat )
 		cl->netchan.outgoingSequence += 50;
@@ -1092,7 +1092,7 @@ int SV_WriteDownloadToClient(client_t *cl, msg_t *msg)
 				// Check whether the file appears in the list of referenced
 				// paks to prevent downloading of arbitrary files: the ones
 				// referenced now, or the ones the client was told to download with
-				// its gamestate if the map changed since (from cMod)
+				// its gamestate if the map changed since (from cMod by Noah Metzger (Chomenor))
 				const char *referencedLists[2];
 				int list;
 
@@ -1207,7 +1207,7 @@ int SV_WriteDownloadToClient(client_t *cl, msg_t *msg)
 		cl->downloadCount = 0;
 		cl->downloadEOF = qfalse;
 
-		// From cMod (CMOD_DOWNLOAD_PROTOCOL_FIXES): a legacy client gets dummy snapshots while it
+		// From cMod by Noah Metzger (Chomenor), CMOD_DOWNLOAD_PROTOCOL_FIXES: a legacy client gets dummy snapshots while it
 		// downloads and may send moves; don't let those put it in the game before it's done
 		// (SV_DoneDownload_f sends the gamestate again)
 		if ( cl->state == CS_PRIMED )
@@ -1616,7 +1616,7 @@ void SV_UserinfoChanged( client_t *cl ) {
 	{
 		i = atoi(val);
 
-		// sv_minSnaps, from cMod: older clients default to low snaps values, which would
+		// sv_minSnaps, from cMod by Noah Metzger (Chomenor): older clients default to low snaps values, which would
 		// impair their connection on servers with a higher sv_fps
 		if(i < sv_minSnaps->integer)
 			i = sv_minSnaps->integer;

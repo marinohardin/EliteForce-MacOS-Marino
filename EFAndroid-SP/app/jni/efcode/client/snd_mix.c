@@ -175,7 +175,7 @@ void S_TransferPaintBuffer(int endtime)
 	{	// general case
 		p = (int *) paintbuffer;
 		count = (endtime - s_paintedtime) * dma.channels;
-		// 64-bit, from cMod: s_paintedtime * channels overflows 32 bits after ~12 hours at 48 kHz
+		// 64-bit, from cMod by Noah Metzger (Chomenor): s_paintedtime * channels overflows 32 bits after ~12 hours at 48 kHz
 		out_idx = ((unsigned long long)s_paintedtime * dma.channels) % dma.samples;
 		step = 3 - MIN(dma.channels, 2);
 

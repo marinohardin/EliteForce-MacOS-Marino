@@ -1901,7 +1901,7 @@ void VM_BlockCopy(unsigned int dest, unsigned int src, size_t n)
 	|| ((dest + n) & dataMask) != dest + n
 	|| ((src + n) & dataMask) != src + n)
 	{
-		// From cMod (CMOD_VM_TOLERANT_BLOCKCOPY): wrap the addresses instead of erroring,
+		// From cMod by Noah Metzger (Chomenor), CMOD_VM_TOLERANT_BLOCKCOPY: wrap the addresses instead of erroring,
 		// like ioq3/ioEF before ~2011. Some mods (Super FFA) depend on it.
 		static qboolean warned = qfalse;
 		if ( !warned ) {
@@ -1925,7 +1925,7 @@ void VM_BlockCopy(unsigned int dest, unsigned int src, size_t n)
 VM_Strncpy
 
 strncpy for the VMs' strncpy syscalls. The C library's may abort on overlapping buffers
-(macOS checks for that), which some game modules pass (from cMod, CMOD_VM_STRNCPY_FIX).
+(macOS checks for that), which some game modules pass (from cMod by Noah Metzger (Chomenor), CMOD_VM_STRNCPY_FIX).
 =================
 */
 void VM_Strncpy( char *dst, const char *src, int length ) {

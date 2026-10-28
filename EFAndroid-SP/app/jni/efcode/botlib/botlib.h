@@ -81,7 +81,8 @@ struct weaponinfo_s;
 //action flags
 #ifdef ELITEFORCE
 // EF's game code (bots/botlib.h) has its own action flag values, which it reads back from
-// EA_GetInput; use the same ones (from cMod, CMOD_BOT_TWEAKS) or bot jump/crouch/alt-fire mismatch
+// EA_GetInput; use the same ones or bot jump/crouch/alt-fire mismatch.
+// From cMod by Noah Metzger (Chomenor), CMOD_BOT_TWEAKS.
 #define ACTION_ATTACK			1
 #define ACTION_USE			2
 #define ACTION_RESPAWN			4

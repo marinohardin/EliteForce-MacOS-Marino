@@ -449,9 +449,9 @@ void S_memoryLoad(sfx_t	*sfx) {
 =================
 S_Base_ResetStaleSounds
 
-From cMod (CMOD_SOUND_RESET): sounds stay loaded from map to map, so after a mod or pk3
-change you could keep hearing the previous one's version. Unload the sounds that would now
-come from a different file; they load again when next used.
+From cMod by Noah Metzger (Chomenor), CMOD_SOUND_RESET: sounds stay loaded from map
+to map, so after a mod or pk3 change you could keep hearing the previous one's version.
+Unload the sounds that would now come from a different file; they load again when next used.
 =================
 */
 void S_Base_ResetStaleSounds( void ) {
@@ -634,7 +634,7 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 //	Com_Printf("playing %s\n", sfx->soundName);
 	// pick a channel to play on
 
-	// twice id's limits, as in cMod (CMOD_CONCURRENT_SOUNDS): less stutter on rapid-fire weapons
+	// twice id's limits, from cMod by Noah Metzger (Chomenor), CMOD_CONCURRENT_SOUNDS: less stutter on rapid-fire weapons
 	allowed = 8;
 	if (entityNum == listener_number) {
 		allowed = 16;
