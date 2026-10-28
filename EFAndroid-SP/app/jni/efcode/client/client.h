@@ -366,6 +366,13 @@ typedef struct {
 	float screenYScale;
 	float screenXBias;
 	float screenYBias;
+
+#ifdef USE_CURL
+	// an HTTP (sv_dlURL) download from this server failed: get its files over UDP
+	// until the download list is done (kept here, since clc is cleared on reconnect)
+	qboolean	cURLFailed;
+	netadr_t	cURLFailedServer;
+#endif
 } clientStatic_t;
 
 extern	clientStatic_t		cls;
@@ -496,6 +503,7 @@ void CL_StopRecord_f(void);
 
 void CL_InitDownloads(void);
 void CL_NextDownload(void);
+void CL_Reconnect_f( void );
 
 void CL_GetPing( int n, char *buf, int buflen, int *pingtime );
 void CL_GetPingInfo( int n, char *buf, int buflen );

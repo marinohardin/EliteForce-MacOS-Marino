@@ -353,10 +353,37 @@ void CL_cURL_PerformDownload(void)
 		clc.downloadRestart = qtrue;
 	}
 	else {
-		long code;
+		long code = 0;
+		char *tmpPath;
 
 		qcurl_easy_getinfo(msg->easy_handle, CURLINFO_RESPONSE_CODE,
 			&code);	
+		if(!(cl_allowDownload->integer & DLF_NO_UDP) &&
+			!(clc.sv_allowDownload & DLF_NO_UDP)) {
+			// A wrong or stale sv_dlURL shouldn't keep a player out:
+			// reconnect and fetch the files over UDP instead.
+			Com_Printf(S_COLOR_YELLOW "WARNING: HTTP download failed "
+				"(%s Code: %ld URL: %s), using UDP download\n",
+				qcurl_easy_strerror(msg->data.result),
+				code, clc.downloadURL);
+			tmpPath = FS_BuildOSPath(Cvar_VariableString("fs_homepath"),
+				clc.downloadTempName, "");
+			tmpPath[strlen(tmpPath)-1] = '\0';
+			Sys_Remove(tmpPath);
+			*clc.downloadTempName = *clc.downloadName = 0;
+			cls.cURLFailed = qtrue;
+			cls.cURLFailedServer = clc.serverAddress;
+			clc.cURLUsed = qfalse;
+			CL_cURL_Shutdown();
+			if(clc.downloadRestart) {
+				// files already fetched in this list
+				FS_Restart(clc.checksumFeed);
+				clc.downloadRestart = qfalse;
+			}
+			clc.cURLDisconnected = qfalse;
+			CL_Reconnect_f();
+			return;
+		}
 		Com_Error(ERR_DROP, "Download Error: %s Code: %ld URL: %s",
 			qcurl_easy_strerror(msg->data.result),
 			code, clc.downloadURL);

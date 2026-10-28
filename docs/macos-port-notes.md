@@ -162,7 +162,7 @@ not a second engine:
   `r_gamma` on every slider change, and SP sliders can now be dragged.
 - **Map downloads (Holomatch).** `cl_allowDownload 1`, `sv_allowDownload 1` and
   `sv_dlRate 4000` are the defaults. A one-time `com_hmNetDefaults` stamp applies them over
-  configs that archived the old values. Downloads use UDP only (no cURL). On a LAN the
+  configs that archived the old values. Downloads try HTTP first since 1.3.0 (below). Over UDP, on a LAN the
   server sends several rounds of blocks per pass and the client acknowledges every 10 ms.
   A 3.3 MB map takes about 2 s. Single player keeps `net_enabled 0`.
 
@@ -404,3 +404,34 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   Without a choice, macOS picks among the apps that claim it, often the most recently registered.
 - **Tests.** `VOYAGERSP_TEST_BROWSER_SELECT=<row>` (and waits for its players),
   `VOYAGERSP_TEST_BROWSER_PREVIEW=<png>`, `VOYAGERSP_TEST_LINK_HANDLER=<app>`.
+
+## HTTP map downloads (2026-10-27)
+
+- **HTTP first, UDP fallback.** Most live servers set `sv_dlURL`; the client now uses it.
+  `USE_CURL` builds `client/cl_curl.c`, linked straight to the macOS system libcurl (`-lcurl`,
+  `/usr/lib/libcurl.4.dylib`, SDK headers through `USE_SYSTEM_CURL` in `cl_curl.h`). No
+  dlopen, no `cl_cURLLib` cvar, nothing bundled. `cl_allowDownload 1` (the default; bit 2,
+  `DLF_NO_REDIRECT`, unset) already allows HTTP, so the `com_hmNetDefaults` stamp is
+  unchanged. The client asks `<sv_dlURL>/baseEF/<map>.pk3`, disconnects while it downloads (as
+  ioq3 does, unless the server sets `DLF_NO_DISCONNECT`), then reconnects.
+- **A wrong sv_dlURL doesn't keep you out.** Stock ioq3 drops with "Download Error" when the
+  HTTP download fails (404, connection refused). Here, when UDP is allowed on both sides, the
+  client deletes the partial file, notes the server (`cls.cURLFailed`), reconnects and gets
+  the files over UDP; that note is cleared once the download list is done. An empty
+  `sv_dlURL` goes straight to UDP.
+- **cMod's `CMOD_DL_LASTMSG_FIX`** (no `MSG_ReadData` for an empty last chunk in compat mode)
+  is already in `CL_ParseDownload`: lilium-voyager's `if (size)` does the same.
+- **Single player** never reaches this: downloads start only from a Holomatch gamestate, and
+  SP runs with `net_enabled 0`.
+- **Tested** against a local dedicated server and `python3 -m http.server`: HTTP download
+  (byte-identical pk3, map loads), a 404 URL (warning, reconnect, UDP), and an empty URL
+  (UDP). Note: on the command line `+set sv_dlURL http://...` is cut at `//`; set it in a cfg.
+
+## MP3 music: skip non-Layer III frames (2026-10-27)
+
+`S_MP3_Scanfile` gave up on the whole file at the first header that wasn't Layer III, so a
+stray false sync broke the music (cMod names `amenhotep` and `hm_stronghold`). It now skips
+that frame (`CMOD_MP3_LAYER_CHECK_FIX`, from cMod). Checked with a harness running the
+codec over an SP track with a bogus Layer II frame in front: the old code fails to open it,
+the new one decodes all of it. All 49 music MP3s in pak0, pak3 and qbeast decode the same as
+before, and SP music (borg1) still plays.

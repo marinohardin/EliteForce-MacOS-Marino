@@ -2267,6 +2267,9 @@ Called when all downloading has been completed
 void CL_DownloadsComplete( void ) {
 
 #ifdef USE_CURL
+	// the next map's downloads try HTTP again
+	cls.cURLFailed = qfalse;
+
 	// if we downloaded with cURL
 	if(clc.cURLUsed) { 
 		clc.cURLUsed = qfalse;
@@ -2409,7 +2412,12 @@ void CL_NextDownload(void)
 		else
 			s = localName + strlen(localName); // point at the nul byte
 #ifdef USE_CURL
-		if(!(cl_allowDownload->integer & DLF_NO_REDIRECT)) {
+		if(cls.cURLFailed &&
+			NET_CompareAdr(cls.cURLFailedServer, clc.serverAddress)) {
+			Com_Printf("HTTP download from this server failed, "
+				"using UDP\n");
+		}
+		else if(!(cl_allowDownload->integer & DLF_NO_REDIRECT)) {
 			if(clc.sv_allowDownload & DLF_NO_REDIRECT) {
 				Com_Printf("WARNING: server does not "
 					"allow download redirection "
