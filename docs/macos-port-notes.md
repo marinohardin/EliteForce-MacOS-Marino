@@ -407,7 +407,7 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
 
 ## QVM float-to-int rounding (2026-10-27)
 
-cMod's `CMOD_VMFLOATCAST` (`VM_tonextint` in its interpreter, from Thilo Schulz's game code
+cMod's (by Noah Metzger, Chomenor) `CMOD_VMFLOATCAST` (`VM_tonextint` in its interpreter, from Thilo Schulz's game code
 patch) makes the VM's `OP_CVFI` round to nearest instead of truncating. Elite Force's
 physics depend on that: the retail engine ran QVMs on x87 (`fistp`, round to nearest), and
 `bg_pmove.c` snaps the velocity every frame with `SnapVector` (`(int)` casts), so truncation
