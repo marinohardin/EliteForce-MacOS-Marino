@@ -40,6 +40,12 @@ idTech3 lineage, all **GPLv2**:
   half builds on. <https://github.com/clover-moe/lilium-voyager>
 - **Quake3e** — Eugene C. (ec-) — source of the Vulkan renderer (`renderervk`) and the AArch64/ARMv7
   VM JIT (`vm_aarch64.c`, `vm_armv7l.c`). <https://github.com/ec-/Quake3e>
+- **cMod (ioEF-cMod)** — **Noah Metzger (Chomenor)** — the Elite Force multiplayer client and server
+  that much of this port's Holomatch work comes from or was guided by: HTTP map downloads, map music,
+  server hosting and download fixes, sound and crash fixes, and more, each credited in
+  [docs/macos-port-notes.md](docs/macos-port-notes.md). cMod is the result of years of careful work
+  on Elite Force multiplayer, and Noah kindly offered to collaborate on this port. Huge thanks.
+  <https://github.com/Chomenor/ioef-cmod> · <https://stvef.org/cmod/>
 - **VoyagerNX** — faithvoid — the Nintendo Switch port that proved the ARM + console-controls path this
   Android lineage started from. <https://github.com/faithvoid/VoyagerNX>
 
