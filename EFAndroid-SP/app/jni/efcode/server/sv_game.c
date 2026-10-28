@@ -868,7 +868,7 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 			return args[1];
 		}
 #else
-		strncpy( VMA(1), VMA(2), args[3] );
+		VM_Strncpy( VMA(1), VMA(2), args[3] );
 		return args[1];
 #endif
 

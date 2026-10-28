@@ -3624,6 +3624,11 @@ void CL_StartHunkUsers( qboolean rendererOnly ) {
 		return;
 	}
 
+	// a map load (maybe of another mod) is the time to drop stale cached sounds
+	if ( cls.soundStarted ) {
+		S_ResetStaleSounds();
+	}
+
 	if ( !cls.soundStarted ) {
 		cls.soundStarted = qtrue;
 		S_Init();

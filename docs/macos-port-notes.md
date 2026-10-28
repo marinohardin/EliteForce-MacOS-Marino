@@ -404,3 +404,35 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   Without a choice, macOS picks among the apps that claim it, often the most recently registered.
 - **Tests.** `VOYAGERSP_TEST_BROWSER_SELECT=<row>` (and waits for its players),
   `VOYAGERSP_TEST_BROWSER_PREVIEW=<png>`, `VOYAGERSP_TEST_LINK_HANDLER=<app>`.
+
+## Server, sound and stability fixes from cMod (2026-10-27)
+
+Ported from cMod (Chomenor's ioef-cmod) as plain code, credited in comments. Holomatch servers
+(Host a Server, dedicated) and single player share this code.
+
+- **Server.** `getstatus` advertises `version "<ours> HM v1.20 compatible"` (the real one is in
+  `version_engine`) and, when a master asks with a challenge, `gamename baseEF`; `getinfo` sets
+  `challenge` last, so it comes first (`Info_SetValueForKey` prepends). Every protocol mismatch
+  gets the "Server uses protocol version 24." reply old ioEF clients look for. Holomatch no
+  longer resets `nextmap` on map load (rotations that set it once stuck on one map; single
+  player keeps the old behavior). `sv_minSnaps` (default 50, still capped at `sv_fps`). Bots and
+  the listen server's player get `g_password` in their userinfo, so bots join passworded
+  servers. The botlib action flags use EF's game-code values and `BOTLIB_EA_ALT_ATTACK` calls
+  `EA_AltAttack` (bots alt-fire). Gamestates that would overflow drop the entity baselines that
+  don't fit (`client_t.baselineCutoff`, null baselines in snapshots). `map_restart` keeps the
+  serverid and ignores moves sent before it (`mapRestartSequence`). Downloads: a client keeps
+  the pk3 list from its gamestate (`downloadPakNames`), so a map change during a download of
+  several pk3s no longer refuses the rest; `map_restart` skips clients still downloading;
+  legacy-protocol downloads stay `CS_CONNECTED` and don't delta from the dummy snapshots. The
+  dead EF auth server is never contacted (server challenge, `ipAuthorize`, `banUser`/`banClient`,
+  client `getKeyAuthorize`): those blocks are `!defined(ELITEFORCE)`.
+- **Sound.** On map load (`CL_StartHunkUsers`) `S_ResetStaleSounds` unloads cached sounds whose
+  file now comes from another pk3 or folder (`FS_FileSource`, `S_CodecSoundSource`); they
+  reload when used. Base backend only; OpenAL isn't covered. Twice id's per-entity concurrent
+  sound limits; 64-bit mixer index. cMod's "no SDL format changes" doesn't apply: sdl2-compat
+  already hands back the requested format (S16, 22050 Hz) with `SDL_AUDIO_ALLOW_ANY_CHANGE`.
+- **Stability.** 1024 queued events (was 256); overflow checks in the legacy (`compat`) bit
+  reader/writer in `msg.c`; out-of-range VM block copies wrap instead of `ERR_DROP` (Super FFA);
+  `VM_Strncpy` for the strncpy syscalls (macOS aborts on overlapping `strncpy`); a non-inlined
+  `LittleLong` in `cm_load.c` for bsps with unaligned lumps; NaN check in renderervk's
+  `R_FogFactor`. renderervk already had cMod's fog side and FRCL fixes.
