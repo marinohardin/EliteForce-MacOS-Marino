@@ -868,7 +868,7 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 			return args[1];
 		}
 #else
-		strncpy( VMA(1), VMA(2), args[3] );
+		VM_Strncpy( VMA(1), VMA(2), args[3] );
 		return args[1];
 #endif
 
@@ -916,7 +916,7 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 		botlib_export->ea.EA_DropInv(args[1], VMA(2));
 		return 0;
 	case BOTLIB_EA_ALT_ATTACK:
-		botlib_export->ea.EA_Attack( args[1] );
+		botlib_export->ea.EA_AltAttack( args[1] );
 		return 0;
 #endif
 

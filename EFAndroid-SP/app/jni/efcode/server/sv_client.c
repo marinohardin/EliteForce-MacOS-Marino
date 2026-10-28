@@ -144,7 +144,7 @@ void SV_GetChallenge(netadr_t from)
 	challenge->wasrefused = qfalse;
 	challenge->time = svs.time;
 
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 	// Drop the authorize stuff if this client is coming in via v6 as the auth server does not support ipv6.
 	// Drop also for addresses coming in on local LAN and for stand-alone games independent from id's assets.
 	if(challenge->adr.type == NA_IP && !com_standalone->integer && !Sys_IsLANAddress(from))
@@ -209,7 +209,7 @@ void SV_GetChallenge(netadr_t from)
 			   challenge->challenge, clientChallenge, com_protocol->integer);
 }
 
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 /*
 ====================
 SV_AuthorizeIpPacket
@@ -369,17 +369,20 @@ void SV_DirectConnect( netadr_t from ) {
 		{
 #ifdef ELITEFORCE
 #ifdef LEGACY_PROTOCOL
-			// if it's a iostvoyHM 1.37 client or 1.38 before quake3-ef_1.38-iorev2110.diff
-			// use a specific message so the client falls back to using the legacy protocol
+			// Old iostvoyHM / ioEF clients (1.37, 1.38 before quake3-ef_1.38-iorev2110.diff) fall back
+			// to the legacy protocol when the reply starts with exactly this string:
 			// iostvoyHM 1.37: cl_main.c: if(!Q_strncmp(s, "Server uses protocol version 24.\n", 33))
-			if(version == 25)
-				NET_OutOfBandPrint(NS_SERVER, from, "print\nServer uses protocol version %i.\n"
-					   "and protocol version %i (yours is %i).\n", PROTOCOL_LEGACY_VERSION, com_protocol->integer, version);
-			else
-#endif
-#endif
+			// Send it for every mismatched version, not only 25, as cMod by Noah Metzger (Chomenor) does, CMOD_PROTOCOL_MSG_FIX.
+			NET_OutOfBandPrint(NS_SERVER, from, "print\nServer uses protocol version %i.\n"
+				   "and protocol version %i (yours is %i).\n", PROTOCOL_LEGACY_VERSION, com_protocol->integer, version);
+#else
 			NET_OutOfBandPrint(NS_SERVER, from, "print\nServer uses protocol version %i "
 					   "(yours is %i).\n", com_protocol->integer, version);
+#endif
+#else
+			NET_OutOfBandPrint(NS_SERVER, from, "print\nServer uses protocol version %i "
+					   "(yours is %i).\n", com_protocol->integer, version);
+#endif
 			Com_DPrintf("    rejected connect from version %i\n", version);
 			return;
 		}
@@ -555,6 +558,9 @@ gotnewcl:
 	// build a new connection
 	// accept the new client
 	// this is the only place a client_t is ever initialized
+	if ( newcl->downloadPakNames ) {
+		Z_Free( newcl->downloadPakNames );
+	}
 	*newcl = temp;
 	clientNum = newcl - svs.clients;
 	ent = SV_GentityNum( clientNum );
@@ -641,6 +647,12 @@ void SV_FreeClient(client_t *client)
 
 	SV_Netchan_FreeQueue(client);
 	SV_CloseDownload(client);
+
+	if(client->downloadPakNames)
+	{
+		Z_Free(client->downloadPakNames);
+		client->downloadPakNames = NULL;
+	}
 }
 
 /*
@@ -731,6 +743,50 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 }
 
 /*
+==================
+SV_CalcBaselineCutoff
+
+From cMod by Noah Metzger (Chomenor), CMOD_GAMESTATE_OVERFLOW_FIX: on maps with many configstrings and entities the
+gamestate can overflow and the map fails to load for the client. Work out how many baselines
+still fit after the configstrings (msg is a copy, written to a scratch buffer) and set
+client->baselineCutoff; entities past it are sent from a null baseline instead, which only
+costs a little bandwidth.
+==================
+*/
+static void SV_CalcBaselineCutoff( client_t *client, msg_t msg ) {
+	byte			msgBuffer[MAX_MSGLEN];
+	entityState_t	*base, nullstate;
+	int				start, total = 0, fitting = 0, lastFitting = -1;
+
+	msg.data = msgBuffer;
+
+	Com_Memset( &nullstate, 0, sizeof( nullstate ) );
+	for ( start = 0 ; start < MAX_GENTITIES; start++ ) {
+		base = &sv.svEntities[start].baseline;
+		if ( !base->number ) {
+			continue;
+		}
+		MSG_WriteByte( &msg, svc_baseline );
+		MSG_WriteDeltaEntity( &msg, &nullstate, base, qtrue );
+
+		total++;
+		// leave room for the end of the gamestate message
+		if ( msg.cursize + 24 < msg.maxsize ) {
+			fitting++;
+			lastFitting = start;
+		}
+	}
+
+	if ( fitting != total ) {
+		client->baselineCutoff = lastFitting + 1;
+		Com_Printf( "Gamestate for client %i: sending %i of %i entity baselines to avoid overflow\n",
+				(int)( client - svs.clients ), fitting, total );
+	} else {
+		client->baselineCutoff = 0;
+	}
+}
+
+/*
 ================
 SV_SendClientGameState
 
@@ -757,6 +813,13 @@ static void SV_SendClientGameState( client_t *client ) {
 	// notice that it is from a different serverid and that the
 	// gamestate message was not just sent, forcing a retransmit
 	client->gamestateMessageNum = client->netchan.outgoingSequence;
+
+	// Remember the pk3s this gamestate tells the client to download, so it can still get all
+	// of them if the map changes during a download of several (from cMod by Noah Metzger (Chomenor), CMOD_PER_CLIENT_DOWNLOAD_MAP)
+	if ( client->downloadPakNames ) {
+		Z_Free( client->downloadPakNames );
+	}
+	client->downloadPakNames = CopyString( Cvar_VariableString( "sv_referencedPakNames" ) );
 
 #ifdef ELITEFORCE
 	if(client->compat)
@@ -795,12 +858,16 @@ static void SV_SendClientGameState( client_t *client ) {
 		}
 	}
 
-	// write the baselines
+	// write the baselines, as many as fit
+	SV_CalcBaselineCutoff( client, msg );
 	Com_Memset( &nullstate, 0, sizeof( nullstate ) );
 	for ( start = 0 ; start < MAX_GENTITIES; start++ ) {
 		base = &sv.svEntities[start].baseline;
 		if ( !base->number ) {
 			continue;
+		}
+		if ( client->baselineCutoff > 0 && start >= client->baselineCutoff ) {
+			break;
 		}
 		MSG_WriteByte( &msg, svc_baseline );
 		MSG_WriteDeltaEntity( &msg, &nullstate, base, qtrue );
@@ -820,6 +887,10 @@ static void SV_SendClientGameState( client_t *client ) {
 
 	// write the checksum feed
 	MSG_WriteLong( &msg, sv.checksumFeed);
+
+	if ( msg.overflowed ) {
+		Com_Printf( "WARNING: gamestate overflow for client %i\n", (int)( client - svs.clients ) );
+	}
 
 	// deliver this to the client
 	SV_SendMessageToClient( &msg, client );
@@ -920,6 +991,13 @@ static void SV_DoneDownload_f( client_t *cl ) {
 	if ( cl->state == CS_ACTIVE )
 		return;
 
+#ifdef ELITEFORCE
+	// From cMod by Noah Metzger (Chomenor), CMOD_DOWNLOAD_PROTOCOL_FIXES: make sure a legacy client doesn't try to
+	// delta from the dummy snapshots it got during the download
+	if ( cl->compat )
+		cl->netchan.outgoingSequence += 50;
+#endif
+
 	Com_DPrintf( "clientDownload: %s Done\n", cl->name);
 	// resend the game state to update any clients that entered during the download
 	SV_SendClientGameState(cl);
@@ -1011,32 +1089,44 @@ int SV_WriteDownloadToClient(client_t *cl, msg_t *msg)
 			// Check for pk3 filename extension
 			if(!Q_stricmp(pakptr + 1, "pk3"))
 			{
-				const char *referencedPaks = FS_ReferencedPakNames();
-
 				// Check whether the file appears in the list of referenced
-				// paks to prevent downloading of arbitrary files.
-				Cmd_TokenizeStringIgnoreQuotes(referencedPaks);
-				numRefPaks = Cmd_Argc();
+				// paks to prevent downloading of arbitrary files: the ones
+				// referenced now, or the ones the client was told to download with
+				// its gamestate if the map changed since (from cMod by Noah Metzger (Chomenor))
+				const char *referencedLists[2];
+				int list;
 
-				for(curindex = 0; curindex < numRefPaks; curindex++)
+				referencedLists[0] = FS_ReferencedPakNames();
+				referencedLists[1] = cl->downloadPakNames;
+
+				for(list = 0; list < 2 && unreferenced; list++)
 				{
-					if(!FS_FilenameCompare(Cmd_Argv(curindex), pakbuf))
+					if(!referencedLists[list])
+						continue;
+
+					Cmd_TokenizeStringIgnoreQuotes(referencedLists[list]);
+					numRefPaks = Cmd_Argc();
+
+					for(curindex = 0; curindex < numRefPaks; curindex++)
 					{
-						unreferenced = 0;
+						if(!FS_FilenameCompare(Cmd_Argv(curindex), pakbuf))
+						{
+							unreferenced = 0;
 
-						// now that we know the file is referenced,
-						// check whether it's legal to download it.
+							// now that we know the file is referenced,
+							// check whether it's legal to download it.
 #ifndef STANDALONE
-						#ifdef ELITEFORCE
-						idPack = qfalse;
-						#else
-						missionPack = FS_idPak(pakbuf, BASETA, NUM_TA_PAKS);
-						idPack = missionPack;
-						#endif
+							#ifdef ELITEFORCE
+							idPack = qfalse;
+							#else
+							missionPack = FS_idPak(pakbuf, BASETA, NUM_TA_PAKS);
+							idPack = missionPack;
+							#endif
 #endif
-						idPack = idPack || FS_idPak(pakbuf, BASEGAME, NUM_ID_PAKS);
+							idPack = idPack || FS_idPak(pakbuf, BASEGAME, NUM_ID_PAKS);
 
-						break;
+							break;
+						}
 					}
 				}
 			}
@@ -1116,6 +1206,12 @@ int SV_WriteDownloadToClient(client_t *cl, msg_t *msg)
 		cl->downloadCurrentBlock = cl->downloadClientBlock = cl->downloadXmitBlock = 0;
 		cl->downloadCount = 0;
 		cl->downloadEOF = qfalse;
+
+		// From cMod by Noah Metzger (Chomenor), CMOD_DOWNLOAD_PROTOCOL_FIXES: a legacy client gets dummy snapshots while it
+		// downloads and may send moves; don't let those put it in the game before it's done
+		// (SV_DoneDownload_f sends the gamestate again)
+		if ( cl->state == CS_PRIMED )
+			cl->state = CS_CONNECTED;
 	}
 
 	// Perform any reads that we need to
@@ -1519,7 +1615,12 @@ void SV_UserinfoChanged( client_t *cl ) {
 	if(strlen(val))
 	{
 		i = atoi(val);
-		
+
+		// sv_minSnaps, from cMod by Noah Metzger (Chomenor): older clients default to low snaps values, which would
+		// impair their connection on servers with a higher sv_fps
+		if(i < sv_minSnaps->integer)
+			i = sv_minSnaps->integer;
+
 		if(i < 1)
 			i = 1;
 		else if(i > sv_fps->integer)
@@ -2098,6 +2199,11 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
 		SV_UserVoip( cl, msg, qfalse );
 		c = MSG_ReadByte( msg );
 #endif
+	}
+
+	// skip movement from before the client got the last map_restart
+	if ( cl->mapRestartSequence && cl->messageAcknowledge < cl->mapRestartSequence ) {
+		return;
 	}
 
 	// read the usercmd_t

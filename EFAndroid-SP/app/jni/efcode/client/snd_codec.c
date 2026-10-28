@@ -151,6 +151,63 @@ static void *S_CodecGetSound(const char *filename, snd_info_t *info)
 
 /*
 =================
+S_CodecSoundSource
+
+Where S_CodecGetSound would load filename from now (FS_FileSource), 0 if nowhere.
+Follows the same lookup order: German voice, the name as given, then other extensions.
+=================
+*/
+int S_CodecSoundSource(const char *filename)
+{
+	snd_codec_t *codec;
+	char		localName[ MAX_QPATH ];
+	char		altName[ MAX_QPATH ];
+	const char	*ext;
+	int			source;
+
+	#ifdef ELITEFORCE
+	if(
+	    !Q_strncmp(filename, VOXDIR, ARRAY_LEN(VOXDIR) - 1) &&
+	    !Q_stricmp(Cvar_VariableString("s_language"), "DEUTSCH")
+	  )
+	{
+		Q_strncpyz(localName, filename, MAX_QPATH - 10);
+
+		localName[8] = 'x';
+		localName[9] = '_';
+		localName[10] = 'd';
+
+		if((source = S_CodecSoundSource(localName)))
+			return source;
+	}
+	#endif
+
+	Q_strncpyz(localName, filename, MAX_QPATH);
+	ext = COM_GetExtension(localName);
+
+	for( codec = codecs; *ext && codec; codec = codec->next )
+	{
+		if( !Q_stricmp( ext, codec->ext ) )
+		{
+			if((source = FS_FileSource(localName)))
+				return source;
+			COM_StripExtension( filename, localName, MAX_QPATH );
+			break;
+		}
+	}
+
+	for( codec = codecs; codec; codec = codec->next )
+	{
+		Com_sprintf( altName, sizeof (altName), "%s.%s", localName, codec->ext );
+		if((source = FS_FileSource(altName)))
+			return source;
+	}
+
+	return 0;
+}
+
+/*
+=================
 S_CodecInit
 =================
 */

@@ -59,7 +59,8 @@ cvar_t	*sv_gametype;
 cvar_t	*sv_pure;
 cvar_t	*sv_floodProtect;
 cvar_t	*sv_lanForceRate; // dedicated 1 (LAN) server forces local client rates to 99999 (bug #491)
-#ifndef STANDALONE
+cvar_t	*sv_minSnaps;		// raise clients' snaps to at least this (still capped at sv_fps)
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 cvar_t	*sv_strictAuth;
 #endif
 cvar_t	*sv_banFile;
@@ -599,6 +600,16 @@ static void SVC_Status( netadr_t from ) {
 	else
 #endif
 		Info_SetValueForKey(infostring, "protocol", va("%i", com_protocol->integer));
+
+	// From cMod by Noah Metzger (Chomenor), CMOD_GETSTATUS_FIXES: some master servers and server browser tools only
+	// list servers that look like EF 1.20 Holomatch, so advertise that and keep the real
+	// engine version in its own key. A query with a challenge comes from a master server,
+	// which expects the 1.20 game name.
+	Info_SetValueForKey( infostring, "version_engine", com_version->string );
+	Info_SetValueForKey( infostring, "version", Q3_VERSION " HM v1.20 compatible" );
+	if ( *Cmd_Argv(1) ) {
+		Info_SetValueForKey( infostring, "gamename", "baseEF" );
+	}
 #endif
 
 	// echo back the parameter to status. so master servers can use it as a challenge
@@ -680,10 +691,6 @@ void SVC_Info( netadr_t from ) {
 
 	infostring[0] = 0;
 
-	// echo back the parameter to status. so servers can use it as a challenge
-	// to prevent timed spoofed reply packets that add ghost servers
-	Info_SetValueForKey( infostring, "challenge", Cmd_Argv(1) );
-
 	Info_SetValueForKey( infostring, "gamename", com_gamename->string );
 
 #ifdef LEGACY_PROTOCOL
@@ -719,6 +726,13 @@ void SVC_Info( netadr_t from ) {
 	if( *gamedir ) {
 		Info_SetValueForKey( infostring, "game", gamedir );
 	}
+
+	// echo back the parameter to status. so servers can use it as a challenge
+	// to prevent timed spoofed reply packets that add ghost servers.
+	// Set last, so it comes first in the reply (Info_SetValueForKey prepends), as in EF 1.20.
+	// From cMod by Noah Metzger (Chomenor), CMOD_GETSTATUS_FIXES: some EF browser tools
+	// expect it there.
+	Info_SetValueForKey( infostring, "challenge", Cmd_Argv(1) );
 
 #ifdef ELITEFORCE
 	NET_OutOfBandPrint( NS_SERVER, from, "infoResponse \"%s\"", infostring );
@@ -849,7 +863,7 @@ static void SV_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 		SV_GetChallenge(from);
 	} else if (!Q_stricmp(c, "connect")) {
 		SV_DirectConnect( from );
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 	} else if (!Q_stricmp(c, "ipAuthorize")) {
 		SV_AuthorizeIpPacket( from );
 #endif

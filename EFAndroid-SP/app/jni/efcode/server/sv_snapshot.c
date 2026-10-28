@@ -52,7 +52,7 @@ SV_EmitPacketEntities
 Writes a delta update of an entityState_t list to the message.
 =============
 */
-static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to, msg_t *msg ) {
+static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to, msg_t *msg, int baselineCutoff ) {
 	entityState_t	*oldent, *newent;
 	int		oldindex, newindex;
 	int		oldnum, newnum;
@@ -96,6 +96,12 @@ static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to,
 
 		if ( newnum < oldnum ) {
 			// this is a new entity, send it from the baseline
+			// (a null one if its baseline didn't fit in the client's gamestate)
+			if ( baselineCutoff > 0 && newnum >= baselineCutoff ) {
+				entityState_t nullBaseline;
+				Com_Memset( &nullBaseline, 0, sizeof( nullBaseline ) );
+				MSG_WriteDeltaEntity (msg, &nullBaseline, newent, qtrue );
+			} else
 			MSG_WriteDeltaEntity (msg, &sv.svEntities[newnum].baseline, newent, qtrue );
 			newindex++;
 			continue;
@@ -202,7 +208,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	}
 
 	// delta encode the entities
-	SV_EmitPacketEntities (oldframe, frame, msg);
+	SV_EmitPacketEntities (oldframe, frame, msg, client->baselineCutoff);
 
 	// padding for rate debugging
 	if ( sv_padPackets->integer ) {

@@ -202,6 +202,21 @@ void SV_GetUserinfo( int index, char *buffer, int bufferSize ) {
 		Com_Error (ERR_DROP, "SV_GetUserinfo: bad index %i", index);
 	}
 	Q_strncpyz( buffer, svs.clients[ index ].userinfo, bufferSize );
+
+	// From cMod by Noah Metzger (Chomenor), CMOD_BOT_PASSWORD_FIX: bots and the listen server's own player can't type
+	// the password, so hand the game the right one and let them join a passworded server
+	{
+		static cvar_t *passwordCvar;
+		netadrtype_t type = svs.clients[ index ].netchan.remoteAddress.type;
+
+		if ( !passwordCvar ) {
+			passwordCvar = Cvar_Get( "g_password", "", 0 );
+		}
+		if ( passwordCvar->string[0] && Q_stricmp( passwordCvar->string, "none" ) &&
+				( type == NA_BOT || type == NA_LOOPBACK ) ) {
+			Info_SetValueForKey( buffer, "password", passwordCvar->string );
+		}
+	}
 }
 
 
@@ -443,8 +458,11 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 	svs.snapFlagServerBit ^= SNAPFLAG_SERVERCOUNT;
 
 	// set nextmap to the same map, but it may be overriden
-	// by the game startup or another console command
-	Cvar_Set( "nextmap", "map_restart 0");
+	// by the game startup or another console command.
+	// Holomatch leaves nextmap alone, as cMod by Noah Metzger (Chomenor) does, CMOD_NO_ENGINE_NEXTMAP_SET: resetting it
+	// on every map load breaks server map rotations that set it once and leaves maps "stuck".
+	if ( !Com_Holomatch() )
+		Cvar_Set( "nextmap", "map_restart 0");
 //	Cvar_Set( "nextmap", va("map %s", server) );
 
 	for (i=0 ; i<sv_maxclients->integer ; i++) {
@@ -680,7 +698,7 @@ void SV_Init (void)
 	#endif
 	sv_timeout = Cvar_Get ("sv_timeout", "200", CVAR_TEMP );
 	sv_zombietime = Cvar_Get ("sv_zombietime", "2", CVAR_TEMP );
-	Cvar_Get ("nextmap", "", CVAR_TEMP );
+	Cvar_Get ("nextmap", Com_Holomatch() ? "map_restart 0" : "", CVAR_TEMP );
 
 	// Holomatch: serve the referenced map/content pk3s to clients that lack them
 	// (never the Raven paks, never anything unreferenced or not a .pk3)
@@ -712,7 +730,8 @@ void SV_Init (void)
 	sv_killserver = Cvar_Get ("sv_killserver", "0", 0);
 	sv_mapChecksum = Cvar_Get ("sv_mapChecksum", "", CVAR_ROM);
 	sv_lanForceRate = Cvar_Get ("sv_lanForceRate", "1", CVAR_ARCHIVE );
-#ifndef STANDALONE
+	sv_minSnaps = Cvar_Get ("sv_minSnaps", "50", CVAR_ARCHIVE );
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 	sv_strictAuth = Cvar_Get ("sv_strictAuth", "1", CVAR_ARCHIVE );
 #endif
 	sv_banFile = Cvar_Get("sv_banFile", "serverbans.dat", CVAR_ARCHIVE);

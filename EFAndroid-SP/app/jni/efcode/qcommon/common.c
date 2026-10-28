@@ -2001,7 +2001,7 @@ EVENT LOOP
 ========================================================================
 */
 
-#define MAX_QUEUED_EVENTS  256
+#define MAX_QUEUED_EVENTS  1024	// was 256; bigger, from cMod by Noah Metzger (Chomenor), to avoid Com_QueueEvent overflows
 #define MASK_QUEUED_EVENTS ( MAX_QUEUED_EVENTS - 1 )
 
 static sysEvent_t  eventQueue[ MAX_QUEUED_EVENTS ];

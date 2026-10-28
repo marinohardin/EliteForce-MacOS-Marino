@@ -1371,7 +1371,9 @@ void CL_MapLoading( void ) {
 		SCR_UpdateScreen();
 	} else {
 		// clear nextmap so the cinematic shutdown doesn't execute it
-		Cvar_Set( "nextmap", "" );
+		// (single player only: in Holomatch it may hold the server's map rotation)
+		if ( !Com_Holomatch() )
+			Cvar_Set( "nextmap", "" );
 		CL_Disconnect( qtrue );
 		Q_strncpyz( clc.servername, "localhost", sizeof(clc.servername) );
 		clc.state = CA_CHALLENGING;		// so the connect screen is drawn
@@ -1657,7 +1659,7 @@ If no response is received from the authorize server after two tries, the client
 in anyway.
 ===================
 */
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 void CL_RequestAuthorization( void ) {
 	char	nums[64];
 	int		i, j, l;
@@ -2546,7 +2548,7 @@ void CL_CheckForResend( void ) {
 	switch ( clc.state ) {
 	case CA_CONNECTING:
 		// requesting a challenge .. IPv6 users always get in as authorize server supports no ipv6.
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 		if (!com_standalone->integer && clc.serverAddress.type == NA_IP && !Sys_IsLANAddress( clc.serverAddress ) )
 			CL_RequestAuthorization();
 #endif
@@ -3628,6 +3630,11 @@ void CL_StartHunkUsers( qboolean rendererOnly ) {
 
 	if ( rendererOnly ) {
 		return;
+	}
+
+	// a map load (maybe of another mod) is the time to drop stale cached sounds
+	if ( cls.soundStarted ) {
+		S_ResetStaleSounds();
 	}
 
 	if ( !cls.soundStarted ) {

@@ -1832,6 +1832,42 @@ int	FS_FileIsInPAK(const char *filename, int *pChecksum ) {
 
 /*
 ============
+FS_FileSource
+
+Identifies where filename would be read from now: its pk3's checksum, or a checksum of
+the directory's path, 0 if it isn't found. Lets code that keeps a file loaded across map
+loads (the sound system) notice that another mod or new pk3s replaced it.
+============
+*/
+int FS_FileSource( const char *filename ) {
+	searchpath_t	*search;
+	char			path[MAX_OSPATH * 2];
+
+	if ( !fs_searchpaths ) {
+		return 0;
+	}
+
+	for ( search = fs_searchpaths ; search ; search = search->next ) {
+		// same purity rules as reading the file
+		if ( search->pack && !FS_PakIsPure( search->pack ) ) {
+			continue;
+		}
+		if ( search->dir && fs_numServerPaks ) {
+			continue;
+		}
+		if ( FS_FOpenFileReadDir( filename, search, NULL, qfalse, qfalse ) > 0 ) {
+			if ( search->pack ) {
+				return search->pack->checksum ? search->pack->checksum : 1;
+			}
+			Com_sprintf( path, sizeof( path ), "%s/%s", search->dir->path, search->dir->gamedir );
+			return Com_BlockChecksum( path, strlen( path ) ) | 1;
+		}
+	}
+	return 0;
+}
+
+/*
+============
 FS_ReadFileDir
 
 Filename are relative to the quake search path

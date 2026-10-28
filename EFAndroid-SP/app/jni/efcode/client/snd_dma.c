@@ -442,6 +442,49 @@ void S_memoryLoad(sfx_t	*sfx) {
 		sfx->defaultSound = qtrue;
 	}
 	sfx->inMemory = qtrue;
+	sfx->soundSource = S_CodecSoundSource( sfx->soundName );
+}
+
+/*
+=================
+S_Base_ResetStaleSounds
+
+From cMod by Noah Metzger (Chomenor), CMOD_SOUND_RESET: sounds stay loaded from map
+to map, so after a mod or pk3 change you could keep hearing the previous one's version.
+Unload the sounds that would now come from a different file; they load again when next used.
+=================
+*/
+void S_Base_ResetStaleSounds( void ) {
+	int			i, resetCount = 0;
+	sfx_t		*sfx;
+	sndBuffer	*buffer, *nbuffer;
+
+	if ( !s_soundStarted ) {
+		return;
+	}
+
+	for ( i = 0; i < s_numSfx; i++ ) {
+		sfx = &s_knownSfx[i];
+		if ( !sfx->soundName[0] || !sfx->inMemory || !sfx->soundData ||
+				S_CodecSoundSource( sfx->soundName ) == sfx->soundSource ) {
+			continue;
+		}
+
+		Com_DPrintf( "Resetting sound %s\n", sfx->soundName );
+		buffer = sfx->soundData;
+		while ( buffer != NULL ) {
+			nbuffer = buffer->next;
+			SND_free( buffer );
+			buffer = nbuffer;
+		}
+		sfx->inMemory = qfalse;
+		sfx->soundData = NULL;
+		resetCount++;
+	}
+
+	if ( resetCount ) {
+		Com_Printf( "Reloading %i sounds changed by the filesystem\n", resetCount );
+	}
 }
 
 //=============================================================================
@@ -591,9 +634,10 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 //	Com_Printf("playing %s\n", sfx->soundName);
 	// pick a channel to play on
 
-	allowed = 4;
+	// twice id's limits, from cMod by Noah Metzger (Chomenor), CMOD_CONCURRENT_SOUNDS: less stutter on rapid-fire weapons
+	allowed = 8;
 	if (entityNum == listener_number) {
-		allowed = 8;
+		allowed = 16;
 	}
 
 	fullVolume = qfalse;

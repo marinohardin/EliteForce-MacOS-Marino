@@ -23,6 +23,16 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cm_local.h"
 
+// From cMod by Noah Metzger (Chomenor), CMOD_CM_ALIGN_FIX: some bsps' lumps aren't 4-byte aligned, and with
+// LittleLong a no-op the optimizer may vectorize the loads assuming they are, which
+// crashed on certain maps. A real (not inlined) function call prevents that.
+#if defined( __GNUC__ ) && defined( Q3_LITTLE_ENDIAN )
+#undef LittleLong
+static __attribute__ ((noinline)) int LittleLong( int x ) {
+	return x;
+}
+#endif
+
 #ifdef BSPC
 
 #include "../bspc/l_qfiles.h"

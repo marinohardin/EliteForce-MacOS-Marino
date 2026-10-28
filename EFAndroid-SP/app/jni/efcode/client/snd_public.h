@@ -40,6 +40,7 @@ void S_RawSamples(int stream, int samples, int rate, int width, int channels,
 
 // stop all sounds and the background track
 void S_StopAllSounds( void );
+void S_ResetStaleSounds( void );	// on map load: unload sounds another mod/pk3 now replaces
 
 // all continuous looping sounds must be added before calling S_Update
 void S_ClearLoopingSounds( qboolean killall );
