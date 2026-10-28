@@ -431,7 +431,7 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
 
 `S_MP3_Scanfile` gave up on the whole file at the first header that wasn't Layer III, so a
 stray false sync broke the music (cMod names `amenhotep` and `hm_stronghold`). It now skips
-that frame (`CMOD_MP3_LAYER_CHECK_FIX`, from cMod). Checked with a harness running the
+that frame (`CMOD_MP3_LAYER_CHECK_FIX`, from cMod by Noah Metzger (Chomenor)). Checked with a harness running the
 codec over an SP track with a bogus Layer II frame in front: the old code fails to open it,
 the new one decodes all of it. All 49 music MP3s in pak0, pak3 and qbeast decode the same as
 before, and SP music (borg1) still plays.

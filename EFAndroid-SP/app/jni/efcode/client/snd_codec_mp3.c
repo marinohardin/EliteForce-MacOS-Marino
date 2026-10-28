@@ -176,7 +176,7 @@ int S_MP3_Scanfile(snd_stream_t *stream)
 			{
 				// Skip it rather than failing the whole file: some map
 				// music (amenhotep, hm_stronghold) has a stray false
-				// sync before the first real Layer III frame. (From cMod.)
+				// sync before the first real Layer III frame. (From cMod by Noah Metzger (Chomenor).)
 				continue;
 			}
 
