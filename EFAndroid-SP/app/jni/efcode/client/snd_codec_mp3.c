@@ -174,8 +174,10 @@ int S_MP3_Scanfile(snd_stream_t *stream)
 
 			if(madheader.layer != MAD_LAYER_III)
 			{
-				// we don't support non-mp3s
-				return -1;
+				// Skip it rather than failing the whole file: some map
+				// music (amenhotep, hm_stronghold) has a stray false
+				// sync before the first real Layer III frame. (From cMod.)
+				continue;
 			}
 
 			if(!stream->info.samples)
