@@ -563,6 +563,8 @@ static void emit( uint32_t isn )
 
 // single precision to signed integer
 #define FCVTZS(Rd, Sn)           ( (0<<31) | (0b00<<29) | (0b11110<<24) | (0b00<<22)  | (1<<21) | (0b11<<19) /*rmode*/ | (0b000<<16) /*opcode*/ | (0b000000<<10) | (Sn<<5) | Rd )
+// single precision to signed integer, rounding to nearest (ties to even)
+#define FCVTNS(Rd, Sn)           ( (0<<31) | (0b00<<29) | (0b11110<<24) | (0b00<<22)  | (1<<21) | (0b00<<19) /*rmode*/ | (0b000<<16) /*opcode*/ | (0b000000<<10) | (Sn<<5) | Rd )
 // signed integer to single precision
 #define SCVTF(Sd, Rn)            ( (0<<31) | (0b00<<29) | (0b11110<<24) | (0b00<<22) | (1<<21) | (0b00<<19) /*rmode*/ | (0b010<<16) /*opcode*/ | (0b000000<<10) | (Rn<<5) | Sd )
 
@@ -2205,7 +2207,9 @@ __recompile:
 			case OP_CVFI:
 				rx[0] = alloc_rx( R0 );
 				sx[0] = load_sx_opstack( S0 | RCONST ); // s0 = *opstack
-				emit(FCVTZS(rx[0], sx[0]));		// r0 = (int)s0
+				// Elite Force rounds to nearest here, like the interpreter (Q_ftol)
+				// and the original x87 engine; truncating lowers jumps and speeds
+				emit(FCVTNS(rx[0], sx[0]));		// r0 = lrintf(s0)
 				unmask_sx( sx[0] );
 				store_rx_opstack( rx[0] );		// *opstack = r0;
 				break;
