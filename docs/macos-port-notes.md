@@ -490,3 +490,40 @@ dedicated) and single player share this code.
 - A non-inlined `LittleLong` in `cm_load.c` for bsps with unaligned lumps. (`CMOD_CM_ALIGN_FIX`)
 - NaN check in renderervk's `R_FogFactor`. (`CMOD_FOGFACTOR_FIX`)
 - renderervk (Quake3e) already had his fog side and FRCL fixes.
+
+## Downloaded pk3s go to `downloads/` and can't override installed files (2026-10-28)
+
+From cMod by Noah Metzger (Chomenor), whose new filesystem keeps auto-downloads in a download
+folder and ranks them below everything else (`fs_download_mode`, the `downloads_folder` and
+"prefer non-downloaded pk3" precedence checks in `code/filesystem/fs_lookup.c`). Ported to
+ioquake3's `qcommon/files.c` search path. Motivating case: a server auto-downloaded cMod's
+`pakcmod-*.pk3` into `baseEF/`; sorting last, it replaced the stock QVMs on non-pure servers and
+when hosting.
+
+- **Where downloads go**: UDP and HTTP downloads (and their `.tmp` while in progress) are saved
+  to `baseEF/downloads/` (or `<mod>/downloads/`) under the home path. `FS_ComparePaks` builds the
+  local name; the remote name stays `baseEF/<name>.pk3`, so servers and `sv_dlURL` web folders
+  need nothing new. Interrupted `.tmp` files in `downloads/` are deleted at startup
+  (`FS_CleanDownloadTemps`, once per launch, not on filesystem restarts).
+- **Priority** (`FS_AddGameDirectory`, `FS_DemoteDownloadPaks`, `FS_DownloadPakListed`):
+  pk3s in `downloads/` always load, so their maps and models are found, but are moved below
+  every other pak and folder, so they only add files nobody else has. While connected to a
+  *remote* server whose `sv_paks` or `sv_referencedPaks` lists one (pure or not), that pak takes
+  its normal place, sorted by name among the game folder's paks. On a pure server the pure list
+  order applies as before and finds paks in `downloads/`. When this app runs the server (local
+  Holomatch hosting, Host a Server, single player) downloads never get promoted. Leaving a server
+  restarts the filesystem if a downloaded pak had been promoted. `path` marks each downloaded
+  pak.
+- **Names and checksums**: a pak in `downloads/` keeps its plain name and game folder, so it is
+  reported as `baseEF/<name>` with the same checksums. Pure checks pass and nothing is
+  downloaded again.
+- **Serving**: a server that has a referenced pk3 only in its own `downloads/` serves it over UDP
+  as `baseEF/<name>.pk3` (`SV_OpenDownloadPak`).
+- pk3s you put in `baseEF/` yourself are unchanged: they load and override as before.
+
+**Existing downloads** in `baseEF/` (from earlier versions) are not moved or deleted. To get the
+new behavior for them, quit the game and move the downloaded pk3s from
+`~/Library/Application Support/EliteForce-MacOS/baseEF/` into `baseEF/downloads/` (create the
+folder). That includes `pakcmod-*.pk3` and any map pk3 you didn't install yourself. Leave
+`pak0.pk3`-`pak3.pk3` and the pk3s you added yourself where they are. Leftover `*.pk3.tmp` files in
+`baseEF/` are interrupted downloads and can be deleted.

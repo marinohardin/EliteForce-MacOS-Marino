@@ -1052,6 +1052,32 @@ static void SV_BeginDownload_f( client_t *cl ) {
 
 /*
 ==================
+SV_OpenDownloadPak
+
+Opens a referenced pk3 a client asked for as "<game>/<name>.pk3". From cMod
+by Noah Metzger (Chomenor): paks this install downloaded itself are kept in
+<game>/downloads/, so look there too.
+==================
+*/
+static long SV_OpenDownloadPak( const char *name, fileHandle_t *fp )
+{
+	char dlname[MAX_QPATH];
+	const char *slash;
+	long len = FS_SV_FOpenFileRead( name, fp );
+
+	if ( len >= 0 && *fp ) {
+		return len;
+	}
+	slash = strchr( name, '/' );
+	if ( !slash || slash == name || strchr( slash + 1, '/' ) ) {
+		return len;
+	}
+	Com_sprintf( dlname, sizeof( dlname ), "%.*s/downloads/%s", (int)( slash - name ), name, slash + 1 );
+	return FS_SV_FOpenFileRead( dlname, fp );
+}
+
+/*
+==================
 SV_WriteDownloadToClient
 
 Check to see if the client wants a file, open it if needed and start pumping the client
@@ -1138,7 +1164,7 @@ int SV_WriteDownloadToClient(client_t *cl, msg_t *msg)
 		if ( !(sv_allowDownload->integer & DLF_ENABLE) ||
 			(sv_allowDownload->integer & DLF_NO_UDP) ||
 			idPack || unreferenced ||
-			( cl->downloadSize = FS_SV_FOpenFileRead( cl->downloadName, &cl->download ) ) < 0 ) {
+			( cl->downloadSize = SV_OpenDownloadPak( cl->downloadName, &cl->download ) ) < 0 ) {
 			// cannot auto-download file
 			if(unreferenced)
 			{
