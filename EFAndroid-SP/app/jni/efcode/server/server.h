@@ -152,6 +152,7 @@ typedef struct client_s {
 
 	// downloading
 	char			downloadName[MAX_QPATH]; // if not empty string, we are downloading
+	char			*downloadPakNames;		// referenced pk3s when this client got its gamestate (Z_Malloc)
 	fileHandle_t	download;			// file being downloaded
  	int				downloadSize;		// total bytes (can't use EOF because of paks)
  	int				downloadCount;		// bytes sent
@@ -199,6 +200,9 @@ typedef struct client_s {
 #ifdef LEGACY_PROTOCOL
 	qboolean		compat;
 #endif
+	int				mapRestartSequence;	// netchan sequence at the last map_restart, see SV_MapRestart_f
+	int				baselineCutoff;		// if > 0, baselines from this entity number on weren't sent
+										// in the gamestate (didn't fit) and count as null
 } client_t;
 
 //=============================================================================
@@ -241,7 +245,7 @@ typedef struct {
 	int			nextHeartbeatTime;
 	challenge_t	challenges[MAX_CHALLENGES];	// to prevent invalid IPs from connecting
 	netadr_t	redirectAddress;			// for rcon return messages
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
 	netadr_t	authorizeAddress;			// authorize server address
 #endif
 	int			masterResolveTime[MAX_MASTER_SERVERS]; // next svs.time that server should do dns lookup for master server
@@ -291,7 +295,8 @@ extern	cvar_t	*sv_gametype;
 extern	cvar_t	*sv_pure;
 extern	cvar_t	*sv_floodProtect;
 extern	cvar_t	*sv_lanForceRate;
-#ifndef STANDALONE
+extern	cvar_t	*sv_minSnaps;
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
 extern	cvar_t	*sv_strictAuth;
 #endif
 extern	cvar_t	*sv_banFile;
@@ -367,7 +372,7 @@ void SV_GetChallenge(netadr_t from);
 
 void SV_DirectConnect( netadr_t from );
 
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
 void SV_AuthorizeIpPacket( netadr_t from );
 #endif
 

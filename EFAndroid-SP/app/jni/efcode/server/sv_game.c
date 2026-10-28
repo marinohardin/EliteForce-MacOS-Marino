@@ -916,7 +916,7 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 		botlib_export->ea.EA_DropInv(args[1], VMA(2));
 		return 0;
 	case BOTLIB_EA_ALT_ATTACK:
-		botlib_export->ea.EA_Attack( args[1] );
+		botlib_export->ea.EA_AltAttack( args[1] );
 		return 0;
 #endif
 

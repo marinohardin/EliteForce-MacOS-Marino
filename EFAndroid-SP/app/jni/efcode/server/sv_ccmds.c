@@ -277,10 +277,15 @@ static void SV_MapRestart_f( void ) {
 	// map_restart has happened
 	svs.snapFlagServerBit ^= SNAPFLAG_SERVERCOUNT;
 
-	// generate a new serverid	
-	// TTimo - don't update restartedserverId there, otherwise we won't deal correctly with multiple map_restart
-	sv.serverId = com_frameTime;
-	Cvar_Set( "sv_serverid", va("%i", sv.serverId ) );
+	// From cMod (CMOD_MAP_RESTART_STATIC_SERVERID): keep the serverid instead of generating a
+	// new one, so a map_restart needs no systeminfo update (which the EF 1.20 client can be
+	// buggy with). Instead, remember each client's netchan sequence and ignore movement it
+	// sent before it received the restart.
+	for ( i = 0; i < sv_maxclients->integer; i++ ) {
+		if ( svs.clients[i].state == CS_ACTIVE ) {
+			svs.clients[i].mapRestartSequence = svs.clients[i].netchan.outgoingSequence;
+		}
+	}
 
 	// if a map_restart occurs while a client is changing maps, we need
 	// to give them the correct time so that when they finish loading
@@ -335,6 +340,11 @@ static void SV_MapRestart_f( void ) {
 			// was connected before the level change
 			SV_DropClient( client, denied );
 			Com_Printf( "SV_MapRestart_f(%d): dropped client %i - denied!\n", delay, i );
+			continue;
+		}
+
+		// a client still downloading enters the world when it's done (from cMod)
+		if ( *client->downloadName ) {
 			continue;
 		}
 
@@ -511,7 +521,7 @@ static void SV_KickNum_f( void ) {
 	cl->lastPacketTime = svs.time;	// in case there is a funny zombie
 }
 
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
 // these functions require the auth server which of course is not available anymore for stand-alone games.
 
 /*
@@ -1535,7 +1545,7 @@ void SV_AddOperatorCommands( void ) {
 
 	Cmd_AddCommand ("heartbeat", SV_Heartbeat_f);
 	Cmd_AddCommand ("kick", SV_Kick_f);
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (as in cMod)
 	if(!com_standalone->integer)
 	{
 		Cmd_AddCommand ("banUser", SV_Ban_f);
