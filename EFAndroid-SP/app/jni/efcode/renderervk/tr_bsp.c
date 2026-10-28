@@ -112,6 +112,116 @@ float R_ClampDenorm( float v ) {
 
 /*
 ===============
+R_SetMapLighting
+
+From cMod by Noah Metzger (Chomenor): the map lighting settings (r_mapLightingFactor,
+r_mapLightingGamma and the clamps), with the map auto-adjust values the client set for
+this map. Called from R_SetColorMappings, after the overbright factor is known.
+===============
+*/
+void R_SetMapLighting( void ) {
+	const float mapOverBright = (float)( 1 << MIN( MAX( r_mapOverBrightBits->integer, 0 ), 4 ) );
+
+	tr.mapLightingFactor = r_mapLightingFactor->value > 0.0f ? r_mapLightingFactor->value : mapOverBright;
+	tr.mapLightingGamma = r_mapLightingGamma->value;
+	if ( *r_autoMapLightingFactor->string )
+		tr.mapLightingFactor *= r_autoMapLightingFactor->value;
+	if ( *r_autoMapLightingGammaMod->string )
+		tr.mapLightingGamma += r_autoMapLightingGammaMod->value;
+	if ( tr.mapLightingFactor < 1.0f )
+		tr.mapLightingFactor = 1.0f;
+	if ( !( tr.mapLightingGamma > 0.0f ) )
+		tr.mapLightingGamma = 1.0f;
+
+	// Settings the original integer shift can express exactly keep using it, so the
+	// default look (and any r_overBrightBits / r_mapOverBrightBits setup) is unchanged
+	// to the bit; anything else takes cMod's path.
+	tr.mapLightingLegacy = !( r_mapLightingFactor->value > 0.0f ) && !*r_autoMapLightingFactor->string &&
+		tr.overbrightFactor == (float)( 1 << tr.overbrightBits ) && tr.mapLightingGamma == 1.0f &&
+		r_mapLightingClampMin->value <= 0.0f && r_mapLightingClampMax->value >= 1.0f;
+}
+
+
+/*
+===============
+R_IntensityLimitScaled
+
+From cMod by Noah Metzger (Chomenor): scale back color components so none exceeds limit
+===============
+*/
+static void R_IntensityLimitScaled( double *colors, double limit ) {
+	double highest = colors[0];
+	int i;
+
+	if ( colors[1] > highest ) highest = colors[1];
+	if ( colors[2] > highest ) highest = colors[2];
+	if ( highest > limit ) {
+		for ( i = 0; i < 3; i++ )
+			colors[i] *= limit / highest;
+	}
+}
+
+
+/*
+===============
+R_ShiftMapLighting
+
+From cMod by Noah Metzger (Chomenor): map lighting with a fractional factor and overbright,
+a lighting gamma and clamps (see R_SetMapLighting)
+===============
+*/
+static void R_ShiftMapLighting( const byte in[4], int *r, int *g, int *b ) {
+	const double scale = tr.mapLightingFactor / tr.overbrightFactor;
+	const double gamma = tr.mapLightingGamma;
+	double colors[3];
+	int minClamp, maxClamp, i, c[3];
+
+	for ( i = 0; i < 3; i++ )
+		colors[i] = in[i] * scale;
+	R_IntensityLimitScaled( colors, 255.0 );
+
+	// some minimum levels with a high lighting gamma, to avoid odd shadows in very dark areas
+	if ( gamma > 1.0 ) {
+		double min = gamma - 1.0;
+		if ( min > 3.0 )
+			min = 3.0;
+		for ( i = 0; i < 3; i++ ) {
+			if ( colors[i] < min )
+				colors[i] = min;
+		}
+	}
+
+	if ( gamma != 1.0 ) {
+		const double component = r_mapLightingGammaComponent->value;
+		const double base = sqrt( ( colors[0] * colors[0] + colors[1] * colors[1] + colors[2] * colors[2] ) / 3.0 );
+		const double modifier = base > 0.0 ? 255.0 * pow( base / 255.0, 1.0 / gamma ) / base : 1.0;
+		for ( i = 0; i < 3; i++ ) {
+			const double perComponent = 255.0 * pow( colors[i] / 255.0, 1.0 / gamma );
+			colors[i] = perComponent * component + colors[i] * modifier * ( 1.0 - component );
+		}
+	}
+	R_IntensityLimitScaled( colors, 255.0 );
+
+	minClamp = (int)( r_mapLightingClampMin->value * 255.0f );
+	maxClamp = (int)( r_mapLightingClampMax->value * 255.0f );
+	if ( minClamp < 0 ) minClamp = 0;
+	if ( minClamp > 255 ) minClamp = 255;
+	if ( maxClamp < minClamp ) maxClamp = minClamp;
+	if ( maxClamp > 255 ) maxClamp = 255;
+
+	for ( i = 0; i < 3; i++ ) {
+		c[i] = (int)colors[i];
+		if ( c[i] < minClamp ) c[i] = minClamp;
+		if ( c[i] > maxClamp ) c[i] = maxClamp;
+	}
+	*r = c[0];
+	*g = c[1];
+	*b = c[2];
+}
+
+
+/*
+===============
 R_ColorShiftLightingBytes
 ===============
 */
@@ -121,6 +231,9 @@ void R_ColorShiftLightingBytes( const byte in[4], byte out[4], qboolean hasAlpha
 	// shift the color data based on overbright range
 	shift = r_mapOverBrightBits->integer - tr.overbrightBits;
 
+	if ( !tr.mapLightingLegacy ) {
+		R_ShiftMapLighting( in, &r, &g, &b );
+	} else
 	// shift the data based on overbright range
 	if ( shift >= 0 ) {
 		r = in[0] << shift;

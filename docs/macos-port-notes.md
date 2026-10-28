@@ -404,3 +404,40 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   Without a choice, macOS picks among the apps that claim it, often the most recently registered.
 - **Tests.** `VOYAGERSP_TEST_BROWSER_SELECT=<row>` (and waits for its players),
   `VOYAGERSP_TEST_BROWSER_PREVIEW=<png>`, `VOYAGERSP_TEST_LINK_HANDLER=<app>`.
+
+## Brightness settings and presets from cMod (2026-10-28)
+
+From cMod by Noah Metzger (Chomenor), ported into `renderervk` (Vulkan, no OpenGL) in our own
+style; credited in each spot in the code.
+
+- **cMod's brightness settings** (`CMOD_MAP_BRIGHTNESS_SETTINGS`, Noah Metzger): `r_overBrightFactor`
+  (fractional overbright; the fbo gamma pass's `obScale` takes it, `tr.identityLight` follows),
+  `r_mapLightingFactor`, `r_mapLightingGamma`, `r_mapLightingGammaComponent`,
+  `r_mapLightingClampMin/Max` (`R_SetMapLighting` / `R_ShiftMapLighting` in `tr_bsp.c`, applied to
+  lightmaps, vertex light and the light grid through `R_ColorShiftLightingBytes`). Integrated with
+  Quake3e's own handling: the two factors default to `0`, meaning "follow `r_overBrightBits` /
+  `r_mapOverBrightBits`", and settings the old integer shift can express keep using it, so the
+  default look is bit-for-bit the old one (`gfxinfo`/R_Init prints `MAP LIGHTING: ... (overbright bits)`).
+- **`r_textureGamma`** (`CMOD_TEXTURE_GAMMA`, Noah Metzger): gamma on textures at load, not lightmaps.
+- **Fractional `r_intensity`** (`CMOD_FRACTIONAL_INTENSITY`, Noah Metzger), used by two presets:
+  `1.1:0.5` scales only the lower half of the range. `r_intensity` lost its numeric range check
+  (it would reject the `:`); the value is clamped to 1..255 where it is used.
+- **Map auto-adjust** (`CMOD_MAP_AUTO_ADJUST`, Noah Metzger's `cmod_map_adjust.c`): before the
+  renderer starts for a map, `CL_MapAutoAdjust` (`cl_main.c`) looks the .bsp up in cMod's list of
+  known maps (by checksum) or checks it for 3+ kinds of Quake 3 items, and sets the ROM cvars
+  `r_autoMapLightingFactor`, `r_autoMapLightingGammaMod`, `r_autoOverBrightFactorMax/Shift`. EF's
+  own maps match neither. `cl_mapAutoAdjust 0` turns it off. cMod's Quake 3 environment-map mode
+  (`r_autoEnvMapMode`) and external-lightmap processing are not ported.
+- **Launcher**: a Brightness popup in Graphics: Standard (this port's look, the engine defaults)
+  and cMod's Plain, Full Contrast, Extra Bright and Full Bright templates (values from cMod's
+  `ui_video.c`). It reads the mode's config like the other graphics settings; a config that
+  matches none (the in-game Brightness slider moved, say) shows Custom and Play passes nothing.
+  Play passes `+set`s; if the 1024-char command line would overflow, they go to
+  `vsp_brightness.cfg` and `+exec` instead (then they apply from the first map on). Test hook:
+  `VOYAGERSP_TEST_LAUNCHER_BRIGHTNESS=standard|plain|contrast|bright|fullbright`.
+- **Tested**: hm_kln1 at default vs a cb80018 build (same within frame-to-frame noise), each preset
+  (engine `screenshot`, with `r_ext_supersample 1` so the capture includes the gamma pass), a test
+  copy of hm_kln1 with Quake 3 items added (auto-adjust on, reset on the next map), single player
+  voy3 at default (pixel-identical to cb80018) and Plain. No Quake 3 port is in the data folder.
+- **Note**: without `r_ext_supersample`, renderervk's `screenshot` reads the frame before the gamma
+  pass, so `r_gamma` and the overbright factor don't show in screenshots (unchanged, as before).

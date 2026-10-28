@@ -397,6 +397,24 @@ static void R_LightScaleTexture( byte *in, int inwidth, int inheight, qboolean o
 			}
 		}
 	}
+
+	// From cMod by Noah Metzger (Chomenor): r_textureGamma, a gamma for the textures alone
+	// (lightmaps don't come through here)
+	if ( r_textureGamma->value > 0.0f && r_textureGamma->value != 1.0f )
+	{
+		byte	table[256];
+		byte	*p = in;
+		int		i, c = inwidth * inheight;
+
+		for ( i = 0; i < 256; i++ )
+			table[i] = 255.0f * powf( i / 255.0f, 1.0f / r_textureGamma->value );
+		for ( i = 0; i < c; i++, p += 4 )
+		{
+			p[0] = table[p[0]];
+			p[1] = table[p[1]];
+			p[2] = table[p[2]];
+		}
+	}
 }
 
 
@@ -1694,10 +1712,31 @@ void R_SetColorMappings( void ) {
 	int		inf;
 	int		shift;
 	qboolean applyGamma;
+	float	intensity, intensitySegment = 1.0f;
+	float	maxFactor;
 
 	if ( !tr.inited ) {
 		// it may be called from window handling functions where gamma flags is now yet known/set
 		return;
+	}
+
+	// From cMod by Noah Metzger (Chomenor): fractional r_intensity ("1.1:0.5" scales only
+	// the lower half of the range, so bright textures don't wash out)
+	intensity = r_intensity->value;
+	if ( intensity < 1.0f ) {
+		intensity = 1.0f;
+	} else if ( intensity > 255.0f ) {
+		intensity = 255.0f;
+	}
+	{
+		const char *seg = strchr( r_intensity->string, ':' );
+		if ( seg ) {
+			intensitySegment = atof( seg + 1 );
+			if ( intensitySegment < 0.0f )
+				intensitySegment = 0.0f;
+			if ( intensitySegment > 1.0f )
+				intensitySegment = 1.0f;
+		}
 	}
 
 	// setup the overbright lighting
@@ -1739,8 +1778,32 @@ void R_SetColorMappings( void ) {
 		tr.overbrightBits = 0;
 	}
 
-	tr.identityLight = 1.0f / ( 1 << tr.overbrightBits );
+	// From cMod by Noah Metzger (Chomenor): r_overBrightFactor is a fractional overbright
+	// (1.5, say). At 0 (unset), it is 1 << r_overBrightBits, which is all this did before.
+	tr.overbrightFactor = (float)( 1 << tr.overbrightBits );
+	if ( r_overBrightFactor->value > 0.0f ) {
+		tr.overbrightFactor = r_overBrightFactor->value;
+	}
+	// the map auto-adjust (CL_MapAutoAdjust): some maps from other games want less or more
+	if ( r_autoOverBrightFactorShift->value < 0.0f && tr.overbrightFactor > 1.0f )
+		tr.overbrightFactor = MAX( 1.0f, tr.overbrightFactor + r_autoOverBrightFactorShift->value );
+	if ( r_autoOverBrightFactorShift->value > 0.0f && tr.overbrightFactor < 2.0f )
+		tr.overbrightFactor = MIN( 2.0f, tr.overbrightFactor + r_autoOverBrightFactorShift->value );
+	if ( r_autoOverBrightFactorMax->value > 0.0f && r_autoOverBrightFactorMax->value < tr.overbrightFactor )
+		tr.overbrightFactor = r_autoOverBrightFactorMax->value;
+	// the same conditions and limits as the overbright bits above
+	maxFactor = (float)( 1 << ( glConfig.colorBits > 16 ? 2 : 1 ) );
+	if ( !applyGamma || !( tr.overbrightFactor >= 1.0f ) ) {
+		tr.overbrightFactor = 1.0f;
+	} else if ( tr.overbrightFactor > maxFactor ) {
+		tr.overbrightFactor = maxFactor;
+	}
+	tr.overbrightBits = tr.overbrightFactor >= 4.0f ? 2 : tr.overbrightFactor >= 2.0f ? 1 : 0;
+
+	tr.identityLight = 1.0f / tr.overbrightFactor;
 	tr.identityLightByte = 255 * tr.identityLight;
+
+	R_SetMapLighting();
 
 	g = r_gamma->value;
 
@@ -1752,7 +1815,11 @@ void R_SetColorMappings( void ) {
 		} else {
 			inf = 255 * powf( i/255.0f, 1.0f / g ) + 0.5f;
 		}
-		inf <<= shift;
+		if ( tr.overbrightFactor == (float)( 1 << shift ) ) {
+			inf <<= shift;
+		} else {
+			inf = inf * tr.overbrightFactor + 0.5f;
+		}
 		if (inf < 0) {
 			inf = 0;
 		}
@@ -1763,7 +1830,13 @@ void R_SetColorMappings( void ) {
 	}
 
 	for ( i = 0; i < ARRAY_LEN( s_intensitytable ); i++ ) {
-		j = i * r_intensity->value;
+		// From cMod by Noah Metzger (Chomenor): with a fraction, only the part of the
+		// value below 255 * fraction is scaled
+		int top = i - 255.0f * intensitySegment;
+		if ( top < 0 ) {
+			top = 0;
+		}
+		j = top + ( i - top ) * intensity;
 		if ( j > 255 ) {
 			j = 255;
 		}

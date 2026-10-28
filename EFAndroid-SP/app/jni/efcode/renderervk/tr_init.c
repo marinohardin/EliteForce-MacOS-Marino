@@ -161,6 +161,19 @@ cvar_t	*r_overBrightBits;
 cvar_t	*r_mapOverBrightBits;
 cvar_t	*r_mapGreyScale;
 
+// From cMod by Noah Metzger (Chomenor): brightness settings
+cvar_t	*r_overBrightFactor;
+cvar_t	*r_mapLightingFactor;
+cvar_t	*r_mapLightingGamma;
+cvar_t	*r_mapLightingGammaComponent;
+cvar_t	*r_mapLightingClampMin;
+cvar_t	*r_mapLightingClampMax;
+cvar_t	*r_textureGamma;
+cvar_t	*r_autoMapLightingFactor;
+cvar_t	*r_autoMapLightingGammaMod;
+cvar_t	*r_autoOverBrightFactorMax;
+cvar_t	*r_autoOverBrightFactorShift;
+
 cvar_t	*r_debugSurface;
 cvar_t	*r_simpleMipMaps;
 
@@ -1489,14 +1502,16 @@ static void VarInfo( void )
 {
 #ifdef USE_VULKAN
 	if ( vk.fboActive ) {
-		ri.Printf( PRINT_ALL, "GAMMA: post-process (live) w/ %d overbright bits\n", tr.overbrightBits );
+		ri.Printf( PRINT_ALL, "GAMMA: post-process (live) w/ %g overbright factor\n", tr.overbrightFactor );
 	} else
 #endif
 	if ( glConfig.deviceSupportsGamma ) {
-		ri.Printf( PRINT_ALL, "GAMMA: hardware w/ %d overbright bits\n", tr.overbrightBits );
+		ri.Printf( PRINT_ALL, "GAMMA: hardware w/ %g overbright factor\n", tr.overbrightFactor );
 	} else {
-		ri.Printf( PRINT_ALL, "GAMMA: software w/ %d overbright bits\n", tr.overbrightBits );
+		ri.Printf( PRINT_ALL, "GAMMA: software w/ %g overbright factor\n", tr.overbrightFactor );
 	}
+	ri.Printf( PRINT_ALL, "MAP LIGHTING: factor %g, gamma %g%s\n", tr.mapLightingFactor, tr.mapLightingGamma,
+		tr.mapLightingLegacy ? " (overbright bits)" : "" );
 
 	ri.Printf( PRINT_ALL, "texturemode: %s\n", r_textureMode->string );
 	ri.Printf( PRINT_ALL, "texture bits: %d\n", r_texturebits->integer ? r_texturebits->integer : 32 );
@@ -1596,8 +1611,35 @@ static void R_Register( void )
 	r_mapOverBrightBits = ri.Cvar_Get( "r_mapOverBrightBits", "0", CVAR_ARCHIVE_ND | CVAR_LATCH ); // retail EF1 default is 0
 	ri.Cvar_SetDescription( r_mapOverBrightBits, "Sets the number of overbright bits baked into all lightmaps and map data." );
 	r_intensity = ri.Cvar_Get( "r_intensity", "1", CVAR_ARCHIVE_ND | CVAR_LATCH );
-	ri.Cvar_CheckRange( r_intensity, "1", "255", CV_FLOAT );
-	ri.Cvar_SetDescription( r_intensity, "Global texture lighting scale." );
+	// From cMod by Noah Metzger (Chomenor): no numeric range check, so a fraction can follow
+	// a ':' ("1.1:0.5"); R_SetColorMappings clamps the value to 1..255 itself.
+	ri.Cvar_SetDescription( r_intensity, "Global texture lighting scale. An optional fraction after ':' (as in 1.1:0.5) "
+		"applies it only to that lower part of the color range, which avoids washing out bright textures." );
+
+	// From cMod by Noah Metzger (Chomenor): brightness settings. At 0 (unset), r_overBrightFactor and
+	// r_mapLightingFactor follow r_overBrightBits and r_mapOverBrightBits, so the default look is unchanged.
+	r_overBrightFactor = ri.Cvar_Get( "r_overBrightFactor", "0", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	ri.Cvar_SetDescription( r_overBrightFactor, "Overbright factor (1 to 2, fractions allowed): scales the whole frame, "
+		"with world lighting scaled down to match, for more contrast. 0: 1 << \\r_overBrightBits." );
+	r_mapLightingFactor = ri.Cvar_Get( "r_mapLightingFactor", "0", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	ri.Cvar_SetDescription( r_mapLightingFactor, "Scale of map lighting (lightmaps, vertex light, light grid), at least 1. "
+		"0: 1 << \\r_mapOverBrightBits." );
+	r_mapLightingGamma = ri.Cvar_Get( "r_mapLightingGamma", "1", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	ri.Cvar_SetDescription( r_mapLightingGamma, "Gamma of map lighting: above 1 brightens dark areas." );
+	r_mapLightingGammaComponent = ri.Cvar_Get( "r_mapLightingGammaComponent", "0.75", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	ri.Cvar_SetDescription( r_mapLightingGammaComponent, "How much \\r_mapLightingGamma works per color channel (1) "
+		"versus on overall intensity (0)." );
+	r_mapLightingClampMin = ri.Cvar_Get( "r_mapLightingClampMin", "0", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	ri.Cvar_SetDescription( r_mapLightingClampMin, "Lowest map lighting level, 0 to 1." );
+	r_mapLightingClampMax = ri.Cvar_Get( "r_mapLightingClampMax", "1", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	ri.Cvar_SetDescription( r_mapLightingClampMax, "Highest map lighting level, 0 to 1." );
+	r_textureGamma = ri.Cvar_Get( "r_textureGamma", "1", CVAR_ARCHIVE_ND | CVAR_LATCH );
+	ri.Cvar_SetDescription( r_textureGamma, "Gamma applied to textures (not lightmaps) when they load." );
+	// set by the client for each map (CL_MapAutoAdjust), from its list of maps ported from other games
+	r_autoMapLightingFactor = ri.Cvar_Get( "r_autoMapLightingFactor", "", CVAR_ROM );
+	r_autoMapLightingGammaMod = ri.Cvar_Get( "r_autoMapLightingGammaMod", "", CVAR_ROM );
+	r_autoOverBrightFactorMax = ri.Cvar_Get( "r_autoOverBrightFactorMax", "", CVAR_ROM );
+	r_autoOverBrightFactorShift = ri.Cvar_Get( "r_autoOverBrightFactorShift", "", CVAR_ROM );
 	r_singleShader = ri.Cvar_Get( "r_singleShader", "0", CVAR_CHEAT | CVAR_LATCH );
 	ri.Cvar_SetDescription( r_singleShader, "Debugging tool that only uses the default shader for all rendering." );
 	r_defaultImage = ri.Cvar_Get( "r_defaultImage", "", CVAR_ARCHIVE_ND | CVAR_LATCH );
