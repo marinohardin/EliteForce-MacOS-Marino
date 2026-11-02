@@ -1520,6 +1520,8 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	
 	CL_ClearState ();
 
+	CL_AdaptivePacketdup_Reset();
+
 	// wipe the client connection
 	Com_Memset( &clc, 0, sizeof( clc ) );
 
@@ -3073,6 +3075,7 @@ void CL_PacketEvent( netadr_t from, msg_t *msg ) {
 	if (!CL_Netchan_Process( &clc.netchan, msg) ) {
 		return;		// out of order, duplicated, etc
 	}
+	CL_AdaptivePacketdup_Inbound( clc.netchan.dropped );
 
 	// the header is different lengths for reliable and unreliable messages
 	headerBytes = msg->readcount;
@@ -4248,6 +4251,7 @@ void CL_Init( void ) {
 	cl_maxpackets = Cvar_Get ("cl_maxpackets", "30", CVAR_ARCHIVE );
 #endif
 	cl_packetdup = Cvar_Get ("cl_packetdup", "1", CVAR_ARCHIVE );
+	CL_AdaptivePacketdup_Init();
 
 	cl_run = Cvar_Get ("cl_run", "1", CVAR_ARCHIVE);
 	cl_sensitivity = Cvar_Get ("sensitivity", "5", CVAR_ARCHIVE);

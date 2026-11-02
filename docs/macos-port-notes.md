@@ -404,3 +404,40 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   Without a choice, macOS picks among the apps that claim it, often the most recently registered.
 - **Tests.** `VOYAGERSP_TEST_BROWSER_SELECT=<row>` (and waits for its players),
   `VOYAGERSP_TEST_BROWSER_PREVIEW=<png>`, `VOYAGERSP_TEST_LINK_HANDLER=<app>`.
+
+## 2026-11-01: Adaptive packet duplication
+
+Our own feature (not from cMod). `client/cl_input.c`, `cl_adaptivePacketdup` (archived, default 1;
+0 is the old behavior). While packets are being lost, each client packet repeats the usercmds of more
+earlier packets, so a lost packet doesn't lose input. Client only, no protocol change: the server
+already skips usercmds it has seen and takes up to `MAX_PACKET_USERCMDS`. The effective count is
+local (`cl_packetdupEffective`, read only, not archived; `developer 1` prints each change with the
+estimates). `cl_packetdup` is the floor and is never written; 5 is the ceiling; the count is lowered
+if a packet would overflow 32 usercmds (low `cl_maxpackets`, high frame rate).
+
+- **Loss signals, over 8 s (1 s buckets), the higher one wins.** The client can't see outbound loss
+  directly. Inbound: `clc.netchan.dropped`, exact for server to client but only a proxy for client to
+  server. Outbound estimate: a snapshot's `ps.commandTime` names the newest usercmd the server ran;
+  if the packet sent after it is older than the recent minimum ping plus a margin (a client frame +
+  4 ms), it was lost. Weighted by the share of losses that margin leaves visible; not used when that
+  is under 25% (very high packet rates). Jitter can pass for loss, so this signal alone stops at 3.
+  An inbound run of n lost packets asks for n.
+- **Loss to count:** 1% 1, 3% 2, 8% 3, 15% 4, 25% 5. **Rises at once**, falls one step per 4 s, and
+  not while the loss would still ask for the value at half again as much (no flapping at a threshold).
+- **Not loss:** nothing is sampled outside `CA_ACTIVE` or for 1 s after it, after a 500 ms silence,
+  while following another player, or for a gap of a whole `PACKET_BACKUP`. Reset at each gamestate
+  and on disconnect. No effect on loopback (hosting and playing in one app) or in demos; single
+  player never reaches `CL_WritePacket` in play.
+- **`net_dropsim` drops incoming packets only, in whichever process sets it** (`NET_Event`): on the
+  client it tests the inbound signal; on the server (via rcon) it tests the outbound estimate.
+- **Measured** against an own dedicated server, turning and moving, 30 packets/s, payload bytes per
+  packet: no loss, dup 1, 31 B (936 B/s). Client 5%: dup 2-3, 40 B. Client 20%: dup 4-5, 59 B.
+  Client 30%: dup 5, 63 B (1.9 KB/s). Server 5%: dup 2-3, 37 B. Server 20%: dup 3, 49 B. After removing
+  loss it was back at the floor in about 20 s. `cl_adaptivePacketdup 0` at server 20%: dup 1, 31 B.
+  `cl_packetdup 3`: stays 3 without loss, 4 at 20%, back to 3, and the config still says 3. A map
+  change returned to the floor at once, with no rise from its gap. 15 packets/s at 250 fps with 40% loss: up to 31 usercmds
+  a packet, no `MAX_PACKET_USERCMDS`. No false rise in the no-loss phases (20-30 s each) on localhost.
+- **Not tested:** real internet loss and jitter (`net_dropsim` is random and uniform; bursts and
+  jitter are not simulated), a server other than this engine's (server code is unchanged), and
+  whether play feels better. Over a jittery connection without loss the outbound estimate may hold
+  the count above the floor: compare `cl_packetdupEffective` with `cl_packetdup` on a real server.

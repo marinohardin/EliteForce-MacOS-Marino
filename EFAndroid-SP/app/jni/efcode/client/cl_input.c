@@ -733,6 +733,343 @@ qboolean CL_ReadyToSendPacket( void ) {
 }
 
 /*
+=============================================================================
+
+ADAPTIVE PACKET DUPLICATION (cl_adaptivePacketdup)
+
+Each client packet can repeat the usercmds of the previous cl_packetdup
+packets, so a dropped packet doesn't lose input. This raises that count while
+packets are being lost, entirely on the client: the packet format doesn't
+change (the server already skips usercmds it has seen, and takes up to
+MAX_PACKET_USERCMDS), so it works on any server. The user's cl_packetdup is
+the floor and is never written here; 5 is the ceiling.
+
+The client can't see its own outbound loss directly, as no packet acknowledges
+the client's sequence numbers. Two estimates are used and the higher one wins:
+
+- Inbound: gaps in the server's sequence numbers (clc.netchan.dropped). This
+  is exact for server->client but only a proxy for the direction that matters;
+  loss on a link is often, but not always, in both directions.
+- Outbound: every snapshot carries ps.commandTime, the newest usercmd the
+  server ran, which cl_parse.c already turns into the ping. If the packet we
+  sent right after that usercmd is older than the round trip (the recent
+  minimum ping), it should have got there before the snapshot was sent: it was
+  lost. The packet's age is only known to a client frame and jitter has to be
+  allowed for, so some losses go unseen; each sample is weighted by the share
+  of losses it can see. Jitter can still look like loss, so this signal alone
+  can't go above PDUP_MAX_OUTBOUND. It doesn't work at very high packet rates
+  (the margin exceeds most of the packet interval), leaving only the proxy.
+
+Gaps from map loads, downloads and hitches aren't loss: nothing is sampled
+outside CA_ACTIVE or just after entering it, and long silences are skipped.
+=============================================================================
+*/
+
+#define PDUP_MAX				5		// the existing cl_packetdup maximum
+#define PDUP_MAX_OUTBOUND		3		// the most the outbound estimate alone may ask for
+#define PDUP_MIN_VISIBLE		250		// outbound samples must see this share of losses (per mille)
+#define PDUP_BUCKETS			8		// rolling window: 8 buckets of 1 s
+#define PDUP_BUCKET_MS			1000
+#define PDUP_MIN_SAMPLES		20		// fewer than this in the window says nothing
+#define PDUP_SETTLE_MS			1000	// ignore this long after entering CA_ACTIVE or a stall
+#define PDUP_STALL_MS			500		// a longer silence is a stall, not packet loss
+#define PDUP_DECAY_HOLD_MS		4000	// time between steps down
+#define PDUP_PINGS				32		// recent pings, for the outbound baseline
+#define PDUP_JITTER_MARGIN_MS	4		// on top of a client frame, for the outbound signal
+
+typedef struct {
+	int		inReceived;
+	int		inLost;
+	int		inBurst;		// longest run of consecutive lost packets
+	int		ackWeight;		// samples, each weighted by the share of losses it can see (per mille)
+	int		ackLate;
+} pdupBucket_t;
+
+static struct {
+	pdupBucket_t	buckets[PDUP_BUCKETS];
+	int				bucket;
+	int				bucketStart;
+	int				settleUntil;
+	int				lastInbound;
+	int				pings[PDUP_PINGS];
+	int				pingCount;
+	int				effective;		// -1: not started
+	int				lastStep;
+} pdup = { .effective = -1 };
+
+static cvar_t	*cl_adaptivePacketdup;
+static cvar_t	*cl_packetdupEffective;
+
+/*
+=================
+CL_AdaptivePacketdup_Init
+=================
+*/
+void CL_AdaptivePacketdup_Init( void ) {
+	cl_adaptivePacketdup = Cvar_Get( "cl_adaptivePacketdup", "1", CVAR_ARCHIVE );
+	cl_packetdupEffective = Cvar_Get( "cl_packetdupEffective", "", CVAR_ROM );
+}
+
+/*
+=================
+CL_AdaptivePacketdup_Reset
+
+On disconnect and at each gamestate: a new map starts from the user's value.
+=================
+*/
+void CL_AdaptivePacketdup_Reset( void ) {
+	Com_Memset( &pdup, 0, sizeof( pdup ) );
+	pdup.effective = -1;
+}
+
+/*
+=================
+CL_AdaptivePacketdup_Sampling
+
+Whether this moment says anything about packet loss.
+=================
+*/
+static qboolean CL_AdaptivePacketdup_Sampling( void ) {
+	if ( !cl_adaptivePacketdup || !cl_adaptivePacketdup->integer || clc.demoplaying
+		|| clc.netchan.remoteAddress.type == NA_LOOPBACK ) {
+		return qfalse;
+	}
+	if ( clc.state != CA_ACTIVE ) {
+		pdup.settleUntil = cls.realtime + PDUP_SETTLE_MS;
+		return qfalse;
+	}
+	return cls.realtime - pdup.settleUntil >= 0;
+}
+
+/*
+=================
+CL_AdaptivePacketdup_Bucket
+
+The current bucket, moving on and clearing old ones as time passes.
+=================
+*/
+static pdupBucket_t *CL_AdaptivePacketdup_Bucket( void ) {
+	int		steps = ( cls.realtime - pdup.bucketStart ) / PDUP_BUCKET_MS;
+
+	if ( steps > 0 ) {
+		int		i;
+
+		for ( i = 0 ; i < steps && i < PDUP_BUCKETS ; i++ ) {
+			pdup.bucket = ( pdup.bucket + 1 ) % PDUP_BUCKETS;
+			Com_Memset( &pdup.buckets[pdup.bucket], 0, sizeof( pdup.buckets[0] ) );
+		}
+		pdup.bucketStart = cls.realtime;
+	}
+	return &pdup.buckets[pdup.bucket];
+}
+
+/*
+=================
+CL_AdaptivePacketdup_Inbound
+
+A sequenced packet arrived, after "dropped" others went missing.
+=================
+*/
+void CL_AdaptivePacketdup_Inbound( int dropped ) {
+	pdupBucket_t	*b;
+	qboolean		stalled = pdup.lastInbound && cls.realtime - pdup.lastInbound > PDUP_STALL_MS;
+
+	pdup.lastInbound = cls.realtime;
+	if ( stalled || dropped < 0 || dropped >= PACKET_BACKUP ) {
+		pdup.settleUntil = cls.realtime + PDUP_SETTLE_MS;
+		return;
+	}
+	if ( !CL_AdaptivePacketdup_Sampling() ) {
+		return;
+	}
+	b = CL_AdaptivePacketdup_Bucket();
+	b->inReceived++;
+	b->inLost += dropped;
+	if ( dropped > b->inBurst ) {
+		b->inBurst = dropped;
+	}
+}
+
+/*
+=================
+CL_AdaptivePacketdup_Snapshot
+
+A snapshot was parsed and cl.snap.ping worked out.
+=================
+*/
+void CL_AdaptivePacketdup_Snapshot( void ) {
+	pdupBucket_t	*b;
+	int				newest, oldest, interval, margin, lowest, packetNum = 0, nextAge, i;
+
+	if ( !CL_AdaptivePacketdup_Sampling() ) {
+		return;
+	}
+	// while following someone, commandTime is theirs and says nothing about our packets
+	if ( cl.snap.ps.clientNum != clc.clientNum || ( cl.snap.snapFlags & SNAPFLAG_NOT_ACTIVE ) ) {
+		return;
+	}
+	newest = ( clc.netchan.outgoingSequence - 1 ) & PACKET_MASK;
+	oldest = clc.netchan.outgoingSequence & PACKET_MASK;
+	if ( cl.snap.ping >= 999 || !cl.outPackets[oldest].p_realtime ) {
+		return;
+	}
+	interval = ( cl.outPackets[newest].p_realtime - cl.outPackets[oldest].p_realtime ) / ( PACKET_BACKUP - 1 );
+	margin = cls.frametime + PDUP_JITTER_MARGIN_MS;
+	if ( interval <= 0 || 1000 * ( interval - margin ) / interval < PDUP_MIN_VISIBLE ) {
+		return;
+	}
+
+	lowest = cl.snap.ping;
+	for ( i = 0 ; i < PDUP_PINGS && i < pdup.pingCount ; i++ ) {
+		if ( pdup.pings[i] < lowest ) {
+			lowest = pdup.pings[i];
+		}
+	}
+	// a ping far above the minimum is a stall (a pause, an intermission), not a lost packet
+	if ( cl.snap.ping - lowest > PDUP_STALL_MS ) {
+		return;
+	}
+	pdup.pings[pdup.pingCount++ % PDUP_PINGS] = cl.snap.ping;
+	if ( pdup.pingCount < PDUP_PINGS ) {
+		return;
+	}
+
+	// the packet sent just after the newest one the server has run, if there is one
+	for ( i = 1 ; i < PACKET_BACKUP ; i++ ) {
+		packetNum = ( clc.netchan.outgoingSequence - 1 - i ) & PACKET_MASK;
+		if ( cl.snap.ps.commandTime >= cl.outPackets[packetNum].p_serverTime ) {
+			break;
+		}
+	}
+	if ( cl.snap.ps.commandTime < cl.outPackets[newest].p_serverTime && i < PACKET_BACKUP ) {
+		nextAge = cls.realtime - cl.outPackets[( packetNum + 1 ) & PACKET_MASK].p_realtime;
+	} else {
+		nextAge = 0;
+	}
+
+	b = CL_AdaptivePacketdup_Bucket();
+	b->ackWeight += 1000 * ( interval - margin ) / interval;
+	if ( nextAge >= lowest + margin ) {
+		b->ackLate++;
+	}
+}
+
+/*
+=================
+CL_AdaptivePacketdup_ForLoss
+
+How many packets to repeat for a loss rate in tenths of a percent. Chosen so
+that fewer than about 1 in 1000 usercmds is lost if losses are independent
+(they usually aren't, so with some margin).
+=================
+*/
+static int CL_AdaptivePacketdup_ForLoss( int loss ) {
+	if ( loss >= 250 ) {
+		return 5;
+	} else if ( loss >= 150 ) {
+		return 4;
+	} else if ( loss >= 80 ) {
+		return 3;
+	} else if ( loss >= 30 ) {
+		return 2;
+	} else if ( loss >= 10 ) {
+		return 1;
+	}
+	return 0;
+}
+
+/*
+=================
+CL_AdaptivePacketdup_Target
+
+How many packets to repeat for what the window saw. A run of n lost inbound
+packets asks for n. Reports the two loss estimates, in tenths of a percent, and
+through hold the value not to fall below yet (the target for half again as much
+loss), so a rate near a threshold doesn't flap.
+=================
+*/
+static int CL_AdaptivePacketdup_Target( int *inLoss, int *outLoss, int *hold ) {
+	int		received = 0, lost = 0, burst = 0, weight = 0, late = 0;
+	int		inTarget, outTarget, inHold, outHold, i;
+
+	for ( i = 0 ; i < PDUP_BUCKETS ; i++ ) {
+		received += pdup.buckets[i].inReceived;
+		lost += pdup.buckets[i].inLost;
+		weight += pdup.buckets[i].ackWeight;
+		late += pdup.buckets[i].ackLate;
+		if ( pdup.buckets[i].inBurst > burst ) {
+			burst = pdup.buckets[i].inBurst;
+		}
+	}
+	*inLoss = received >= PDUP_MIN_SAMPLES ? 1000 * lost / ( received + lost ) : 0;
+	*outLoss = weight >= PDUP_MIN_SAMPLES * PDUP_MIN_VISIBLE ? 1000 * late * 1000 / weight : 0;
+
+	inTarget = CL_AdaptivePacketdup_ForLoss( *inLoss );
+	if ( burst > inTarget ) {
+		inTarget = burst;
+	}
+	inHold = CL_AdaptivePacketdup_ForLoss( *inLoss * 3 / 2 );
+	if ( burst > inHold ) {
+		inHold = burst;
+	}
+	outTarget = CL_AdaptivePacketdup_ForLoss( *outLoss );
+	if ( outTarget > PDUP_MAX_OUTBOUND ) {
+		outTarget = PDUP_MAX_OUTBOUND;
+	}
+	outHold = CL_AdaptivePacketdup_ForLoss( *outLoss * 3 / 2 );
+	if ( outHold > PDUP_MAX_OUTBOUND ) {
+		outHold = PDUP_MAX_OUTBOUND;
+	}
+	*hold = inHold > outHold ? inHold : outHold;
+	return inTarget > outTarget ? inTarget : outTarget;
+}
+
+/*
+=================
+CL_AdaptivePacketdup_Value
+
+The number of earlier packets whose usercmds to repeat now. Rises at once,
+falls one step at a time.
+=================
+*/
+static int CL_AdaptivePacketdup_Value( void ) {
+	int		floorValue = cl_packetdup->integer;
+	int		value, target, hold = 0, inLoss = 0, outLoss = 0;
+
+	if ( !cl_adaptivePacketdup->integer || clc.netchan.remoteAddress.type == NA_LOOPBACK ) {
+		value = floorValue;
+		pdup.effective = value;
+	} else {
+		CL_AdaptivePacketdup_Bucket();	// lets old buckets expire when no samples arrive
+		target = CL_AdaptivePacketdup_Target( &inLoss, &outLoss, &hold );
+		if ( target < floorValue ) {
+			target = floorValue;
+		} else if ( target > PDUP_MAX ) {
+			target = PDUP_MAX;
+		}
+		value = pdup.effective;
+		if ( value < floorValue ) {		// not started, or the user raised cl_packetdup
+			value = floorValue;
+		}
+		if ( target > value ) {
+			value = target;
+			pdup.lastStep = cls.realtime;
+		} else if ( value > target && value > hold && cls.realtime - pdup.lastStep >= PDUP_DECAY_HOLD_MS ) {
+			value--;
+			pdup.lastStep = cls.realtime;
+		}
+		pdup.effective = value;
+	}
+
+	if ( cl_packetdupEffective->integer != value || !cl_packetdupEffective->string[0] ) {
+		Cvar_Set( "cl_packetdupEffective", va( "%i", value ) );
+		Com_DPrintf( "packetdup: %i (at %i ms; floor %i, inbound loss %i.%i%%, outbound estimate %i.%i%%)\n",
+			value, cls.realtime, floorValue, inLoss / 10, inLoss % 10, outLoss / 10, outLoss % 10 );
+	}
+	return value;
+}
+
+/*
 ===================
 CL_WritePacket
 
@@ -762,6 +1099,7 @@ void CL_WritePacket( void ) {
 	int			packetNum;
 	int			oldPacketNum;
 	int			count;
+	int			dup;
 	#ifndef ELITEFORCE
 	int			key;
 	#endif
@@ -816,8 +1154,16 @@ void CL_WritePacket( void ) {
 	} else if ( cl_packetdup->integer > 5 ) {
 		Cvar_Set( "cl_packetdup", "5" );
 	}
-	oldPacketNum = (clc.netchan.outgoingSequence - 1 - cl_packetdup->integer) & PACKET_MASK;
-	count = cl.cmdNumber - cl.outPackets[ oldPacketNum ].p_cmdNumber;
+	dup = CL_AdaptivePacketdup_Value();
+	while ( 1 ) {
+		oldPacketNum = (clc.netchan.outgoingSequence - 1 - dup) & PACKET_MASK;
+		count = cl.cmdNumber - cl.outPackets[ oldPacketNum ].p_cmdNumber;
+		// don't let the adaptive part overflow a packet (a low cl_maxpackets at a high frame rate)
+		if ( count <= MAX_PACKET_USERCMDS || dup <= cl_packetdup->integer ) {
+			break;
+		}
+		dup--;
+	}
 	if ( count > MAX_PACKET_USERCMDS ) {
 		count = MAX_PACKET_USERCMDS;
 		Com_Printf("MAX_PACKET_USERCMDS\n");
