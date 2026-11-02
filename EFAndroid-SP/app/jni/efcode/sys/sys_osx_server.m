@@ -46,11 +46,12 @@ Retail rules (from the Holomatch ui.qvm's Create Server menu):
   Disintegration and Action Hero; Disintegration excludes Specialties and
   Action Hero; Elimination excludes Action Hero. Bots: bot_minplayers fills
   the game with bots up to that many players (per team in team games),
-  with skill g_spSkill 1-5.
+  with skill g_spSkill 1-5. Tick Rate: High sets sv_fps 40, Standard leaves it alone.
 
 Test hooks (environment variables, see also sys_osx_launcher.m):
   VOYAGERSP_TEST_SERVER_CONFIG_SNAPSHOT=<file.png>  render the Config… sheet
   VOYAGERSP_TEST_SERVER_CONFIG_TAB=maps|game|server  its tab
+  VOYAGERSP_TEST_SERVER_TICKRATE=20|40    pick this Tick Rate in that sheet and press OK
   VOYAGERSP_TEST_SERVER_START=1           press Start Server (Host mode)
                                          without showing the launcher; the
                                          server window is put off screen
@@ -165,6 +166,7 @@ static NSArray *Modifiers( void )
 	_pure = YES;
 	_openPort = YES;
 	_port = DEFAULT_PORT;
+	_tickRate = 20;
 	_rotation = @[ @"hm_voy1", @"hm_borg1", @"hm_kln1", @"hm_dn1", @"hm_for1", @"hm_cam" ];
 	return self;
 }
@@ -180,7 +182,7 @@ static NSArray *Modifiers( void )
 {
 	return @[ @"hostname", @"password", @"gametype", @"assimilation", @"disintegration", @"actionHero",
 		@"specialties", @"elimination", @"fraglimit", @"capturelimit", @"timelimit", @"maxPlayers", @"bots",
-		@"botSkill", @"friendlyFire", @"internet", @"openPort", @"allowDownload", @"pure", @"port", @"rotation" ];
+		@"botSkill", @"friendlyFire", @"internet", @"openPort", @"allowDownload", @"pure", @"port", @"tickRate", @"rotation" ];
 }
 
 - (NSDictionary *)dictionary
@@ -210,6 +212,8 @@ static NSArray *Modifiers( void )
 	s.bots = MIN( MAX( s.bots, 0 ), 31 );
 	if( s.port < 1024 || s.port > 65535 )
 		s.port = DEFAULT_PORT;
+	if( s.tickRate != 40 )
+		s.tickRate = 20;
 	if( ![s.hostname length] )
 		s.hostname = DefaultHostname();
 	[s applyModifierRulesFavoring: nil];
@@ -1133,7 +1137,7 @@ static NSView *Boxed( NSView *v )
 	NSTextField *mapsCaption, *rotCaption;
 	NSButton *addButton, *removeButton, *upButton, *downButton;
 
-	NSPopUpButton *gametype, *skill;
+	NSPopUpButton *gametype, *skill, *tickRate;
 	NSTextField *gametypeHint;
 	NSMutableDictionary<NSString *, NSButton *> *modButtons;
 	VSPNumberField *frag, *capture, *timeLimit, *maxPlayers, *bots, *port;
@@ -1668,6 +1672,14 @@ static NSView *Boxed( NSView *v )
 }
 
 - (void)skillChanged: (id)sender	{ edit.botSkill = [[skill selectedItem] tag]; }
+- (void)tickRateChanged: (id)sender	{ edit.tickRate = [[tickRate selectedItem] tag]; }
+
+// VOYAGERSP_TEST_SERVER_TICKRATE: pick that item as a click would.
+- (void)testPickTickRate: (NSInteger)rate
+{
+	[tickRate selectItemWithTag: rate];
+	[self tickRateChanged: tickRate];
+}
 
 - (void)checkChanged: (NSButton *)b
 {
@@ -1749,6 +1761,14 @@ static NSView *Boxed( NSView *v )
 	}
 	downloads = [NSButton checkboxWithTitle: @"Let players download maps they don't have" target: self action: @selector(checkChanged:)];
 	pure = [NSButton checkboxWithTitle: @"Pure server: players must use the same game files" target: self action: @selector(checkChanged:)];
+	tickRate = [[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: NO];
+	[tickRate addItemWithTitle: @"Standard (20)"];
+	[[tickRate lastItem] setTag: 20];
+	[tickRate addItemWithTitle: @"High (40)"];
+	[[tickRate lastItem] setTag: 40];
+	[tickRate setTarget: self];
+	[tickRate setAction: @selector(tickRateChanged:)];
+	[tickRate setToolTip: @"How many times a second the server updates the game (sv_fps). High uses more upload bandwidth."];
 
 	grid = FormGrid( @[
 		@[ VSP_Label( @"Server name:", Body(), nil ), hostname ],
@@ -1763,10 +1783,13 @@ static NSView *Boxed( NSView *v )
 		@[ VSP_Label( @"Downloads:", Body(), nil ), downloads ],
 		@[ [NSGridCell emptyContentView], Hint( @"Add-on maps only: the retail and Expansion Pack files are never sent.", 400 ) ],
 		@[ VSP_Label( @"Files:", Body(), nil ), pure ],
+		@[ VSP_Label( @"Tick Rate:", Body(), nil ), tickRate ],
+		@[ [NSGridCell emptyContentView], Hint( @"Updates per second. High uses more upload bandwidth.", 400 ) ],
 	], 112 );
 	[[grid rowAtIndex: 3] setTopPadding: 6];
 	[[grid rowAtIndex: 4] setTopPadding: 6];
 	[[grid rowAtIndex: 9] setTopPadding: 6];
+	[[grid rowAtIndex: 12] setTopPadding: 6];
 	[[grid cellForView: openPort] setXPlacement: NSGridCellPlacementLeading];
 	[[[grid cellForView: openPort] row] setTopPadding: 0];
 	[openPort setContentHuggingPriority: NSLayoutPriorityDefaultHigh forOrientation: NSLayoutConstraintOrientationHorizontal];
@@ -1810,6 +1833,7 @@ static NSView *Boxed( NSView *v )
 	[port refresh];
 	[downloads setState: edit.allowDownload ? NSControlStateValueOn : NSControlStateValueOff];
 	[pure setState: edit.pure ? NSControlStateValueOn : NSControlStateValueOff];
+	[tickRate selectItemWithTag: edit.tickRate];
 	[self showServerTab];
 }
 
@@ -1878,8 +1902,15 @@ BOOL VSP_SnapshotServerConfig( VSPServerSettings *settings, NSString *dataFolder
 {
 	VSPServerConfigController *c = [[VSPServerConfigController alloc] initWithSettings: settings dataFolder: dataFolder];
 
+	BOOL ok;
+
 	[c selectTab: tab];
-	return VSP_SnapshotWindow( [c panel], path );
+	if( getenv( "VOYAGERSP_TEST_SERVER_TICKRATE" ) )
+		[c testPickTickRate: atoi( getenv( "VOYAGERSP_TEST_SERVER_TICKRATE" ) )];
+	ok = VSP_SnapshotWindow( [c panel], path );
+	if( getenv( "VOYAGERSP_TEST_SERVER_TICKRATE" ) )
+		[c ok: nil];		// keep it, as the sheet's OK would
+	return ok;
 }
 
 /* ------------------------------------------------------------------------
@@ -1976,7 +2007,12 @@ static BOOL WriteServerConfig( VSPServerSettings *s, NSArray<VSPMapInfo *> *maps
 	[cfg appendFormat: @"set g_password \"%@\"\n", s.password];
 	[cfg appendFormat: @"set sv_maxclients %ld\n", (long)s.maxPlayers];
 	[cfg appendFormat: @"set sv_allowDownload %d\n", s.allowDownload];
-	[cfg appendFormat: @"set sv_pure %d\n\n", s.pure];
+	[cfg appendFormat: @"set sv_pure %d\n", s.pure];
+	// Standard writes nothing, leaving the engine's default. sv_minSnaps (default 50, capped at sv_fps)
+	// gives clients with the stock "snaps 20" every update, so nobody needs to change a setting to benefit.
+	if( s.tickRate == 40 )
+		[cfg appendString: @"set sv_fps 40\n"];
+	[cfg appendString: @"\n"];
 	[cfg appendFormat: @"set g_gametype %ld\n", (long)s.gametype];
 	[cfg appendFormat: @"set g_pModAssimilation %d\n", s.assimilation];
 	[cfg appendFormat: @"set g_pModDisintegration %d\n", s.disintegration];

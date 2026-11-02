@@ -53,6 +53,7 @@ enum { VSP_GT_FFA = 0, VSP_GT_TOURNAMENT = 1, VSP_GT_TEAM = 3, VSP_GT_CTF = 4 };
 @property (nonatomic) BOOL friendlyFire, internet, allowDownload, pure;
 @property (nonatomic) BOOL openPort;		// internet: ask the router to forward the port (NAT-PMP / UPnP)
 @property (nonatomic) NSInteger port;
+@property (nonatomic) NSInteger tickRate;		// sv_fps: 20 (Standard, sv_fps left alone) or 40 (High)
 @property (nonatomic, copy) NSArray<NSString *> *rotation;			// map names, in order
 + (instancetype)load;
 - (void)save;
