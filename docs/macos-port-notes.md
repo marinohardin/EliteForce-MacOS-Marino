@@ -659,3 +659,37 @@ Test gotcha: `sv_minSnaps` and `sv_lanForceRate` are `CVAR_ARCHIVE`, so a test v
 `hmconfig_server.cfg` and affects later runs. A saved low `sv_minSnaps` would also cap High's benefit.
 
 Not tested: the retail Windows client, real latency or packet loss, several human clients, and feel.
+
+## SP display fixes: notify text, in-game video, Hor+ FOV, flares (2026-11-07)
+
+Our own fixes (not from cMod), from the SP player report.
+
+- **Debug text over subtitles.** Renderer diagnostics ("Prewarmed N pipelines", "VKDIAG: ...")
+  and the SP bridge's info logs (the autosave's `[EFSP] save: wrote saves/auto.sav ...`, the
+  spmap/efsptrans load lines) and the macOS File menu line now start with `[skipnotify]` (RTCW's
+  prefix, already handled in `CL_ConsolePrint`): console and `qconsole.log` only. `Com_Printf`
+  strips the prefix for the tty, redirects and the log. In `macos/android/log.h`,
+  `ANDROID_LOG_INFO` skips notify; warnings and errors still show. `SP_EndLoad`
+  (`sp/sp_integration.c`) now calls `Con_ClearNotify()`, as the stock `CL_InitCGame` does.
+- **In-game video.** `SCR_DrawScreenField` (`client/cl_scrn.c`) fills the screen black before an
+  `inGameCinematic` video, so on a wide screen it is 4:3 with black bars instead of a box over
+  the paused level and HUD (SP and Holomatch). Menu/startup videos are unchanged;
+  `cl_flexibleDisplay 4` still stretches.
+- **Hor+ FOV in SP.** `CG_CalcFOVFromX43` (`efgame/src/cgame/cg_view.cpp`) treats the FOV as the
+  4:3 value: same vertical FOV as 4:3, wider sides. Used for camera scenes (the opening crawl
+  pictures were losing ~22% of their height at 16:9) and for gameplay `cg_fov`/zoom, which
+  matches Holomatch (`cl_flexibleDisplay 2` already does Hor+ in `CG_R_RENDERSCENE`). At 4:3, and
+  with `cg_forceAspect 1`, nothing changes. Camera letterbox bars and the crawl scrolling off the
+  top are retail and kept.
+- **Light flares on.** `r_flares` defaults to 1. Once (`com_flaresDefault 1`, the same one-time
+  stamp pattern as `com_hmNetDefaults`), SP and Holomatch configs that still hold 0 get 1; turning
+  flares off later sticks.
+- **Tested** (1920x1080 and 1440x1080, scratch HOME): "Autosave - voy1" (captain's log video now
+  pillarboxed in black, no diagnostics at the top), New Game borg1 crawl (16:9 picture framing
+  matches 4:3), forward transition borg1 -> borg2 (clean first frame), `save auto` mid-level (the
+  save line stays in the log only), borg2 gameplay 16:9 vs 4:3 (same vertical view and gun size),
+  `inGameCinematic st_01` in SP and Holomatch (local server, hm_voy1), startup Activision video
+  (unchanged), the flares stamp (0 -> 1 once, a later 0 is kept). Flares cost about 0.3 ms per
+  frame in borg2 and 0.6 ms in hm_voy1 at 1080p (uncapped, `com_speeds`; noisy).
+- **Not tested**: the in-game options menus showing Light Flares On (they read `r_flares`, so
+  by reading the code), Holomatch's own UI, other SP camera scenes, 21:9 screens, and feel.
