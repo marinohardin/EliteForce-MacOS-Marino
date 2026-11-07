@@ -502,6 +502,13 @@ void SP_LoadWatchdog(void){
 }
 
 // ---- input: hand the SP loop the engine's current usercmd (reuses HM touch/keys) ----
+// Called by the bridge right before ge->ClientBegin on every level start (New Game, transition, load). Retail
+// cleared the client state on each new gamestate (CL_ClearState zeroes cl.viewangles), so the first usercmd's
+// angles were 0, the same angles ClientBegin computes the player's delta_angles from. The port never cleared
+// them: whatever the mouse had turned on the previous level was added to the new spawn angles, so after a
+// transition the view started rotated away from where the level designer pointed it.
+void SP_ResetViewAngles(void){ VectorClear(cl.viewangles); }
+
 void SPR_GetLatestCmd(int* angles, signed char* fwd, signed char* side, signed char* up, int* buttons){
     usercmd_t* c = &cl.cmds[ cl.cmdNumber & 63 ];   // CMD_BACKUP-1
     angles[0]=c->angles[0]; angles[1]=c->angles[1]; angles[2]=c->angles[2];

@@ -43,6 +43,7 @@ static void bwarn( const char *fmt, ... ){ va_list a; va_start(a,fmt); __android
 extern "C" {
     void  SP_PumpLoadScreen( void );   // sp_integration.c: drive the 1:1 cgame load screen on cgi_UpdateScreen
     void  SP_ArmMenuSuppress( void );  // sp_integration.c: hide the menu 1 frame for a clean save-thumbnail capture
+    void  SP_ResetViewAngles( void );  // sp_integration.c: zero cl.viewangles at level start (retail CL_ClearState)
     int   Sys_Milliseconds( void );
     int   Cmd_Argc( void );
     char *Cmd_Argv( int arg );
@@ -107,6 +108,11 @@ static int            g_levelTime = 0;
 // go on the stack and the callee reads garbage registers (-> "CG_DrawActive: Undefined stereoView").
 typedef int (*vmMain_t)( int cmd, int, int, int, int, int, int, int, int );
 static vmMain_t g_vmMain = NULL;
+// The cgame's camera-position query (cg_main.cpp CG_GetCameraPos, behind its CG_CAMERA_POS export): the
+// retail engine built snapshots from the cinematic camera's position while a camera was on. Called
+// directly because vmMain's int arguments can't carry a 64-bit pointer. NULL if the module lacks it.
+typedef int (*camPos_t)( float *pos );
+static camPos_t g_camPos = NULL;
 static intptr_t SP_VmMain( int cmd, int a0=0, int a1=0, int a2=0, int a3=0, int a4=0, int a5=0, int a6=0, int a7=0 ){
     return g_vmMain( cmd, a0, a1, a2, a3, a4, a5, a6, a7 );
 }
@@ -602,7 +608,7 @@ extern "C" void SP_UnloadGame( void ){
         if( g_spActive && ge && ge->Shutdown )  ge->Shutdown();                // game/level teardown
         dlclose( g_lib );
     }
-    g_lib = NULL; ge = NULL; g_vmMain = NULL; g_spActive = 0;
+    g_lib = NULL; ge = NULL; g_vmMain = NULL; g_camPos = NULL; g_spActive = 0;
     SP_EndCutsceneSkip();   // a load / new game / abort ends any camera-scene skip (timescale back to 1)
     // H3: g_linked[] holds raw gentity_t* into the module we just dlclose'd. Leaving them dangling is a
     // use-after-free waiting for one missing g_spActive gate. The next spawn resets g_numLinked anyway;
@@ -642,9 +648,14 @@ extern "C" qboolean SP_LoadGame( const char *solib ){
     dllEntry_t dllEntry = (dllEntry_t)dlsym(g_lib, "_Z8dllEntryPFiizE");
     if(dllEntry) dllEntry(SP_CgameSyscall);
     g_vmMain = (vmMain_t)dlsym(g_lib, "_Z6vmMainiiiiiiiii");
+    g_camPos = (camPos_t)dlsym(g_lib, "_Z15CG_GetCameraPosPf");   // optional (snapshot loop-sound culling)
     blog("SP_LoadGame: ge=%p apiversion=%d gentitySize=%d\n", (void*)ge, ge->apiversion, ge->gentitySize);
     return (ge->apiversion==GAME_API_VERSION) ? qtrue : qfalse;
 }
+
+extern "C" void SP_RunFrames( int n );   // level-start settle frames (defined below)
+#define SP_SETTLE_FRAMES        3   // retail SV_SpawnServer: 3 x 100 ms before the client connects
+#define SP_SETTLE_CLIENT_TICKS  4   // 4 x 50 ms after ClientBegin, before the first snapshot (see SP_SettleClient)
 
 extern "C" qboolean SP_SpawnServer( const char *mapname ){
     // If a level is already running (New Game / map after a prior map), tear it down FIRST. Re-calling
@@ -708,6 +719,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     ge->Init( mapname, "", checksum, entstring, g_levelTime, Sys_Milliseconds(), Sys_Milliseconds(),
               (SavedGameJustLoaded_e)0, qfalse );
     blog("SP_SpawnServer: ge->Init done. num_entities=%d linked=%d\n", ge->num_entities, g_numLinked);
+    SP_RunFrames( SP_SETTLE_FRAMES );   // retail SV_SpawnServer settle frames, before SP_StartClient connects the player
     // C1 (reclaim path only): bring the renderer we tore down above back up BEFORE SP_StartClient's CG_INIT
     // loads the new world. Mirrors SP_FinishTransition's SP_FillGlConfig()+SPR_InitRenderer() ordering. On the
     // first spawn the boot renderer is already up, so skip (CG_INIT loads the world as before).
@@ -719,9 +731,15 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     return qtrue;
 }
 
+// Level-start settle frames, part 1 (fresh spawns only: New Game, forward transitions, eAUTO autosave loads).
+// Retail SV_SpawnServer ran "a few frames to allow everything to settle" right after the game's Init and
+// BEFORE any client connected: 3 x ge->RunFrame(sv.time); sv.time += 100 (the stock Q3 loop in
+// efcode/server/sv_init.c, and the comment in g_main.cpp InitGame). Map-spawned NPCs run their deferred
+// NPC_Begin here (with its beam-in event), movers and spawn scripts start, and the player isn't in the level
+// yet. Same order as retail: RunFrame at the current time, then advance by 100.
 extern "C" void SP_RunFrames( int n ){
-    for(int i=0;i<n;i++){ g_levelTime += 100; SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime); }
-    blog("SP_RunFrames: ticked %d frames to levelTime=%d, num_entities=%d\n", n, g_levelTime, ge->num_entities);
+    for(int i=0;i<n;i++){ SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime); g_levelTime += 100; }
+    blog("SP_RunFrames: settled %d frames, levelTime now %d, num_entities=%d\n", n, g_levelTime, ge->num_entities);
 }
 
 // =====================================================================================
@@ -735,6 +753,29 @@ static gameState_t g_gameState;
 static snapshot_t  g_snap;
 static usercmd_t   g_lastcmd;
 static int         g_weaponSelect = 0;
+
+// Level-start settle frames, part 2: after ClientBegin, before the first snapshot and CG_INIT (so the load
+// screen is still up). In retail the client entered the world with its first usercmd only after loading its
+// cgame, and the listen server kept running frames meanwhile (Com_ModifyMsec caps a frame at 200 ms), so the
+// first snapshot the player saw was a few frames past their spawn: they had already dropped onto the floor,
+// the spawn-point scripts had started (camera, locks) and spawn events (EV_PLAYER_TELEPORT_IN, 300 ms) from
+// the settle frames had expired. The port sent the very first frame instead: the player hanging a few units
+// up and falling, and every bridge crew member beaming in on voy1. Same 50 ms ticks as SP_DrawFrame.
+// Before CG_INIT the cgame hasn't reported a weapon, so the usercmd carries the player's current one (cmd
+// weapon 0 would start lowering the weapon); g_weaponSelect gets it too for the first real frame.
+static void SP_SettleClient( int ticks ){
+    gentity_t* p0 = SP_GEntity(0);
+    for(int i=0;i<ticks;i++){
+        if(p0->client) g_lastcmd.weapon = (byte)((playerState_t*)p0->client)->weapon;
+        g_levelTime += SP_SV_FRAMEMSEC;
+        g_cmdNum++;
+        g_lastcmd.serverTime = g_levelTime;
+        ge->ClientThink(0, &g_lastcmd);
+        SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+    }
+    if(p0->client) g_weaponSelect = ((playerState_t*)p0->client)->weapon;
+    blog("SP_SettleClient: %d ticks, levelTime now %d\n", ticks, g_levelTime);
+}
 
 static void BuildGameState(void){
     memset(&g_gameState, 0, sizeof(g_gameState));
@@ -750,6 +791,44 @@ static void BuildGameState(void){
     }
 }
 
+// ---- looping sounds of entities the retail server wouldn't have sent ----
+// Retail SV_BuildClientSnapshot sent an entity only if it touched a cluster in the PVS of the view (and its area
+// was connected to the view's area); the view was the player's eye, or the cinematic camera (the cgame's
+// CG_CAMERA_POS export, which exists for this). The cgame re-adds every snapshot entity's s.loopSound each
+// frame (cg_ents.cpp CG_EntityEffects), so with the port sending every entity, a looping speaker kept playing
+// wherever the player went: the prologue's Borg forcefield hum (three LOOPED_ON target_speakers playing
+// borgfieldhum.wav in holodeck.bsp; g_target.cpp links them "so the server can determine who to send updates
+// to") ran on through Tuvok's speech and into the turbolift, quieter only with distance.
+// The bridge still sends every entity, so nothing the cgame draws or predicts changes; it only drops the loop of
+// an entity outside the view's PVS. Only the cluster PVS, which is fixed per map: the area test also depends on
+// the areaportal state, which a save load doesn't restore yet (all portals start closed), so it could silence a
+// loop behind a door that's really open. So this drops a subset of the loops retail dropped, never more.
+// No culling when the view is outside the map (no cluster), for unlinked or broadcast entities, or for an
+// entity spanning more leafs than we look at.
+struct SP_View { const unsigned char *pvs; };
+static void SP_GetView( SP_View *v ){
+    v->pvs = NULL;
+    vec3_t org;
+    if( !g_camPos || !g_camPos( org ) ){
+        VectorCopy( g_snap.ps.origin, org );
+        org[2] += g_snap.ps.viewheight;
+    }
+    int cluster = CM_LeafCluster( CM_PointLeafnum( org ) );
+    if( cluster < 0 ) return;
+    v->pvs = CM_ClusterPVS( cluster );
+}
+static qboolean SP_EntInView( const SP_View *v, gentity_t *e ){
+    if( !v->pvs || !e->linked || (e->svFlags & SVF_BROADCAST) ) return qtrue;
+    int leafs[128], lastLeaf = 0;
+    int num = CM_BoxLeafnums( e->absmin, e->absmax, leafs, 128, &lastLeaf );
+    if( num >= 128 ) return qtrue;
+    for( int i = 0; i < num; i++ ){
+        int c = CM_LeafCluster( leafs[i] );
+        if( c >= 0 && (v->pvs[c >> 3] & (1 << (c & 7))) ) return qtrue;
+    }
+    return qfalse;
+}
+
 static void BuildSnapshot(void){
     memset(&g_snap, 0, sizeof(g_snap));
     g_snap.serverTime = g_levelTime;
@@ -761,6 +840,7 @@ static void BuildSnapshot(void){
     gentity_t* p0 = SP_GEntity(0);
     if(p0->client) g_snap.ps = *(playerState_t*)p0->client;
     int n=0;
+    SP_View view; SP_GetView( &view );
     // Start at 0 to INCLUDE the local player's own entity (entity 0). Q3 ships the client's own entity in
     // the snapshot so the cgame can draw the player BODY in mirrors/portals/3rd-person (CG_Player skips it
     // in first-person via clientNum==ps.clientNum). Skipping it (old i=1) meant no Munro reflection at all.
@@ -770,7 +850,11 @@ static void BuildSnapshot(void){
         if(e->svFlags & SVF_NOCLIENT) continue;   // mirror SV_BuildClientSnapshot: don't ship server-only
                                                   // entities; frees slots in the 256 cap so visible movers
                                                   // on dense maps (e.g. borg1 ~561 ents) aren't dropped.
-        g_snap.entities[n++] = e->s;
+        g_snap.entities[n] = e->s;
+        if( i != 0 && e->s.loopSound && !SP_EntInView( &view, e ) ){
+            g_snap.entities[n].loopSound = 0;   // out of view: no loop (see SP_EntInView)
+        }
+        n++;
     }
     g_snap.numEntities = n;
     // Publish this snapshot under its number into the ring (retail CL_ParseSnapshot:
@@ -1288,12 +1372,17 @@ extern "C" qboolean SP_FinishTransition(void){
     // entity FRESH from the BSP here (their think/nav timers re-derive against the new clock), so 1000 is the
     // correct, retail-matching origin. eFULL is deliberately untouched: its ReadLevel restores absolute
     // entity timers, so it MUST keep the saved TIME (g_levelTime=tnow set in SP_LoadGameFile).
+    int savedTime = g_levelTime;   // an eAUTO autosave LOAD: the save's TIME (SP_LoadGameFile), see ReadLevel below
     if( sg == eAUTO ){
         blog("SP_FinishTransition: eAUTO -> reset g_levelTime %d -> 1000 (retail SV_SpawnServer parity)\n", g_levelTime);
         g_levelTime = 1000;
     }
     ge->Init(g_transMap, g_transSpawn, checksum, entstring, g_levelTime,
              Sys_Milliseconds(), Sys_Milliseconds(), sg, g_transHub ? qtrue : qfalse);
+    // Fresh spawn (eAUTO: forward transition or autosave load): retail SV_SpawnServer's settle frames, before the
+    // player connects. Not for an eFULL user load: ReadLevel below replaces every entity with the saved, already
+    // settled ones, so frames run on the fresh spawn would only start scripts that the load then throws away.
+    if( sg == eAUTO ) SP_RunFrames( SP_SETTLE_FRAMES );
     BuildGameState();
     char* denied = ge->ClientConnect(0, qfalse, sg);
     if(denied) bwarn("SP_FinishTransition: ClientConnect denied: %s\n", denied);
@@ -1326,10 +1415,18 @@ extern "C" qboolean SP_FinishTransition(void){
         // by Player_RestoreFromPrevLevel inside ge->ClientBegin(...,eAUTO) below (g_client.cpp:891-896).
         s_sgWriting=qfalse; ge->ReadLevel(qtrue, qfalse); SG_Close();
         blog("SP_FinishTransition: eAUTO autosave load -> ReadLevel(qtrue), entities respawn fresh\n");
+        // ReadLevel restored level_locals, level.time included, from the save. If that's later than the bridge
+        // clock after the settle frames (an entry autosave is written after the level-start ticks), move the
+        // clock up to it so ClientBegin and the following ticks agree with the game's level.time.
+        if( savedTime > g_levelTime ){
+            blog("SP_FinishTransition: autosave level time %d > %d -> clock follows the save\n", savedTime, g_levelTime);
+            g_levelTime = savedTime;
+        }
     } else if( s_sgFile ){
         SG_Close();   // forward transition (eAUTO): discard the level snapshot; the player carries via cvars
     }
     memset(&g_lastcmd,0,sizeof(g_lastcmd)); g_lastcmd.serverTime = g_levelTime;
+    SP_ResetViewAngles();   // the usercmd angles restart at 0, matching g_lastcmd (see SP_ResetViewAngles)
     ge->ClientBegin(0, &g_lastcmd, sg);
     // Robustly re-link EVERY in-use brush-model entity after a load. The game's ReadLevel only relinks
     // entities whose SAVED 'linked' flag was true (g_savegame.cpp:790-795); a save made on an older build
@@ -1354,7 +1451,10 @@ extern "C" qboolean SP_FinishTransition(void){
       }
       blog("SP_FinishTransition: re-linked %d brush/trigger entities after ReadLevel (g_numLinked=%d)\n", relinked, g_numLinked);
     }
-    SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+    // Fresh spawn: let the player land and the spawn scripts/events play out before the first snapshot (the load
+    // screen stays up, see SP_SettleClient). An eFULL load shows the saved moment as it was, with one frame.
+    if( sg == eAUTO ) SP_SettleClient( SP_SETTLE_CLIENT_TICKS );
+    else { SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime); }
     BuildSnapshot();
     BuildGameState();                   // rebuild AFTER ClientBegin so CS_PLAYERS+0 (player model) is in the
                                         // gamestate the cgame reads at CG_INIT (no live CG_CONFIGSTRING path)
@@ -1687,9 +1787,10 @@ extern "C" qboolean SP_StartClient(void){
     char* denied = ge->ClientConnect(0, qtrue, (SavedGameJustLoaded_e)0);
     if(denied){ bwarn("SP_StartClient: ClientConnect denied: %s\n", denied); return qfalse; }
     memset(&g_lastcmd,0,sizeof(g_lastcmd)); g_lastcmd.serverTime=g_levelTime;
+    SP_ResetViewAngles();   // the usercmd angles restart at 0, matching g_lastcmd (see SP_ResetViewAngles)
     ge->ClientBegin(0, &g_lastcmd, (SavedGameJustLoaded_e)0);
     blog("SP_StartClient: client connected+begun\n");
-    SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+    SP_SettleClient( SP_SETTLE_CLIENT_TICKS );   // player lands, spawn scripts start, spawn events expire
     BuildSnapshot();
     // Rebuild the gamestate AFTER ClientBegin/RunFrame so it includes configstrings the game set during
     // spawn — notably CS_PLAYERS+0 (the local player's model/skin). The cgame reads configstrings ONLY

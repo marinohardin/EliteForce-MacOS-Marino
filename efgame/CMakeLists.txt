@@ -80,6 +80,8 @@ if(APPLE)
   # dynamic_lookup stands in for --unresolved-symbols=ignore-all.
   target_link_options(efgame PRIVATE
     -Wl,-exported_symbols_list,${AND}/efgame.exp -undefined dynamic_lookup)
+  # Relink when the export list changes (ld64 does not track it as an input).
+  set_target_properties(efgame PROPERTIES LINK_DEPENDS ${AND}/efgame.exp)
 else()
 target_link_options(efgame PRIVATE
   -Wl,--version-script=${AND}/efgame.ver
