@@ -1901,8 +1901,43 @@ void VM_BlockCopy(unsigned int dest, unsigned int src, size_t n)
 	|| ((dest + n) & dataMask) != dest + n
 	|| ((src + n) & dataMask) != src + n)
 	{
-		Com_Error(ERR_DROP, "OP_BLOCK_COPY out of range!");
+		// From cMod by Noah Metzger (Chomenor), CMOD_VM_TOLERANT_BLOCKCOPY: wrap the addresses instead of erroring,
+		// like ioq3/ioEF before ~2011. Some mods (Super FFA) depend on it.
+		static qboolean warned = qfalse;
+		if ( !warned ) {
+			Com_Printf( "WARNING: Ignoring OP_BLOCK_COPY range error; game module memory may be corrupt.\n" );
+			warned = qtrue;
+		}
+
+		dest &= dataMask;
+		src &= dataMask;
+
+		if ( ( ( dest + n ) & dataMask ) != dest + n || ( ( src + n ) & dataMask ) != src + n ) {
+			return;
+		}
 	}
 
 	Com_Memcpy(currentVM->dataBase + dest, currentVM->dataBase + src, n);
+}
+
+/*
+=================
+VM_Strncpy
+
+strncpy for the VMs' strncpy syscalls. The C library's may abort on overlapping buffers
+(macOS checks for that), which some game modules pass (from cMod by Noah Metzger (Chomenor), CMOD_VM_STRNCPY_FIX).
+=================
+*/
+void VM_Strncpy( char *dst, const char *src, int length ) {
+	int i;
+
+	for ( i = 0; i < length; i++ ) {
+		dst[i] = src[i];
+		if ( !src[i] ) {
+			break;
+		}
+	}
+	for ( ; i < length; i++ ) {
+		dst[i] = 0;
+	}
 }

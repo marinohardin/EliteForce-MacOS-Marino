@@ -610,6 +610,27 @@ qboolean CG_CalcFOVFromX( float fov_x )
 
 	return (inwater);
 }
+
+/*
+====================
+CG_CalcFOVFromX43
+
+Like CG_CalcFOVFromX, but fov_x is the horizontal FOV at 4:3, which is what the game's
+cameras and scripts were made for. On a wider view the vertical FOV is kept at its 4:3 value
+and the sides widen (Hor+), so a wide screen shows all of a 4:3 shot plus some more at the
+sides instead of cutting off its top and bottom. At 4:3 or narrower (and with cg_forceAspect,
+which makes the view 4:3) this is exactly CG_CalcFOVFromX.
+====================
+*/
+qboolean CG_CalcFOVFromX43( float fov_x )
+{
+	if ( cg.refdef.width * 3 > cg.refdef.height * 4 && fov_x > 0 && fov_x < 180 ) {
+		// the distance to a 4:3 view plane of this FOV, then the wider plane at that distance
+		float x = ( cg.refdef.height * 4.0f / 3.0f ) / tan( fov_x / 360 * M_PI );
+		fov_x = atan2( cg.refdef.width, x ) * 360 / M_PI;
+	}
+	return CG_CalcFOVFromX( fov_x );
+}
 /*
 ====================
 CG_CalcFov
@@ -671,7 +692,11 @@ static qboolean	CG_CalcFov( void ) {
 		}
 	}
 
-	return ( CG_CalcFOVFromX( fov_x ) );
+	// cg_fov (and the zoom) is the horizontal FOV at 4:3, as in retail. On a wide screen keep
+	// that vertical FOV and widen the sides (Hor+), the same as Holomatch does in this engine
+	// (cl_flexibleDisplay 2, CL_CgameSystemCalls CG_R_RENDERSCENE), instead of cutting off the
+	// top and bottom. 4:3 and cg_forceAspect 1 are unchanged.
+	return ( CG_CalcFOVFromX43( fov_x ) );
 }
 
 

@@ -162,7 +162,7 @@ not a second engine:
   `r_gamma` on every slider change, and SP sliders can now be dragged.
 - **Map downloads (Holomatch).** `cl_allowDownload 1`, `sv_allowDownload 1` and
   `sv_dlRate 4000` are the defaults. A one-time `com_hmNetDefaults` stamp applies them over
-  configs that archived the old values. Downloads use UDP only (no cURL). On a LAN the
+  configs that archived the old values. Downloads try HTTP first since 1.3.0 (below). Over UDP, on a LAN the
   server sends several rounds of blocks per pass and the client acknowledges every 10 ms.
   A 3.3 MB map takes about 2 s. Single player keeps `net_enabled 0`.
 
@@ -404,3 +404,366 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   Without a choice, macOS picks among the apps that claim it, often the most recently registered.
 - **Tests.** `VOYAGERSP_TEST_BROWSER_SELECT=<row>` (and waits for its players),
   `VOYAGERSP_TEST_BROWSER_PREVIEW=<png>`, `VOYAGERSP_TEST_LINK_HANDLER=<app>`.
+
+## HTTP map downloads (2026-10-27)
+
+- **HTTP first, UDP fallback.** Most live servers set `sv_dlURL`; the client now uses it.
+  `USE_CURL` builds `client/cl_curl.c`, linked straight to the macOS system libcurl (`-lcurl`,
+  `/usr/lib/libcurl.4.dylib`, SDK headers through `USE_SYSTEM_CURL` in `cl_curl.h`). No
+  dlopen, no `cl_cURLLib` cvar, nothing bundled. `cl_allowDownload 1` (the default; bit 2,
+  `DLF_NO_REDIRECT`, unset) already allows HTTP, so the `com_hmNetDefaults` stamp is
+  unchanged. The client asks `<sv_dlURL>/baseEF/<map>.pk3`, disconnects while it downloads (as
+  ioq3 does, unless the server sets `DLF_NO_DISCONNECT`), then reconnects.
+- **A wrong sv_dlURL doesn't keep you out.** Stock ioq3 drops with "Download Error" when the
+  HTTP download fails (404, connection refused). Here, when UDP is allowed on both sides, the
+  client deletes the partial file, notes the server (`cls.cURLFailed`), reconnects and gets
+  the files over UDP; that note is cleared once the download list is done. An empty
+  `sv_dlURL` goes straight to UDP.
+- **cMod's `CMOD_DL_LASTMSG_FIX`** (no `MSG_ReadData` for an empty last chunk in compat mode)
+  is already in `CL_ParseDownload`: lilium-voyager's `if (size)` does the same.
+- **Single player** never reaches this: downloads start only from a Holomatch gamestate, and
+  SP runs with `net_enabled 0`.
+- **Tested** against a local dedicated server and `python3 -m http.server`: HTTP download
+  (byte-identical pk3, map loads), a 404 URL (warning, reconnect, UDP), and an empty URL
+  (UDP). Note: on the command line `+set sv_dlURL http://...` is cut at `//`; set it in a cfg.
+
+## MP3 music: skip non-Layer III frames (2026-10-27)
+
+`S_MP3_Scanfile` gave up on the whole file at the first header that wasn't Layer III, so a
+stray false sync broke the music (cMod names `amenhotep` and `hm_stronghold`). It now skips
+that frame (`CMOD_MP3_LAYER_CHECK_FIX`, from cMod by Noah Metzger (Chomenor)). Checked with a harness running the
+codec over an SP track with a bogus Layer II frame in front: the old code fails to open it,
+the new one decodes all of it. All 49 music MP3s in pak0, pak3 and qbeast decode the same as
+before, and SP music (borg1) still plays.
+
+## Server, sound and stability fixes from cMod by Noah Metzger (2026-10-27)
+
+Every item below is from cMod (ioef-cmod) by Noah Metzger (Chomenor), ported as plain code,
+with his credit and the cMod switch name in a comment. Holomatch servers (Host a Server,
+dedicated) and single player share this code.
+
+**Server** (all from cMod by Noah Metzger):
+- `getstatus` advertises `version "<ours> HM v1.20 compatible"` (the real one is in
+  `version_engine`) and, when a master asks with a challenge, `gamename baseEF`; `getinfo` sets
+  `challenge` last, so it comes first (`Info_SetValueForKey` prepends). (`CMOD_GETSTATUS_FIXES`)
+- Every protocol mismatch gets the "Server uses protocol version 24." reply old ioEF clients
+  look for. (`CMOD_PROTOCOL_MSG_FIX`)
+- Holomatch no longer resets `nextmap` on map load (rotations that set it once stuck on one
+  map); single player keeps the old behavior. (`CMOD_NO_ENGINE_NEXTMAP_SET`)
+- `sv_minSnaps` (default 50, still capped at `sv_fps`). (`CMOD_MIN_SNAPS`)
+- Bots and the listen server's player get `g_password` in their userinfo, so bots join
+  passworded servers. (`CMOD_BOT_PASSWORD_FIX`)
+- The botlib action flags use EF's game-code values and `BOTLIB_EA_ALT_ATTACK` calls
+  `EA_AltAttack`, so bots alt-fire. (`CMOD_BOT_TWEAKS`, engine side)
+- Gamestates that would overflow drop the entity baselines that don't fit
+  (`client_t.baselineCutoff`, null baselines in snapshots). (`CMOD_GAMESTATE_OVERFLOW_FIX`)
+- `map_restart` keeps the serverid and ignores moves sent before it (`mapRestartSequence`).
+  (`CMOD_MAP_RESTART_STATIC_SERVERID`)
+- A client keeps the pk3 list from its gamestate (`downloadPakNames`), so a map change during a
+  download of several pk3s no longer refuses the rest. cMod's version uses its new filesystem;
+  this one works on `files.c`'s referenced-pak list. (`CMOD_PER_CLIENT_DOWNLOAD_MAP`)
+- `map_restart` skips clients still downloading; legacy-protocol downloads stay `CS_CONNECTED`
+  and don't delta from the dummy snapshots. (`CMOD_DOWNLOAD_PROTOCOL_FIXES`, the parts our
+  monotonic dummy-snapshot time doesn't already cover)
+- The dead EF auth server is never contacted (server challenge, `ipAuthorize`,
+  `banUser`/`banClient`, client `getKeyAuthorize`): those blocks are `!defined(ELITEFORCE)`.
+  (`CMOD_DISABLE_AUTH_STUFF`)
+
+**Sound** (from cMod by Noah Metzger):
+- On map load (`CL_StartHunkUsers`) `S_ResetStaleSounds` unloads cached sounds whose file now
+  comes from another pk3 or folder (`FS_FileSource`, `S_CodecSoundSource`); they reload when
+  used. Base backend only; OpenAL isn't covered. (`CMOD_SOUND_RESET` / `CMOD_FAST_SOUND_RESET`,
+  rewritten for our filesystem)
+- Twice id's per-entity concurrent sound limits. (`CMOD_CONCURRENT_SOUNDS`)
+- 64-bit mixer index. (`CMOD_SOUND_DMA_BUFFER_TWEAK`)
+- Not needed here: `CMOD_SOUND_DISABLE_SDL_FORMAT_CHANGES`, since sdl2-compat already hands back
+  the requested format (S16, 22050 Hz) with `SDL_AUDIO_ALLOW_ANY_CHANGE`.
+
+**Stability** (from cMod by Noah Metzger):
+- 1024 queued events, was 256. (`CMOD_EVENT_QUEUE_SIZE`)
+- Overflow checks in the legacy (`compat`) bit reader/writer in `msg.c`.
+  (`CMOD_MSG_OVERFLOW_CHECKS`)
+- Out-of-range VM block copies wrap instead of `ERR_DROP` (Super FFA).
+  (`CMOD_VM_TOLERANT_BLOCKCOPY`)
+- `VM_Strncpy` for the strncpy syscalls (macOS aborts on overlapping `strncpy`).
+  (`CMOD_VM_STRNCPY_FIX`)
+- A non-inlined `LittleLong` in `cm_load.c` for bsps with unaligned lumps. (`CMOD_CM_ALIGN_FIX`)
+- NaN check in renderervk's `R_FogFactor`. (`CMOD_FOGFACTOR_FIX`)
+- renderervk (Quake3e) already had his fog side and FRCL fixes.
+## QVM float-to-int rounding (2026-10-27)
+
+cMod's (by Noah Metzger, Chomenor) `CMOD_VMFLOATCAST` (`VM_tonextint` in its interpreter, from Thilo Schulz's game code
+patch) makes the VM's `OP_CVFI` round to nearest instead of truncating. Elite Force's
+physics depend on that: the retail engine ran QVMs on x87 (`fistp`, round to nearest), and
+`bg_pmove.c` snaps the velocity every frame with `SnapVector` (`(int)` casts), so truncation
+loses up to one unit per axis per frame (a rough 125 fps model: jump apex ~42 instead of ~48.5).
+- **Our build already rounds.** On arm64 `Q_ftol` is `lrintf` (`q_shared.h`); clang inlines it
+  as `frintx` + `fcvtzs` in `vm_interpreted.c`, with `Sys_SetFloatEnv` setting
+  `FE_TONEAREST`. ioEF does the same on x86 (`asm/ftola.c`: `cvtss2si` and an x87 control
+  word of `0x007F` under `ELITEFORCE`). So the interpreter is unchanged apart from a comment.
+  The only difference from cMod is an exact .5 (we round to even, as x87 did; cMod rounds
+  away from zero), which is too rare to matter.
+- **aarch64 JIT** (`vm_aarch64.c`, not built: `EF_VM_JIT` is off) used `FCVTZS` (truncate);
+  it now uses `FCVTNS` (round to nearest, ties to even), so turning the JIT on later doesn't
+  change the physics.
+- Single player is not affected: its game code is native, and the HM qagame frame is skipped
+  while `SP_IsActive()` (`sv_main.c`).
+
+## Downloaded pk3s go to `downloads/` and can't override installed files (2026-10-28)
+
+From cMod by Noah Metzger (Chomenor), whose new filesystem keeps auto-downloads in a download
+folder and ranks them below everything else (`fs_download_mode`, the `downloads_folder` and
+"prefer non-downloaded pk3" precedence checks in `code/filesystem/fs_lookup.c`). Ported to
+ioquake3's `qcommon/files.c` search path. Motivating case: a server auto-downloaded cMod's
+`pakcmod-*.pk3` into `baseEF/`; sorting last, it replaced the stock QVMs on non-pure servers and
+when hosting.
+
+- **Where downloads go**: UDP and HTTP downloads (and their `.tmp` while in progress) are saved
+  to `baseEF/downloads/` (or `<mod>/downloads/`) under the home path. `FS_ComparePaks` builds the
+  local name; the remote name stays `baseEF/<name>.pk3`, so servers and `sv_dlURL` web folders
+  need nothing new. Interrupted `.tmp` files in `downloads/` are deleted at startup
+  (`FS_CleanDownloadTemps`, once per launch, not on filesystem restarts).
+- **Priority** (`FS_AddGameDirectory`, `FS_DemoteDownloadPaks`, `FS_DownloadPakListed`):
+  pk3s in `downloads/` always load, so their maps and models are found, but are moved below
+  every other pak and folder, so they only add files nobody else has. While connected to a
+  *remote* server whose `sv_paks` or `sv_referencedPaks` lists one (pure or not), that pak takes
+  its normal place, sorted by name among the game folder's paks. On a pure server the pure list
+  order applies as before and finds paks in `downloads/`. When this app runs the server (local
+  Holomatch hosting, Host a Server, single player) downloads never get promoted. Leaving a server
+  restarts the filesystem if a downloaded pak had been promoted. `path` marks each downloaded
+  pak.
+- **Names and checksums**: a pak in `downloads/` keeps its plain name and game folder, so it is
+  reported as `baseEF/<name>` with the same checksums. Pure checks pass and nothing is
+  downloaded again.
+- **Serving**: a server that has a referenced pk3 only in its own `downloads/` serves it over UDP
+  as `baseEF/<name>.pk3` (`SV_OpenDownloadPak`).
+- pk3s you put in `baseEF/` yourself are unchanged: they load and override as before.
+
+**Existing downloads** in `baseEF/` (from earlier versions) are not moved or deleted. To get the
+new behavior for them, quit the game and move the downloaded pk3s from
+`~/Library/Application Support/EliteForce-MacOS/baseEF/` into `baseEF/downloads/` (create the
+folder). That includes `pakcmod-*.pk3` and any map pk3 you didn't install yourself. Leave
+`pak0.pk3`-`pak3.pk3` and the pk3s you added yourself where they are. Leftover `*.pk3.tmp` files in
+`baseEF/` are interrupted downloads and can be deleted.
+## Brightness settings and presets from cMod (2026-10-28)
+
+From cMod by Noah Metzger (Chomenor), ported into `renderervk` (Vulkan, no OpenGL) in our own
+style; credited in each spot in the code.
+
+- **cMod's brightness settings** (`CMOD_MAP_BRIGHTNESS_SETTINGS`, Noah Metzger): `r_overBrightFactor`
+  (fractional overbright; the fbo gamma pass's `obScale` takes it, `tr.identityLight` follows),
+  `r_mapLightingFactor`, `r_mapLightingGamma`, `r_mapLightingGammaComponent`,
+  `r_mapLightingClampMin/Max` (`R_SetMapLighting` / `R_ShiftMapLighting` in `tr_bsp.c`, applied to
+  lightmaps, vertex light and the light grid through `R_ColorShiftLightingBytes`). Integrated with
+  Quake3e's own handling: the two factors default to `0`, meaning "follow `r_overBrightBits` /
+  `r_mapOverBrightBits`", and settings the old integer shift can express keep using it, so the
+  default look is bit-for-bit the old one (`gfxinfo`/R_Init prints `MAP LIGHTING: ... (overbright bits)`).
+- **`r_textureGamma`** (`CMOD_TEXTURE_GAMMA`, Noah Metzger): gamma on textures at load, not lightmaps.
+- **Fractional `r_intensity`** (`CMOD_FRACTIONAL_INTENSITY`, Noah Metzger), used by two presets:
+  `1.1:0.5` scales only the lower half of the range. `r_intensity` lost its numeric range check
+  (it would reject the `:`); the value is clamped to 1..255 where it is used.
+- **Map auto-adjust** (`CMOD_MAP_AUTO_ADJUST`, Noah Metzger's `cmod_map_adjust.c`): before the
+  renderer starts for a map, `CL_MapAutoAdjust` (`cl_main.c`) looks the .bsp up in cMod's list of
+  known maps (by checksum) or checks it for 3+ kinds of Quake 3 items, and sets the ROM cvars
+  `r_autoMapLightingFactor`, `r_autoMapLightingGammaMod`, `r_autoOverBrightFactorMax/Shift`. EF's
+  own maps match neither. `cl_mapAutoAdjust 0` turns it off. cMod's Quake 3 environment-map mode
+  (`r_autoEnvMapMode`) and external-lightmap processing are not ported.
+- **Launcher**: a Brightness popup in Graphics: Standard (this port's look, the engine defaults)
+  and cMod's Plain, Full Contrast, Extra Bright and Full Bright templates (values from cMod's
+  `ui_video.c`). It reads the mode's config like the other graphics settings; a config that
+  matches none (the in-game Brightness slider moved, say) shows Custom and Play passes nothing.
+  Play passes `+set`s; if the 1024-char command line would overflow, they go to
+  `vsp_brightness.cfg` and `+exec` instead (then they apply from the first map on). Test hook:
+  `VOYAGERSP_TEST_LAUNCHER_BRIGHTNESS=standard|plain|contrast|bright|fullbright`.
+- **Tested**: hm_kln1 at default vs a cb80018 build (same within frame-to-frame noise), each preset
+  (engine `screenshot`, with `r_ext_supersample 1` so the capture includes the gamma pass), a test
+  copy of hm_kln1 with Quake 3 items added (auto-adjust on, reset on the next map), single player
+  voy3 at default (pixel-identical to cb80018) and Plain. No Quake 3 port is in the data folder.
+- **Note**: without `r_ext_supersample`, renderervk's `screenshot` reads the frame before the gamma
+  pass, so `r_gamma` and the overbright factor don't show in screenshots (unchanged, as before).
+## 2026-11-01: Adaptive packet duplication
+
+Our own feature (not from cMod). `client/cl_input.c`, `cl_adaptivePacketdup` (archived, default 1;
+0 is the old behavior). While packets are being lost, each client packet repeats the usercmds of more
+earlier packets, so a lost packet doesn't lose input. Client only, no protocol change: the server
+already skips usercmds it has seen and takes up to `MAX_PACKET_USERCMDS`. The effective count is
+local (`cl_packetdupEffective`, read only, not archived; `developer 1` prints each change with the
+estimates). `cl_packetdup` is the floor and is never written; 5 is the ceiling; the count is lowered
+if a packet would overflow 32 usercmds (low `cl_maxpackets`, high frame rate).
+
+- **Loss signals, over 8 s (1 s buckets), the higher one wins.** The client can't see outbound loss
+  directly. Inbound: `clc.netchan.dropped`, exact for server to client but only a proxy for client to
+  server. Outbound estimate: a snapshot's `ps.commandTime` names the newest usercmd the server ran;
+  if the packet sent after it is older than the recent minimum ping plus a margin (a client frame +
+  4 ms), it was lost. Weighted by the share of losses that margin leaves visible; not used when that
+  is under 25% (very high packet rates). Jitter can pass for loss, so this signal alone stops at 3.
+  An inbound run of n lost packets asks for n.
+- **Loss to count:** 1% 1, 3% 2, 8% 3, 15% 4, 25% 5. **Rises at once**, falls one step per 4 s, and
+  not while the loss would still ask for the value at half again as much (no flapping at a threshold).
+- **Not loss:** nothing is sampled outside `CA_ACTIVE` or for 1 s after it, after a 500 ms silence,
+  while following another player, or for a gap of a whole `PACKET_BACKUP`. Reset at each gamestate
+  and on disconnect. No effect on loopback (hosting and playing in one app) or in demos; single
+  player never reaches `CL_WritePacket` in play.
+- **`net_dropsim` drops incoming packets only, in whichever process sets it** (`NET_Event`): on the
+  client it tests the inbound signal; on the server (via rcon) it tests the outbound estimate.
+- **Measured** against an own dedicated server, turning and moving, 30 packets/s, payload bytes per
+  packet: no loss, dup 1, 31 B (936 B/s). Client 5%: dup 2-3, 40 B. Client 20%: dup 4-5, 59 B.
+  Client 30%: dup 5, 63 B (1.9 KB/s). Server 5%: dup 2-3, 37 B. Server 20%: dup 3, 49 B. After removing
+  loss it was back at the floor in about 20 s. `cl_adaptivePacketdup 0` at server 20%: dup 1, 31 B.
+  `cl_packetdup 3`: stays 3 without loss, 4 at 20%, back to 3, and the config still says 3. A map
+  change returned to the floor at once, with no rise from its gap. 15 packets/s at 250 fps with 40% loss: up to 31 usercmds
+  a packet, no `MAX_PACKET_USERCMDS`. No false rise in the no-loss phases (20-30 s each) on localhost.
+- **Not tested:** real internet loss and jitter (`net_dropsim` is random and uniform; bursts and
+  jitter are not simulated), a server other than this engine's (server code is unchanged), and
+  whether play feels better. Over a jittery connection without loss the outbound estimate may hold
+  the count above the floor: compare `cl_packetdupEffective` with `cl_packetdup` on a real server.
+
+## Host a Server: Tick Rate (2026-11-01)
+
+Config… > Server has a Tick Rate choice: Standard (20, the default) or High (40), saved with the
+other host settings. High adds `set sv_fps 40` to `vsp_server.cfg`, which covers dedicated hosting
+and Play on This Mac (a client of that server). Standard writes no `sv_fps` line. Single player
+stays at 20 even with High saved. Test hook: `VOYAGERSP_TEST_SERVER_TICKRATE`.
+
+`sv_minSnaps`, from cMod by Noah Metzger (Chomenor), makes this work for clients with the stock
+`snaps 20`. It also raises bots, whose `snaps` is 20. No cMod code was ported for this change.
+
+`sv_fps` is `CVAR_SYSTEMINFO` only under `ELITEFORCE` (Thilo Schulz's patch, no reason recorded), so
+clients mirror the value. No engine client code or QVM strings in the data folder read it (retail, `vm.pk3`,
+tfgpak, cMod), so this has no measured effect. The client keeps the mirrored value until it quits.
+
+Measured on loopback, one client, Mac server (msg/s, payload bytes/s; add 28 bytes per packet for IP/UDP):
+
+| Case | 20 | 40 |
+| --- | --- | --- |
+| `snaps 20`, 11 bots | 20/s | 40/s (`sv_minSnaps 0` control: 20/s) |
+| `snaps 100`, 11 bots | not run | 40/s |
+| Protocol 24 mode of our client, 11 bots | not run | 40/s |
+| 31 bots, `rate 25000`, following a bot, hm_voy1 | 1000-1700 B/s | 1950-2600 B/s |
+| Same, hm_kln1 | 1400-1800 B/s | 2400-3400 B/s, largest message 377 B |
+| Same, `rate 3000` | 15-19/s | 14-24/s (rate limited, no worse) |
+| Server CPU, 31 bots (one core = 100%) | 3.8% | 6.4% |
+| Jump peak / airtime samples, run speed | 46-47, 246 ups | 47, 248 ups |
+
+Map change, `map_restart 0` and `map_restart 3` keep 40/s with no errors. The real data folder's add-ons
+(symlinked read-only) also gave 40/s. Bot kills in 60 s (4 vs 7) are too few to compare.
+
+Known costs of 40:
+- The snapshot delta window is counted in packets (`PACKET_BACKUP - 3`), so it shrinks from about 1450 ms to
+  725 ms. Beyond that a client gets uncompressed snapshots. From code, not tested with real latency.
+- Stock cgame cosmetics, from cMod's comments, not observed: the scavenger primary shot appears closer to
+  the muzzle (cMod's `cg_ents.c` delays it) and empty-phaser effects depend on prediction length (cMod's
+  `cg_weapons.c` emulates a 50 ms cycle). Those fixes are in cgame, so the engine can't apply them to stock clients.
+
+Test gotcha: `sv_minSnaps` and `sv_lanForceRate` are `CVAR_ARCHIVE`, so a test value persists in
+`hmconfig_server.cfg` and affects later runs. A saved low `sv_minSnaps` would also cap High's benefit.
+
+Not tested: the retail Windows client, real latency or packet loss, several human clients, and feel.
+
+## Single player: pause keeps the sound, voy1 music, voice timers, cutscene skip (2026-11-07)
+
+Our own fixes (not from cMod).
+
+**Pause holds the sound instead of stopping it.** The SP bridge used to call `S_StopAllSounds` when
+the console, the pause menu or an in-game movie paused the sim, so the music and the current voice line
+were lost for good while the line's lip-sync and dialog timer kept running. Now `S_PauseGameSounds`
+(`snd_dma.c`, plus an OpenAL version) holds the channels playing when the pause starts and the music
+(raw stream 0): they aren't painted or refilled, and on resume their start positions and the music's
+buffered tail move forward by the paused time. Sounds started while paused (menu clicks, movie audio)
+play normally. The bridge drops the cgame's new sounds while paused, so the frozen frame can't start
+ambient blips. The voice timers count level time, which is frozen too. Holomatch never calls it.
+
+**voy1 bridge music.** `inGameCinematic` (`cl_cin.c`) also stopped all sounds, when the movie started
+and when it stopped. On the `Autosave - voy1` load the map's music starts, `st_01` (the captain's log)
+then killed it, and nothing restarted it until the script set the music again after `st_02`. In-game movies
+now pause the game's sounds and their audio has its own raw stream (`S_RAW_STREAM_CINEMATIC`), so the
+music resumes after the movie. Bink audio now waits in a FIFO in `bink_ff.c` and goes to the mixer only
+while the ring has room. A Bink file's audio starts about 0.8 s before its video, more than the ring holds,
+so it used to overflow and overwrite itself. This affects fullscreen movies too: no audio is dropped and the
+sound keeps time with the picture.
+
+**Voice timers and Munro's first line.** Every save renames `saves/current.sav` through `FS_Rename`,
+which called `S_ClearSoundBuffer` and killed every playing sound. The deferred autosave after a cutscene
+did this just as the next line started. `FS_Rename` no longer clears sounds in SP (Holomatch unchanged).
+The bridge drops its fake-voice timers when the level clock jumps (a load or transition) or sounds are stopped
+(`S_StopAllSoundsCount`). Mouths now move only while a voice plays.
+
+**Cutscene skip (Use Item / ENTER in a camera scene).** The game sets `skippingCinematic 1` and
+`timescale 100`. The bridge now scales its sim by timescale while skipping, up to 200 ticks or 12 ms of real time per frame
+(the rest carries over), and stops at once when the skip ends or the game queues a movie. Rendering
+calls are dropped and a black screen with five LCARS-orange dots is drawn. Game sounds stop at the
+start of the skip, but the music keeps playing. A movie, a load or new game (`SP_UnloadGame`) and a disconnect
+(`CL_Disconnect`) end the skip. In SP the engine clock ignores `timescale` (`Com_ModifyMsec`), so menus,
+console and movies always run in real time. Holomatch is unchanged. Enter outside a camera does what it did before.
+
+Tested (scratch HOME, developer log): console and pause menu mid-dialogue hold 2-3 channels and resume
+them, and the dialog waits line up exactly. The music holds across `st_01` and resumes. ENTER in the borg1 opening
+skips about 60 s of the scene in 0.3 s with the dots shown, and the game ends playable with `timescale` 1. ENTER in the voy1
+bridge skips to `st_02`. Voice timers drop on load and on the borg1->borg2 transition. A save mid-line keeps
+the line. A Holomatch local server game was unaffected. Not verified by ear: actual audio output and A/V sync of movies.
+## SP Level Start: Settle Frames, View Angles, Out-of-View Loops (2026-11-07)
+
+Three single-player start-of-level problems, all in the SP bridge (`EFAndroid-SP/app/jni/sp/sp_bridge.cpp`).
+
+**Settle frames.** Retail `SV_SpawnServer` runs three 100 ms game frames after `Init` and before any
+client connects (stock Q3 `sv_init.c`), and the client only enters the world after loading cgame, while the
+server keeps running. The bridge ran one frame and showed the first snapshot at once, so:
+- voy1 autosave: NPC `EV_PLAYER_TELEPORT_IN` events (fired at 1100) were still valid (300 ms) in the first
+  snapshots, and the crew visibly beamed in. The player also hung in the air.
+- New Game / borg transitions: the player was falling at the first snapshot (borg2: z 33 to 16 in 150 ms).
+
+Now `SP_SpawnServer` and eAUTO transitions run `SP_RunFrames(3)` after `Init`, and `SP_SettleClient(4)`
+runs four 50 ms ClientThink+RunFrame ticks after `ClientBegin` (with `cmd.weapon` matching `ps.weapon` so
+the weapon is not lowered) before the load screen goes. First snapshot is at 1500. eFULL saves skip the
+pre-client frames (the save already holds settled state). An eAUTO load keeps the save's `TIME` when it is
+later than the reset clock. The `level.time > 1000` gate in `g_target.cpp` is now always passed for fresh
+spawns, as in retail.
+
+**View angles.** `cl.viewangles` was never cleared on SP level changes (retail `CL_ClearState` zeroed it),
+so the previous level's mouse turn was added to the new spawn angles (borg2 faced -43 instead of -90).
+`SP_ResetViewAngles()` (`sp_integration.c`) clears it before `ClientBegin`.
+
+**Forcefield hum after the holodeck.** Retail only sent entities in the viewer's PVS; the bridge sends
+every entity, and cgame re-adds every snapshot entity's `loopSound` each frame, so holodeck's three
+`borgfieldhum` `target_speaker`s were heard from the corridor and turbolift. `BuildSnapshot` now zeroes
+`loopSound` (only) for linked, non-broadcast entities outside the viewpoint's PVS. The viewpoint is the
+cgame camera when one is active (`CG_GetCameraPos`, looked up by `dlsym` and exported from `efgame.exp` /
+`efgame.ver`), else the player's eye. No area test: the save `PRTS` chunk (areaportal state, numAreas²×4)
+is written as zeros and not restored, so area connectivity is wrong after loads. Full entity culling plus
+real `PRTS` save/restore is a possible follow-up. A loop seen only through a portal surface may be culled.
+
+Tested on Mac: New Game borg1, borg1 to borg2, voy1 autosave, eFULL loads (borg1, voy1), autosave reload,
+hum on/off between the sim room and corridor. Not tested: Android, by ear, the whole prologue played by hand.
+## SP display fixes: notify text, in-game video, Hor+ FOV, flares (2026-11-07)
+
+Our own fixes (not from cMod), from the SP player report.
+
+- **Debug text over subtitles.** Renderer diagnostics ("Prewarmed N pipelines", "VKDIAG: ...")
+  and the SP bridge's info logs (the autosave's `[EFSP] save: wrote saves/auto.sav ...`, the
+  spmap/efsptrans load lines) and the macOS File menu line now start with `[skipnotify]` (RTCW's
+  prefix, already handled in `CL_ConsolePrint`): console and `qconsole.log` only. `Com_Printf`
+  strips the prefix for the tty, redirects and the log. In `macos/android/log.h`,
+  `ANDROID_LOG_INFO` skips notify; warnings and errors still show. `SP_EndLoad`
+  (`sp/sp_integration.c`) now calls `Con_ClearNotify()`, as the stock `CL_InitCGame` does.
+- **In-game video.** `SCR_DrawScreenField` (`client/cl_scrn.c`) fills the screen black before an
+  `inGameCinematic` video, so on a wide screen it is 4:3 with black bars instead of a box over
+  the paused level and HUD (SP and Holomatch). Menu/startup videos are unchanged;
+  `cl_flexibleDisplay 4` still stretches.
+- **Hor+ FOV in SP.** `CG_CalcFOVFromX43` (`efgame/src/cgame/cg_view.cpp`) treats the FOV as the
+  4:3 value: same vertical FOV as 4:3, wider sides. Used for camera scenes (the opening crawl
+  pictures were losing ~22% of their height at 16:9) and for gameplay `cg_fov`/zoom, which
+  matches Holomatch (`cl_flexibleDisplay 2` already does Hor+ in `CG_R_RENDERSCENE`). At 4:3, and
+  with `cg_forceAspect 1`, nothing changes. Camera letterbox bars and the crawl scrolling off the
+  top are retail and kept.
+- **Light flares on.** `r_flares` defaults to 1. Once (`com_flaresDefault 1`, the same one-time
+  stamp pattern as `com_hmNetDefaults`), SP and Holomatch configs that still hold 0 get 1; turning
+  flares off later sticks.
+- **Tested** (1920x1080 and 1440x1080, scratch HOME): "Autosave - voy1" (captain's log video now
+  pillarboxed in black, no diagnostics at the top), New Game borg1 crawl (16:9 picture framing
+  matches 4:3), forward transition borg1 -> borg2 (clean first frame), `save auto` mid-level (the
+  save line stays in the log only), borg2 gameplay 16:9 vs 4:3 (same vertical view and gun size),
+  `inGameCinematic st_01` in SP and Holomatch (local server, hm_voy1), startup Activision video
+  (unchanged), the flares stamp (0 -> 1 once, a later 0 is kept). Flares cost about 0.3 ms per
+  frame in borg2 and 0.6 ms in hm_voy1 at 1080p (uncapped, `com_speeds`; noisy).
+- **Not tested**: the in-game options menus showing Light Flares On (they read `r_flares`, so
+  by reading the code), Holomatch's own UI, other SP camera scenes, 21:9 screens, and feel.

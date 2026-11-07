@@ -407,6 +407,7 @@ vm_t	*VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
 
 void	VM_Free( vm_t *vm );
 void	VM_Clear(void);
+void	VM_Strncpy( char *dst, const char *src, int length );	// for the VMs' strncpy syscalls
 void	VM_Forced_Unload_Start(void);
 void	VM_Forced_Unload_Done(void);
 vm_t	*VM_Restart(vm_t *vm, qboolean unpure);
@@ -718,6 +719,8 @@ long		FS_FOpenFileRead( const char *qpath, fileHandle_t *file, qboolean uniqueFI
 // file IO goes through FS_ReadFile, which Does The Right Thing already.
 
 int		FS_FileIsInPAK(const char *filename, int *pChecksum );
+int		FS_FileSource( const char *filename );
+// pk3 checksum or directory checksum the file would be read from now, 0 if not found
 // returns 1 if a file is in the PAK file, otherwise -1
 
 int		FS_Write( const void *buffer, int len, fileHandle_t f );

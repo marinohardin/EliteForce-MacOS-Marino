@@ -79,11 +79,29 @@ struct weaponinfo_s;
 #define BLERR_CANNOTLOADWEAPONCONFIG	12	//cannot load weapon config
 
 //action flags
+#ifdef ELITEFORCE
+// EF's game code (bots/botlib.h) has its own action flag values, which it reads back from
+// EA_GetInput; use the same ones or bot jump/crouch/alt-fire mismatch.
+// From cMod by Noah Metzger (Chomenor), CMOD_BOT_TWEAKS.
+#define ACTION_ATTACK			1
+#define ACTION_USE			2
+#define ACTION_RESPAWN			4
+#define ACTION_JUMP			8
+#define ACTION_MOVEUP			8
+#define ACTION_CROUCH			16
+#define ACTION_MOVEDOWN			16
+#define ACTION_MOVEFORWARD		32
+#define ACTION_MOVEBACK			64
+#define ACTION_MOVELEFT			128
+#define ACTION_MOVERIGHT		256
+#define ACTION_DELAYEDJUMP		512
+#define ACTION_TALK			1024
+#define ACTION_GESTURE			2048
+#define ACTION_WALK			4096
+#define ACTION_ALTATTACK		8192
+#else
 #define ACTION_ATTACK			0x00000001
 #define ACTION_USE			0x00000002
-#ifdef ELITEFORCE
-#define ACTION_ALTATTACK		0x00000004
-#endif
 #define ACTION_RESPAWN			0x00000008
 #define ACTION_JUMP			0x00000010
 #define ACTION_MOVEUP			0x00000020
@@ -103,6 +121,7 @@ struct weaponinfo_s;
 #define ACTION_GUARDBASE		0x01000000
 #define ACTION_PATROL			0x02000000
 #define ACTION_FOLLOWME			0x08000000
+#endif
 #define ACTION_JUMPEDLASTFRAME		0x10000000
 
 //the bot input, will be converted to a usercmd_t

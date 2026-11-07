@@ -38,8 +38,20 @@ void S_StopBackgroundTrack( void );
 void S_RawSamples(int stream, int samples, int rate, int width, int channels,
 				   const byte *data, float volume, int entityNum);
 
+// raw stream for movie audio (Bink and RoQ), apart from the music on stream 0 and VoIP
+// on 1..MAX_CLIENTS*2, so an in-game movie can play while the music is paused
+#define S_RAW_STREAM_CINEMATIC	( MAX_CLIENTS * 2 + 1 )
+
 // stop all sounds and the background track
 void S_StopAllSounds( void );
+int S_StopAllSoundsCount( void );	// times S_StopAllSounds has run (lets SP drop its voice timers)
+
+// Single player pause: hold the game's playing sounds and the music in place (not painted,
+// positions kept) and resume them where they were. Sounds started while held play normally.
+void S_PauseGameSounds( qboolean pause );
+// stop every sound effect and loop but leave the music and the raw streams playing (SP cutscene skip)
+void S_StopGameSounds( void );
+void S_ResetStaleSounds( void );	// on map load: unload sounds another mod/pk3 now replaces
 
 // all continuous looping sounds must be added before calling S_Update
 void S_ClearLoopingSounds( qboolean killall );

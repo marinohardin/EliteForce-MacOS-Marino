@@ -1371,7 +1371,9 @@ void CL_MapLoading( void ) {
 		SCR_UpdateScreen();
 	} else {
 		// clear nextmap so the cinematic shutdown doesn't execute it
-		Cvar_Set( "nextmap", "" );
+		// (single player only: in Holomatch it may hold the server's map rotation)
+		if ( !Com_Holomatch() )
+			Cvar_Set( "nextmap", "" );
 		CL_Disconnect( qtrue );
 		Q_strncpyz( clc.servername, "localhost", sizeof(clc.servername) );
 		clc.state = CA_CHALLENGING;		// so the connect screen is drawn
@@ -1505,6 +1507,13 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	SCR_StopCinematic ();
 	S_ClearSoundBuffer();
 
+	// single player: a camera-scene skip (skippingCinematic + timescale 100, set by the game) never
+	// outlives the level, e.g. quitting to the main menu from the pause menu mid-skip
+	if ( !Com_Holomatch() && Cvar_VariableIntegerValue( "skippingCinematic" ) ) {
+		Cvar_Set( "skippingCinematic", "0" );
+		Cvar_Set( "timescale", "1" );
+	}
+
 	// send a disconnect message to the server
 	// send it a few times in case one is dropped
 	if ( clc.state >= CA_CONNECTED ) {
@@ -1519,6 +1528,8 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	FS_PureServerSetReferencedPaks( "", "" );
 	
 	CL_ClearState ();
+
+	CL_AdaptivePacketdup_Reset();
 
 	// wipe the client connection
 	Com_Memset( &clc, 0, sizeof( clc ) );
@@ -1657,7 +1668,7 @@ If no response is received from the authorize server after two tries, the client
 in anyway.
 ===================
 */
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 void CL_RequestAuthorization( void ) {
 	char	nums[64];
 	int		i, j, l;
@@ -2267,6 +2278,9 @@ Called when all downloading has been completed
 void CL_DownloadsComplete( void ) {
 
 #ifdef USE_CURL
+	// the next map's downloads try HTTP again
+	cls.cURLFailed = qfalse;
+
 	// if we downloaded with cURL
 	if(clc.cURLUsed) { 
 		clc.cURLUsed = qfalse;
@@ -2409,7 +2423,12 @@ void CL_NextDownload(void)
 		else
 			s = localName + strlen(localName); // point at the nul byte
 #ifdef USE_CURL
-		if(!(cl_allowDownload->integer & DLF_NO_REDIRECT)) {
+		if(cls.cURLFailed &&
+			NET_CompareAdr(cls.cURLFailedServer, clc.serverAddress)) {
+			Com_Printf("HTTP download from this server failed, "
+				"using UDP\n");
+		}
+		else if(!(cl_allowDownload->integer & DLF_NO_REDIRECT)) {
 			if(clc.sv_allowDownload & DLF_NO_REDIRECT) {
 				Com_Printf("WARNING: server does not "
 					"allow download redirection "
@@ -2538,7 +2557,7 @@ void CL_CheckForResend( void ) {
 	switch ( clc.state ) {
 	case CA_CONNECTING:
 		// requesting a challenge .. IPv6 users always get in as authorize server supports no ipv6.
-#ifndef STANDALONE
+#if !defined(STANDALONE) && !defined(ELITEFORCE)	// EF's auth server is gone (from cMod by Noah Metzger (Chomenor), CMOD_DISABLE_AUTH_STUFF)
 		if (!com_standalone->integer && clc.serverAddress.type == NA_IP && !Sys_IsLANAddress( clc.serverAddress ) )
 			CL_RequestAuthorization();
 #endif
@@ -3073,6 +3092,7 @@ void CL_PacketEvent( netadr_t from, msg_t *msg ) {
 	if (!CL_Netchan_Process( &clc.netchan, msg) ) {
 		return;		// out of order, duplicated, etc
 	}
+	CL_AdaptivePacketdup_Inbound( clc.netchan.dropped );
 
 	// the header is different lengths for reliable and unreliable messages
 	headerBytes = msg->readcount;
@@ -3557,11 +3577,221 @@ void CL_WindowResized( int width, int height ) {
 }
 
 /*
+===============================================================================
+
+Map brightness auto-adjust
+
+From cMod by Noah Metzger (Chomenor) (cmod_map_adjust.c): maps ported to Elite Force
+from Quake 3 and other games often come out too bright or too dark, as those games
+used other lighting scales. Before the renderer starts for a map, this looks the map
+up in cMod's list of known maps (by checksum) or, failing that, checks it for Quake 3
+items, and sets the renderer's r_auto* cvars to correct it. The original EF maps
+match neither, so they look as they always did. cl_mapAutoAdjust 0 turns it off.
+
+===============================================================================
+*/
+
+typedef struct {
+	float	mapLightingFactor;		// multiplies r_mapLightingFactor
+	float	mapLightingGamma;		// added to r_mapLightingGamma
+	int		envMapMode;				// cMod's Quake 3 style environment maps (not used here)
+	float	overbrightFactorMax;	// caps r_overBrightFactor
+	float	overbrightFactorShift;	// added to r_overBrightFactor
+} mapAdjust_t;
+
+#define MAPADJUST_URBAN_TERROR	{ 0.5f, 0.0f, 1 }
+#define MAPADJUST_QUAKE3		{ 2.0f, 0.0f, 1 }
+
+// cMod's list (Noah Metzger): checksum of the .bsp, and its correction
+static const struct {
+	int			hash;
+	mapAdjust_t	adjust;
+} cl_mapAdjustList[] = {
+	{ -1864270671, { 1.0f, 0.0f, 1 } },		// matrix - quake-style environment map
+	{ 429256076, { 1.0f, 0.0f, 1 } },		// dangercity - quake-style environment map
+	{ 875359710, MAPADJUST_URBAN_TERROR },	// pokernight - urban terror lighting
+	{ 1006385614, { 0.6f, 0.0f, 1 } },		// 1upxmas - urban terror lighting
+	{ -443776329, MAPADJUST_URBAN_TERROR },	// crazychristmas - urban terror lighting
+	{ -768581189, MAPADJUST_URBAN_TERROR },	// ut4_terrorism4 - urban terror lighting
+	{ -1359736521, MAPADJUST_URBAN_TERROR },	// ef_turnpike - urban terror lighting
+	{ 1038626548, { 0.5f, 0.0f, 0 } },		// ctf_becks - darken
+	{ 2006033781, { 0.5f, 0.0f, 0 } },		// chickens - darken
+	{ 1948057473, { 1.0f, 0.0f, 0, 1.4f } },	// longgone - darken
+	{ -1571214409, { 0.7f, 0.0f, 0 } },		// otc - darken
+	{ -101413010, { 1.0f, 0.0f, 0, 1.5f } },	// bod_lunchroom - darken
+	{ -1316605387, { 1.0f, 0.0f, 0, 1.5f } },	// whitemeat - darken
+	{ 138603980, { 1.0f, 0.0f, 0, 1.5f } },	// ctf_crossroads_z - darken
+	{ -825917568, { 1.0f, 0.0f, 0, 1.5f } },	// pinballarena2 - darken
+	{ 1034758439, { 1.0f, 0.0f, 0, 1.4f } },	// pinballarena_ii - darken
+	{ -338180026, { 1.0f, 0.0f, 0, 1.5f } },	// ctf_akilo - darken
+	{ 1678180441, { 1.0f, 0.0f, 0, 1.5f } },	// ctf_akilo_f4g - darken
+	{ -389292666, { 1.0f, 0.0f, 0, 1.5f } },	// ctf_akilo2 - darken
+	{ -1510930769, { 1.0f, 0.0f, 0, 1.5f } },	// ctf_akilo3 - darken
+	{ -790481733, { 1.0f, 0.0f, 0, 1.5f } },	// pro_akilo2 - darken
+	{ 1262130506, { 1.0f, 0.0f, 0, 1.5f } },	// pro_akilo3 - darken
+	{ 519839263, { 1.0f, 0.0f, 0, 1.0f } },	// leafland (ef version) - darken
+	{ -658192787, { 1.0f, 0.0f, 0, 1.0f } },	// skunkysbitch - darken
+	{ 723156790, { 1.0f, 0.0f, 0, 1.0f } },	// danger_christmas - darken
+	{ 1599589538, { 1.0f, 0.0f, 0, 1.0f } },	// snowcity - darken
+	{ 1736560496, { 1.0f, 0.0f, 0, 1.1f } },	// ctf_gen_xmas - darken
+	{ -1446728862, { 1.0f, 0.0f, 0, 1.0f } },	// alamo_xmas - darken
+	{ 1205784165, { 1.0f, 0.0f, 0, 1.2f } },	// ctf_voy1_xmas - darken
+	{ -1886202170, { 1.0f, 0.0f, 0, 1.2f } },	// hm_cam_xmas - darken
+	{ 1701618430, { 1.0f, 0.0f, 0, 1.0f } },	// dm_ic (old version) - darken
+	{ 1818880400, { 1.0f, 0.0f, 0, 1.0f } },	// ctf_ic (old version) - darken
+	{ 2108385997, { 0.75f, 0.0f, 1 } },		// ef_abbey2 - darken
+	{ -1695979, { 0.5f, 0.0f, 0, 1.2f } },	// ef_algiers - darken
+	{ -424018281, { 0.9f, 0.0f, 0 } },		// ef_algiersroofs - darken
+	{ 1533134454, { 0.9f, 0.0f, 1, 1.3f } },	// ef_austria - darken
+	{ -2096164947, { 0.9f, 0.0f, 1, 1.3f } },	// ef_kingdom - darken
+	{ 1671051894, { 0.9f, 0.0f, 1, 1.3f } },	// rtcw_ice - darken
+	{ -1373847418, { 0.65f, 0.0f, 1 } },		// ef_jor5 - darken
+	{ -162049488, { 2.0f, 0.0f, 1, 1.0f } },	// perramses - darken
+	{ 900526117, { 2.0f, 0.0f, 1, 1.0f } },	// glwarfare - darken
+	{ 433214492, { 2.0f, 0.0f, 1, 1.0f } },	// goldmoon - darken
+	{ -1597710217, { 2.0f, 0.0f, 1, 1.0f } },	// landsoflore - darken
+	{ -482853512, { 2.0f, 0.0f, 1, 1.0f } },	// life-frag1 - darken
+	{ -1590487211, { 2.0f, 0.0f, 1, 1.0f } },	// sonicboil - darken
+	{ -1026364727, { 1.0f, 0.2f, 0, 1.2f } },	// sd6 - adjust
+	{ -1374186326, { 2.0f, 0.1f, 1 } },		// ut_subway - brighten
+	{ 610817057, { 1.0f, 0.2f, 0 } },		// ctf_twilight - brighten
+	{ -4369078, { 1.0f, 0.2f, 0 } },			// amenhotep - brighten
+	{ -301759510, { 1.0f, 0.3f, 0 } },		// anubis - brighten
+	{ 1831086714, { 1.0f, 0.2f, 0 } },		// heretic - brighten
+	{ 1535467701, { 2.0f, 0.1f, 1 } },		// summer - brighten
+	{ -169342235, { 2.0f, 0.5f, 1 } },		// winter - brighten
+	{ -834364908, { 2.0f, 0.5f, 1 } },		// ethora - brighten
+	{ -1862613250, { 2.0f, 0.5f, 1 } },		// goththang - brighten
+	{ -383639493, { 1.0f, 0.4f, 0 } },		// helmsdeep - brighten
+	{ -1201980974, { 2.5f, 0.5f, 0 } },		// ctf_kln4 - brighten
+	{ -993374657, { 2.0f, 0.0f, 0 } },		// ctf_finalhour - brighten
+	{ -1935206618, { 2.0f, 0.0f, 0 } },		// ctf_rg2_e - brighten
+	{ -485373179, { 2.0f, 0.0f, 0 } },		// ctf_rg2_h - brighten
+	{ -1267516348, MAPADJUST_QUAKE3 },		// leaks2 (ef version) - brighten
+	{ 1497862741, MAPADJUST_QUAKE3 },		// bal3dm3 (ef version) - brighten
+	{ 564640074, MAPADJUST_QUAKE3 },			// monsoon (ef version) - brighten
+	{ 998811160, { 1.0f, 0.0f, 0, 0.0f, 0.2f } },	// et_battery - increase obf
+	{ -1725880467, { 1.0f, 0.0f, 0, 0.0f, 0.2f } },	// et_batn - increase obf
+};
+
+static void CL_ApplyMapAdjust( const mapAdjust_t *a, const char *why ) {
+	Com_Printf( "Map brightness auto-adjust (%s):", why );
+	if ( a->mapLightingFactor != 1.0f ) {
+		Cvar_Set( "r_autoMapLightingFactor", va( "%g", a->mapLightingFactor ) );
+		Com_Printf( " r_autoMapLightingFactor %g", a->mapLightingFactor );
+	}
+	if ( a->mapLightingGamma != 0.0f ) {
+		Cvar_Set( "r_autoMapLightingGammaMod", va( "%g", a->mapLightingGamma ) );
+		Com_Printf( " r_autoMapLightingGammaMod %g", a->mapLightingGamma );
+	}
+	if ( a->overbrightFactorMax != 0.0f ) {
+		Cvar_Set( "r_autoOverBrightFactorMax", va( "%g", a->overbrightFactorMax ) );
+		Com_Printf( " r_autoOverBrightFactorMax %g", a->overbrightFactorMax );
+	}
+	if ( a->overbrightFactorShift != 0.0f ) {
+		Cvar_Set( "r_autoOverBrightFactorShift", va( "%g", a->overbrightFactorShift ) );
+		Com_Printf( " r_autoOverBrightFactorShift %g", a->overbrightFactorShift );
+	}
+	Com_Printf( "\n" );
+}
+
+// three or more kinds of Quake 3 items or weapons: a map made for Quake 3
+static qboolean CL_HasQuake3Items( char *entities ) {
+	static const char *q3Items[] = {
+		"item_health_small", "item_health", "item_health_large", "item_health_mega",
+		"weapon_shotgun", "weapon_rocketlauncher", "weapon_lightning", "weapon_plasmagun",
+		"weapon_bfg", "weapon_nailgun", "weapon_prox_launcher", "weapon_chaingun",
+		"ammo_shells", "ammo_bullets", "ammo_rockets", "ammo_lightning", "ammo_slugs",
+		"ammo_cells", "ammo_bfg", "ammo_nails", "ammo_mines", "ammo_belt",
+	};
+	qboolean seen[ARRAY_LEN( q3Items )] = { qfalse };
+	int i, kinds = 0;
+	char *token;
+
+	while ( 1 ) {
+		token = COM_ParseExt( &entities, qtrue );
+		if ( !*token || *token != '{' )
+			break;
+		while ( 1 ) {
+			token = COM_ParseExt( &entities, qtrue );
+			if ( !*token || *token == '}' )
+				break;
+			if ( !Q_stricmp( token, "classname" ) ) {
+				token = COM_ParseExt( &entities, qtrue );
+				for ( i = 0; i < ARRAY_LEN( q3Items ); i++ ) {
+					if ( !Q_stricmp( token, q3Items[i] ) ) {
+						seen[i] = qtrue;
+						break;
+					}
+				}
+			} else {
+				COM_ParseExt( &entities, qtrue );
+			}
+		}
+	}
+	for ( i = 0; i < ARRAY_LEN( q3Items ); i++ ) {
+		if ( seen[i] )
+			kinds++;
+	}
+	return kinds >= 3 ? qtrue : qfalse;
+}
+
+static void CL_MapAutoAdjust( const char *mapname ) {
+	static const mapAdjust_t quake3 = MAPADJUST_QUAKE3;
+	cvar_t *enabled = Cvar_Get( "cl_mapAutoAdjust", "1", CVAR_ARCHIVE );
+	byte *data = NULL;
+	int length, hash, i;
+
+	Cvar_SetDescription( enabled, "Correct the brightness of maps ported from Quake 3 and other games (from cMod)." );
+	Cvar_Get( "r_autoMapLightingFactor", "", CVAR_ROM );
+	Cvar_Get( "r_autoMapLightingGammaMod", "", CVAR_ROM );
+	Cvar_Get( "r_autoOverBrightFactorMax", "", CVAR_ROM );
+	Cvar_Get( "r_autoOverBrightFactorShift", "", CVAR_ROM );
+	Cvar_Set( "r_autoMapLightingFactor", "" );
+	Cvar_Set( "r_autoMapLightingGammaMod", "" );
+	Cvar_Set( "r_autoOverBrightFactorMax", "" );
+	Cvar_Set( "r_autoOverBrightFactorShift", "" );
+
+	if ( !enabled->integer || !mapname || !*mapname )
+		return;
+	length = FS_ReadFile( va( "maps/%s.bsp", mapname ), (void **)&data );
+	Com_DPrintf( "CL_MapAutoAdjust: maps/%s.bsp, %d bytes\n", mapname, length );
+	if ( !data )
+		return;
+	if ( length >= (int)sizeof( dheader_t ) ) {
+		const dheader_t *header = (const dheader_t *)data;
+		const int ofs = LittleLong( header->lumps[LUMP_ENTITIES].fileofs );
+		const int len = LittleLong( header->lumps[LUMP_ENTITIES].filelen );
+
+		hash = LittleLong( Com_BlockChecksum( data, length ) );
+		for ( i = 0; i < ARRAY_LEN( cl_mapAdjustList ); i++ ) {
+			if ( cl_mapAdjustList[i].hash == hash ) {
+				CL_ApplyMapAdjust( &cl_mapAdjustList[i].adjust, "known map" );
+				break;
+			}
+		}
+		if ( i == ARRAY_LEN( cl_mapAdjustList ) && ofs >= 0 && len >= 0 && ofs <= length && len <= length - ofs ) {
+			char *entities = Z_Malloc( len + 1 );
+			Com_Memcpy( entities, data + ofs, len );
+			entities[len] = '\0';
+			if ( CL_HasQuake3Items( entities ) )
+				CL_ApplyMapAdjust( &quake3, "Quake 3 items" );
+			Z_Free( entities );
+		}
+	}
+	FS_FreeFile( data );
+}
+
+/*
 ============
 CL_InitRenderer
 ============
 */
 void CL_InitRenderer( void ) {
+	// From cMod by Noah Metzger (Chomenor): correct maps ported from other games
+	// (based on cl_cgame.c's CL_InitCGame)
+	CL_MapAutoAdjust( Info_ValueForKey( cl.gameState.stringData + cl.gameState.stringOffsets[CS_SERVERINFO], "mapname" ) );
+
 	// this sets up the renderer and calls R_Init
 	re.BeginRegistration( &cls.glconfig );
 
@@ -3620,6 +3850,11 @@ void CL_StartHunkUsers( qboolean rendererOnly ) {
 
 	if ( rendererOnly ) {
 		return;
+	}
+
+	// a map load (maybe of another mod) is the time to drop stale cached sounds
+	if ( cls.soundStarted ) {
+		S_ResetStaleSounds();
 	}
 
 	if ( !cls.soundStarted ) {
@@ -4248,6 +4483,7 @@ void CL_Init( void ) {
 	cl_maxpackets = Cvar_Get ("cl_maxpackets", "30", CVAR_ARCHIVE );
 #endif
 	cl_packetdup = Cvar_Get ("cl_packetdup", "1", CVAR_ARCHIVE );
+	CL_AdaptivePacketdup_Init();
 
 	cl_run = Cvar_Get ("cl_run", "1", CVAR_ARCHIVE);
 	cl_sensitivity = Cvar_Get ("sensitivity", "5", CVAR_ARCHIVE);

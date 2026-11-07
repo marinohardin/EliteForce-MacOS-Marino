@@ -176,7 +176,11 @@ void SP_BeginLoad(const char* map){
     g_spLoading = 1;
     Q_strncpyz(g_spLoadMap, map ? map : "", sizeof(g_spLoadMap));
 }
-void SP_EndLoad(void){ g_spLoading = 0; }
+// The stock client clears the notify lines once cgame init is done (CL_InitCGame, cl_cgame.c);
+// the SP path inits its own cgame, so clear them here. Otherwise every line printed during the
+// load stays over the first seconds of the level (and its subtitles) for con_notifytime.
+extern void Con_ClearNotify( void );
+void SP_EndLoad(void){ g_spLoading = 0; Con_ClearNotify(); }
 int  SP_IsLoading(void){ return g_spLoading; }
 // SP_DrawLoadingScreen() is defined lower down, after client.h is included (it needs `cls`).
 
@@ -215,14 +219,14 @@ extern qboolean SP_StartClient(void);
 static void SP_Map_f(void){
     const char* map = (Cmd_Argc() > 1) ? Cmd_Argv(1) : "borg1";
     SP_BeginLoad(map);   // hold the SP loading screen through efsp -> SP_StartClient (covers direct `efsp`)
-    Com_Printf("spmap: loading SP game module + map '%s'\n", map);
+    Com_Printf("[skipnotify]spmap: loading SP game module + map '%s'\n", map);
     // Recovery on every failure path: otherwise SP_BeginLoad left g_spLoading=1 and the engine sits on the
     // levelshot forever (the watchdog can't see a stuck loading screen). SP_AbortToMenu clears it + menu.
     if(!SP_LoadGame("libefgame.so")){ Com_Printf("spmap: failed to load libefgame.so\n"); SP_AbortToMenu(); return; }
     if(!SP_SpawnServer(map)){ Com_Printf("spmap: SpawnServer failed\n"); SP_AbortToMenu(); return; }
     if(!SP_StartClient()){ Com_Printf("spmap: StartClient failed\n"); SP_AbortToMenu(); return; }
     if( Cvar_VariableIntegerValue("sp_dropHM") ) SP_DropHM_Activate();   // no HM connect drove clc.state; SP owns it
-    Com_Printf("spmap: SP map '%s' loaded — switching to SP render mode\n", map);
+    Com_Printf("[skipnotify]spmap: SP map '%s' loaded — switching to SP render mode\n", map);
 }
 
 // The SP UI's "New Game" emits a bare `map <first>` (ui_game.cpp ID_STARTNEWGAME ->
@@ -236,7 +240,7 @@ static void SP_MapWrap_f(void){
     const char* map = (Cmd_Argc() > 1) ? Cmd_Argv(1) : "borg1";
     char buf[256];
     SP_BeginLoad(map);   // show the SP levelshot for the whole spmap->efsp window (kills the HM splash)
-    Com_Printf("SP map '%s': spawning world + SP game\n", map);
+    Com_Printf("[skipnotify]SP map '%s': spawning world + SP game\n", map);
     if( Cvar_VariableIntegerValue("sp_dropHM") )
         Com_sprintf(buf, sizeof(buf), "efsp %s\n", map);                       // Route b: SP loads its own world; no HM server/cgame
     else
@@ -267,7 +271,7 @@ static void SP_FinishTrans_f(void){
     // so it still falls through to the abort/recovery + watchdog path exactly as before.
     { extern int SP_LoadPending(void); extern int SP_IsActive(void);
       if( !SP_LoadPending() && SP_IsActive() ){
-          Com_Printf("EFSP: redundant efsptrans (transition already completed) -> no-op\n");
+          Com_Printf("[skipnotify]EFSP: redundant efsptrans (transition already completed) -> no-op\n");
           return;
       } }
     if( SP_FinishTransition() ){
@@ -502,6 +506,13 @@ void SP_LoadWatchdog(void){
 }
 
 // ---- input: hand the SP loop the engine's current usercmd (reuses HM touch/keys) ----
+// Called by the bridge right before ge->ClientBegin on every level start (New Game, transition, load). Retail
+// cleared the client state on each new gamestate (CL_ClearState zeroes cl.viewangles), so the first usercmd's
+// angles were 0, the same angles ClientBegin computes the player's delta_angles from. The port never cleared
+// them: whatever the mouse had turned on the previous level was added to the new spawn angles, so after a
+// transition the view started rotated away from where the level designer pointed it.
+void SP_ResetViewAngles(void){ VectorClear(cl.viewangles); }
+
 void SPR_GetLatestCmd(int* angles, signed char* fwd, signed char* side, signed char* up, int* buttons){
     usercmd_t* c = &cl.cmds[ cl.cmdNumber & 63 ];   // CMD_BACKUP-1
     angles[0]=c->angles[0]; angles[1]=c->angles[1]; angles[2]=c->angles[2];

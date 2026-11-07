@@ -877,6 +877,11 @@ nextInstruction2:
 			((float *) opStack)[opStackOfs] = (float) opStack[opStackOfs];
 			goto nextInstruction;
 		case OP_CVFI:
+			// Q_ftol rounds to nearest (lrintf on arm64, cvtss2si on x86 under
+			// ELITEFORCE), as the original x87 engine did. Elite Force's physics
+			// rely on it (SnapVector in bg_pmove); truncating lowers jumps and
+			// speeds. cMod's VM_tonextint does the same, except it rounds exact
+			// .5 away from zero.
 			opStack[opStackOfs] = Q_ftol(((float *) opStack)[opStackOfs]);
 			goto nextInstruction;
 		case OP_SEX8:

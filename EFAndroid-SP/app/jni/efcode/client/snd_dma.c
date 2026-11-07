@@ -87,6 +87,22 @@ static	channel_t		*freelist = NULL;
 int						s_rawend[MAX_RAW_STREAMS];
 portable_samplepair_t s_rawsamples[MAX_RAW_STREAMS][MAX_RAW_SAMPLES];
 
+/*
+Single player pause (S_PauseGameSounds). The SP bridge freezes its sim while the console, the
+in-game menu or an in-game movie is up. Instead of stopping every sound (which lost the music and
+the current voice line for good), the mixer holds the game's sounds: channels playing when the
+pause starts are marked paused and not painted, and the music (raw stream 0) is neither painted
+nor refilled. On resume every held channel's startSample and the music's buffered tail move
+forward by the paused time, so they carry on from where they stopped. Sounds started while paused
+(menu clicks, the movie's own audio stream) play normally. The pause point is taken at the first
+mix after the request, from s_paintedtime, which S_GetSoundtime resets to just past the DMA read
+position every mix (so nothing mixed ahead of the pause is lost).
+*/
+static qboolean	s_gamePauseWanted;		// requested by S_PauseGameSounds
+qboolean		s_gameSoundsHeld;		// applied: held channels + music are frozen
+static int		s_gamePauseStart;		// s_paintedtime when the hold began
+static qboolean	s_gamePauseMusicReset;	// music was stopped/restarted while held: don't rebase it
+
 
 // ====================================================================
 // User-setable variables
@@ -442,6 +458,49 @@ void S_memoryLoad(sfx_t	*sfx) {
 		sfx->defaultSound = qtrue;
 	}
 	sfx->inMemory = qtrue;
+	sfx->soundSource = S_CodecSoundSource( sfx->soundName );
+}
+
+/*
+=================
+S_Base_ResetStaleSounds
+
+From cMod by Noah Metzger (Chomenor), CMOD_SOUND_RESET: sounds stay loaded from map
+to map, so after a mod or pk3 change you could keep hearing the previous one's version.
+Unload the sounds that would now come from a different file; they load again when next used.
+=================
+*/
+void S_Base_ResetStaleSounds( void ) {
+	int			i, resetCount = 0;
+	sfx_t		*sfx;
+	sndBuffer	*buffer, *nbuffer;
+
+	if ( !s_soundStarted ) {
+		return;
+	}
+
+	for ( i = 0; i < s_numSfx; i++ ) {
+		sfx = &s_knownSfx[i];
+		if ( !sfx->soundName[0] || !sfx->inMemory || !sfx->soundData ||
+				S_CodecSoundSource( sfx->soundName ) == sfx->soundSource ) {
+			continue;
+		}
+
+		Com_DPrintf( "Resetting sound %s\n", sfx->soundName );
+		buffer = sfx->soundData;
+		while ( buffer != NULL ) {
+			nbuffer = buffer->next;
+			SND_free( buffer );
+			buffer = nbuffer;
+		}
+		sfx->inMemory = qfalse;
+		sfx->soundData = NULL;
+		resetCount++;
+	}
+
+	if ( resetCount ) {
+		Com_Printf( "Reloading %i sounds changed by the filesystem\n", resetCount );
+	}
 }
 
 //=============================================================================
@@ -591,9 +650,10 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 //	Com_Printf("playing %s\n", sfx->soundName);
 	// pick a channel to play on
 
-	allowed = 4;
+	// twice id's limits, from cMod by Noah Metzger (Chomenor), CMOD_CONCURRENT_SOUNDS: less stutter on rapid-fire weapons
+	allowed = 8;
 	if (entityNum == listener_number) {
-		allowed = 8;
+		allowed = 16;
 	}
 
 	fullVolume = qfalse;
@@ -689,6 +749,7 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 	ch->rightvol = ch->master_vol;		// unless the game isn't running
 	ch->doppler = qfalse;
 	ch->fullVolume = fullVolume;
+	ch->paused = qfalse;	// a channel taken over while paused belongs to the new sound
 }
 
 /*
@@ -757,6 +818,10 @@ void S_Base_ClearSoundBuffer( void ) {
 	S_ChannelSetup();
 
 	Com_Memset(s_rawend, '\0', sizeof (s_rawend));
+	// nothing is held after a clear; SP asks again on its next paused frame (so leaving SP from
+	// the pause menu doesn't hold the main menu's music)
+	s_gameSoundsHeld = qfalse;
+	s_gamePauseWanted = qfalse;
 
 	if (dma.samplebits == 8)
 		clear = 0x80;
@@ -1234,7 +1299,7 @@ qboolean S_ScanChannelStarts( void ) {
 	ch = s_channels;
 
 	for (i=0; i<MAX_CHANNELS ; i++, ch++) {
-		if ( !ch->thesfx ) {
+		if ( !ch->thesfx || ch->paused ) {
 			continue;
 		}
 		// if this channel was just started this frame,
@@ -1348,6 +1413,92 @@ void S_GetSoundtime(void)
 }
 
 
+/*
+============
+S_ApplyGamePause
+
+Starts or ends the hold that S_PauseGameSounds asked for, at the current mix position.
+============
+*/
+static void S_ApplyGamePause( void ) {
+	channel_t	*ch;
+	int			i, held;
+
+	if ( s_gamePauseWanted && !s_gameSoundsHeld ) {
+		held = 0;
+		for ( i = 0, ch = s_channels; i < MAX_CHANNELS; i++, ch++ ) {
+			if ( ch->thesfx ) {
+				ch->paused = qtrue;
+				held++;
+			}
+		}
+		s_gameSoundsHeld = qtrue;
+		s_gamePauseStart = s_paintedtime;
+		s_gamePauseMusicReset = qfalse;
+		Com_DPrintf( "S_PauseGameSounds: holding %i channels, %i music samples buffered\n",
+			held, s_rawend[0] > s_paintedtime ? s_rawend[0] - s_paintedtime : 0 );
+	} else if ( !s_gamePauseWanted && s_gameSoundsHeld ) {
+		int delta = s_paintedtime - s_gamePauseStart;
+
+		held = 0;
+		for ( i = 0, ch = s_channels; i < MAX_CHANNELS; i++, ch++ ) {
+			if ( !ch->paused ) {
+				continue;
+			}
+			ch->paused = qfalse;
+			if ( ch->thesfx && ch->startSample != START_SAMPLE_IMMEDIATE ) {
+				ch->startSample += delta;
+			}
+			held++;
+		}
+
+		// move the music's unplayed buffer to the resume point (the ring is indexed by sample time)
+		if ( !s_gamePauseMusicReset && s_rawend[0] > s_gamePauseStart && delta > 0 ) {
+			static portable_samplepair_t tail[MAX_RAW_SAMPLES];
+			int n = s_rawend[0] - s_gamePauseStart;
+
+			if ( n > MAX_RAW_SAMPLES ) {
+				n = MAX_RAW_SAMPLES;
+			}
+			for ( i = 0; i < n; i++ ) {
+				tail[i] = s_rawsamples[0][( s_gamePauseStart + i ) & ( MAX_RAW_SAMPLES - 1 )];
+			}
+			for ( i = 0; i < n; i++ ) {
+				s_rawsamples[0][( s_paintedtime + i ) & ( MAX_RAW_SAMPLES - 1 )] = tail[i];
+			}
+			s_rawend[0] = s_paintedtime + n;
+		}
+		Com_DPrintf( "S_PauseGameSounds: resumed %i channels after %i samples\n", held, delta );
+		s_gameSoundsHeld = qfalse;
+	}
+}
+
+/*
+============
+S_Base_PauseGameSounds
+============
+*/
+void S_Base_PauseGameSounds( qboolean pause ) {
+	s_gamePauseWanted = pause ? qtrue : qfalse;
+}
+
+/*
+============
+S_Base_StopGameSounds
+
+Every sound effect and loop stops; the music and the raw streams play on.
+============
+*/
+void S_Base_StopGameSounds( void ) {
+	if ( !s_soundStarted ) {
+		return;
+	}
+	Com_Memset( loopSounds, 0, MAX_GENTITIES*sizeof(loopSound_t) );
+	Com_Memset( loop_channels, 0, MAX_CHANNELS*sizeof(channel_t) );
+	numLoopChannels = 0;
+	S_ChannelSetup();
+}
+
 void S_Update_(void) {
 	unsigned        endtime;
 	static			float	lastTime = 0.0f;
@@ -1363,6 +1514,8 @@ void S_Update_(void) {
 
 	// Updates s_soundtime
 	S_GetSoundtime();
+
+	S_ApplyGamePause();
 
 	if (s_soundtime == ot) {
 		return;
@@ -1425,6 +1578,8 @@ S_StopBackgroundTrack
 void S_Base_StopBackgroundTrack( void ) {
 	if(!s_backgroundStream)
 		return;
+	if ( s_gameSoundsHeld )
+		s_gamePauseMusicReset = qtrue;
 	S_CodecCloseStream(s_backgroundStream);
 	s_backgroundStream = NULL;
 	s_rawend[0] = 0;
@@ -1480,6 +1635,11 @@ void S_Base_StartBackgroundTrack( const char *intro, const char *loop ){
 
 	Q_strncpyz( s_backgroundLoop, loop, sizeof( s_backgroundLoop ) );
 
+	if ( s_gameSoundsHeld ) {
+		// a new track while paused starts fresh on resume, not from the old track's buffer
+		s_gamePauseMusicReset = qtrue;
+		s_rawend[0] = 0;
+	}
 	S_OpenBackgroundStream( intro );
 }
 
@@ -1496,6 +1656,11 @@ void S_UpdateBackgroundTrack( void ) {
 	int		r;
 
 	if(!s_backgroundStream) {
+		return;
+	}
+
+	// paused (S_PauseGameSounds): keep the buffered music where it is
+	if ( s_gameSoundsHeld ) {
 		return;
 	}
 
@@ -1667,6 +1832,8 @@ qboolean S_Base_Init( soundInterface_t *si ) {
 	si->ClearSoundBuffer = S_Base_ClearSoundBuffer;
 	si->SoundInfo = S_Base_SoundInfo;
 	si->SoundList = S_Base_SoundList;
+	si->PauseGameSounds = S_Base_PauseGameSounds;
+	si->StopGameSounds = S_Base_StopGameSounds;
 
 #ifdef USE_VOIP
 	si->StartCapture = S_Base_StartCapture;

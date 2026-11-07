@@ -1290,9 +1290,14 @@ typedef struct {
 
 	viewParms_t				viewParms;
 
-	float					identityLight;		// 1.0 / ( 1 << overbrightBits )
+	float					identityLight;		// 1.0 / overbrightFactor
 	int						identityLightByte;	// identityLight * 255
 	int						overbrightBits;		// r_overbrightBits->integer, but set to 0 if no hw gamma
+	// From cMod by Noah Metzger (Chomenor): fractional overbright and map lighting settings
+	float					overbrightFactor;	// r_overBrightFactor, or 1 << overbrightBits when that is unset
+	float					mapLightingFactor;	// r_mapLightingFactor (or 1 << r_mapOverBrightBits), with map auto-adjust
+	float					mapLightingGamma;	// r_mapLightingGamma, with map auto-adjust
+	qboolean				mapLightingLegacy;	// lightmaps go through the original integer shift (default settings)
 
 	orientationr_t			or;					// for current entity
 
@@ -1480,6 +1485,19 @@ extern	cvar_t	*r_overBrightBits;
 extern	cvar_t	*r_mapOverBrightBits;
 extern	cvar_t	*r_mapGreyScale;
 
+// From cMod by Noah Metzger (Chomenor): brightness settings
+extern	cvar_t	*r_overBrightFactor;
+extern	cvar_t	*r_mapLightingFactor;
+extern	cvar_t	*r_mapLightingGamma;
+extern	cvar_t	*r_mapLightingGammaComponent;
+extern	cvar_t	*r_mapLightingClampMin;
+extern	cvar_t	*r_mapLightingClampMax;
+extern	cvar_t	*r_textureGamma;
+extern	cvar_t	*r_autoMapLightingFactor;
+extern	cvar_t	*r_autoMapLightingGammaMod;
+extern	cvar_t	*r_autoOverBrightFactorMax;
+extern	cvar_t	*r_autoOverBrightFactorShift;
+
 extern	cvar_t	*r_debugSurface;
 extern	cvar_t	*r_simpleMipMaps;
 
@@ -1605,6 +1623,7 @@ void		R_Init( void );
 void		R_SetColorMappings( void );
 void		R_GammaCorrect( byte *buffer, int bufSize );
 void		R_ColorShiftLightingBytes( const byte in[4], byte out[4], qboolean hasAlpha );
+void		R_SetMapLighting( void );
 
 void	R_ImageList_f( void );
 void	R_SkinList_f( void );

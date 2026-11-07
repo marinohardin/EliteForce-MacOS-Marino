@@ -13,7 +13,7 @@ project(efsp_macos C CXX OBJC)
 # ---------------------------------------------------------------------------
 
 # the app's version (make-app.sh passes its VERSION), shown as "Elite Force for Mac <version>"
-set(EF_APP_VERSION "1.2.3" CACHE STRING "App version shown in the console and to server browsers")
+set(EF_APP_VERSION "1.3.0" CACHE STRING "App version shown in the console and to server browsers")
 option(EF_BINK "Bink cinematics via Homebrew FFmpeg (OFF = stub, no movies)" ON)
 option(EF_VM_JIT "aarch64 QVM JIT (needs MAP_JIT work on macOS)" OFF)
 
@@ -64,7 +64,7 @@ set(CLIENT_SRC
   ${EF}/client/cl_cgame.c   ${EF}/client/cl_cin.c     ${EF}/client/cl_console.c
   ${EF}/client/cl_input.c   ${EF}/client/cl_keys.c    ${EF}/client/cl_main.c
   ${EF}/client/cl_net_chan.c ${EF}/client/cl_parse.c  ${EF}/client/cl_scrn.c
-  ${EF}/client/cl_ui.c      ${EF}/client/cl_avi.c
+  ${EF}/client/cl_ui.c      ${EF}/client/cl_avi.c     ${EF}/client/cl_curl.c
   ${EF}/client/snd_adpcm.c  ${EF}/client/snd_dma.c    ${EF}/client/snd_mem.c
   ${EF}/client/snd_mix.c    ${EF}/client/snd_wavelet.c
   ${EF}/client/snd_main.c   ${EF}/client/snd_codec.c  ${EF}/client/snd_codec_wav.c
@@ -150,6 +150,7 @@ target_compile_definitions(efsp PRIVATE
   USE_VULKAN USE_VULKAN_API
   USE_FLEXIBLE_DISPLAY=1
   USE_OPENAL USE_OPENAL_DLOPEN
+  USE_CURL USE_SYSTEM_CURL	# HTTP map downloads (sv_dlURL) via the macOS system libcurl
   PRODUCT_VERSION="1.40"
   EF_APP_VERSION="${EF_APP_VERSION}"
   ARCH_STRING="arm64"
@@ -164,7 +165,8 @@ target_compile_options(efsp PRIVATE
 
 target_link_libraries(efsp PRIVATE sp_game_bridge PkgConfig::SDL2
   "-framework Cocoa" "-framework IOKit" "-framework WebKit" dl m
-  lzma)		# the system's liblzma, for GOG installers (sys_osx_gog.c)
+  lzma		# the system's liblzma, for GOG installers (sys_osx_gog.c)
+  curl)		# the system's libcurl (/usr/lib/libcurl.4.dylib), for HTTP map downloads
 if(EF_BINK)
   target_link_libraries(efsp PRIVATE PkgConfig::FFMPEG)
 endif()

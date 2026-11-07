@@ -41,7 +41,15 @@ extern void S_RawSamples( int stream, int samples, int rate, int width, int chan
                           const byte *data, float volume, int entityNum );
 extern void S_Update( void );        // snd_main.c — refresh the DMA consume clock
 extern int  s_soundtime;             // snd_dma.c — DMA consume clock (sample pairs)
-extern int  s_rawend[];              // snd_dma.c — raw stream write head; [0] = our stream
+extern int  s_rawend[];              // snd_dma.c — raw stream write head; [BINK_STREAM] = our stream
+// The movie's audio has its own raw stream (S_RAW_STREAM_CINEMATIC in client/snd_public.h), apart
+// from the music on stream 0: an in-game movie pauses the SP game's sounds and music
+// (S_PauseGameSounds) and they resume after it, so the two must not share a buffer.
+#ifdef MAX_CLIENTS
+#define BINK_STREAM ( MAX_CLIENTS * 2 + 1 )
+#else
+#define BINK_STREAM 0
+#endif
 
 // Hold the raw-audio ring this far ahead of the DMA clock (in sample pairs) so a
 // brief scheduling stall never starves the mixer (which would otherwise snap
@@ -50,6 +58,15 @@ extern int  s_rawend[];              // snd_dma.c — raw stream write head; [0]
 // that the video lead it implies keeps A/V (lip) sync within tolerance, and well
 // under MAX_RAW_SAMPLES (16384). ~6000 pairs ≈ 125ms @48k / 136ms @44.1k.
 #define BINK_RAW_CUSHION 6000
+// A Bink file stores about 0.8 s of audio ahead of the matching video (its audio pre-roll), more than
+// the mixer's raw ring holds (MAX_RAW_SAMPLES = 16384 pairs, 0.74 s at 22 kHz). Writing it all at once
+// overflowed the ring, which wrapped and overwrote unplayed audio, so the soundtrack ran ahead of the
+// picture (the S_StopAllSounds that used to follow an in-game movie's start dropped the pre-roll
+// instead, losing the first 0.8 s). Decoded audio now waits in a per-movie FIFO and is fed to the
+// ring only while the ring is below BINK_RAW_LIMIT, so nothing is lost and audio keeps time with video.
+#define BINK_RAW_LIMIT   12000
+#define BINK_FIFO_FRAMES ( 48000 * 4 )   // 4 s of sample frames at up to 48 kHz
+#define BINK_FEED_FRAMES 1024            // per S_RawSamples call (bounds the overshoot past the limit)
 
 #define MAX_BINK_HANDLES 16
 #define AVIO_BUFSZ       (32*1024)
@@ -77,6 +94,9 @@ typedef struct {
     long             framesDecoded;  // # video frames produced
     int              eof;
     int              audioPrimed;    // s_rawend aligned to the DMA clock once at start
+    int16_t         *afifo;          // decoded S16 audio waiting for room in the raw ring
+    int              afifoHead, afifoLen;   // in sample frames (afifoHead..afifoLen pending)
+    int              afifoCh, afifoRate;
 } binkHandle_t;
 
 static binkHandle_t g_bink[MAX_BINK_HANDLES];
@@ -119,6 +139,7 @@ static void bink_free( binkHandle_t *b ) {
     if ( b->fmt )    avformat_close_input( &b->fmt );   // also frees avio->buffer? no
     if ( b->avio )   { av_freep( &b->avio->buffer ); avio_context_free( &b->avio ); }
     if ( b->rgba )   { free( b->rgba ); b->rgba = NULL; }
+    if ( b->afifo )  { free( b->afifo ); b->afifo = NULL; }
     if ( b->fh )     { FS_FCloseFile( b->fh ); b->fh = 0; }
     memset( b, 0, sizeof( *b ) );
 }
@@ -223,7 +244,39 @@ static void bink_emit_audio( binkHandle_t *b ) {
             s16[i] = (int16_t)( s > 32767 ? 32767 : s < -32768 ? -32768 : s );
         }
     }
-    S_RawSamples( 0, ns, b->adec->sample_rate, 2, ch, (const byte *)s16, 1.0f, -1 );
+    // queue it; bink_feed_audio passes it on as the ring has room
+    if ( ch > 2 ) return;                         // S_RawSamples takes mono or stereo
+    if ( b->afifoLen > b->afifoHead && ( ch != b->afifoCh || b->adec->sample_rate != b->afifoRate ) )
+        return;                                   // format change mid-stream: never seen in EF movies
+    if ( !b->afifo ) {
+        b->afifo = (int16_t *)malloc( sizeof( int16_t ) * 2 * BINK_FIFO_FRAMES );
+        if ( !b->afifo ) return;
+    }
+    b->afifoCh = ch; b->afifoRate = b->adec->sample_rate;
+    if ( b->afifoHead > 0 ) {                     // compact
+        int pending = b->afifoLen - b->afifoHead;
+        memmove( b->afifo, b->afifo + b->afifoHead * ch, sizeof( int16_t ) * pending * ch );
+        b->afifoHead = 0; b->afifoLen = pending;
+    }
+    if ( b->afifoLen + ns > BINK_FIFO_FRAMES ) {
+        BLOG_DEV( "bink: audio FIFO full, dropping %d frames\n", ns );
+        return;
+    }
+    memcpy( b->afifo + b->afifoLen * ch, s16, sizeof( int16_t ) * ns * ch );
+    b->afifoLen += ns;
+}
+
+// pass queued audio to the mixer's raw ring while it is below BINK_RAW_LIMIT pairs ahead of playback
+static void bink_feed_audio( binkHandle_t *b ) {
+    while ( b->afifo && b->afifoLen > b->afifoHead
+            && ( s_rawend[BINK_STREAM] - s_soundtime ) < BINK_RAW_LIMIT ) {
+        int n = b->afifoLen - b->afifoHead;
+        if ( n > BINK_FEED_FRAMES ) n = BINK_FEED_FRAMES;
+        S_RawSamples( BINK_STREAM, n, b->afifoRate, 2, b->afifoCh,
+                      (const byte *)( b->afifo + b->afifoHead * b->afifoCh ), 1.0f, -1 );
+        b->afifoHead += n;
+    }
+    if ( b->afifoHead >= b->afifoLen ) b->afifoHead = b->afifoLen = 0;
 }
 
 int Bink_Update( int handle, int startMs, int nowMs, int silent, unsigned char **outBuf ) {
@@ -242,9 +295,10 @@ int Bink_Update( int handle, int startMs, int nowMs, int silent, unsigned char *
     // snaps s_rawend forward and the look-ahead cushion never builds.
     if ( b->adec && !silent && !b->audioPrimed ) {
         S_Update();                  // refresh s_soundtime
-        s_rawend[0] = s_soundtime;
+        s_rawend[BINK_STREAM] = s_soundtime;
         b->audioPrimed = 1;
     }
+    bink_feed_audio( b );
 
     // Single packet pump: keep pulling while EITHER video is behind its time target
     // OR the raw-audio ring is below the cushion. Decoupling audio from the video
@@ -254,8 +308,8 @@ int Bink_Update( int handle, int startMs, int nowMs, int silent, unsigned char *
     // call may now also pre-roll the initial audio cushion.
     while ( !b->eof && guard++ < 512 ) {
         int videoBehind = ( b->framesDecoded <= target );
-        int audioLow    = ( b->adec && !silent ) &&
-                          ( ( s_rawend[0] - s_soundtime ) < BINK_RAW_CUSHION );
+        int audioLow    = ( b->adec && !silent ) && b->afifoLen <= b->afifoHead &&
+                          ( ( s_rawend[BINK_STREAM] - s_soundtime ) < BINK_RAW_CUSHION );
         if ( !videoBehind && !audioLow ) break;
 
         int rr = av_read_frame( b->fmt, b->pkt );
@@ -281,6 +335,8 @@ int Bink_Update( int handle, int startMs, int nowMs, int silent, unsigned char *
         av_packet_unref( b->pkt );
     }
 
+    bink_feed_audio( b );
+
     if ( produced && outBuf ) *outBuf = b->rgba;
     return b->eof ? 0 : 1;
 }
@@ -295,6 +351,7 @@ void Bink_Restart( int handle ) {
     b->framesDecoded = 0;
     b->eof = 0;
     b->audioPrimed = 0;   // re-prime the raw-audio clock on the next update
+    b->afifoHead = b->afifoLen = 0;   // drop queued audio from before the restart
 }
 
 void Bink_Stop( int handle ) {

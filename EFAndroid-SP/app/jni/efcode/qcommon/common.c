@@ -179,16 +179,26 @@ void QDECL Com_Printf( const char *fmt, ... ) {
   static qboolean opening_qconsole = qfalse;
 
 
+	const char	*plain;
+
 	va_start (argptr,fmt);
 	Q_vsnprintf (msg, sizeof(msg), fmt, argptr);
 	va_end (argptr);
 
+	// "[skipnotify]" (RTCW's prefix, handled in CL_ConsolePrint) keeps a line in the
+	// console but off the on-screen notify lines. Strip it for every other sink so the
+	// tty, redirects and qconsole.log get the plain text.
+	plain = msg;
+	if ( !Q_strncmp( msg, "[skipnotify]", 12 ) ) {
+		plain = msg + 12;
+	}
+
 	if ( rd_buffer ) {
-		if ((strlen (msg) + strlen(rd_buffer)) > (rd_buffersize - 1)) {
+		if ((strlen (plain) + strlen(rd_buffer)) > (rd_buffersize - 1)) {
 			rd_flush(rd_buffer);
 			*rd_buffer = 0;
 		}
-		Q_strcat(rd_buffer, rd_buffersize, msg);
+		Q_strcat(rd_buffer, rd_buffersize, plain);
     // TTimo nooo .. that would defeat the purpose
 		//rd_flush(rd_buffer);			
 		//*rd_buffer = 0;
@@ -200,7 +210,7 @@ void QDECL Com_Printf( const char *fmt, ... ) {
 #endif
 
 	// echo to dedicated console and early console
-	Sys_Print( msg );
+	Sys_Print( plain );
 
 	// logfile
 	if ( com_logfile && com_logfile->integer ) {
@@ -237,7 +247,7 @@ void QDECL Com_Printf( const char *fmt, ... ) {
       opening_qconsole = qfalse;
 		}
 		if ( logfile && FS_Initialized()) {
-			FS_Write(msg, strlen(msg), logfile);
+			FS_Write(plain, strlen(plain), logfile);
 		}
 	}
 }
@@ -2001,7 +2011,7 @@ EVENT LOOP
 ========================================================================
 */
 
-#define MAX_QUEUED_EVENTS  256
+#define MAX_QUEUED_EVENTS  1024	// was 256; bigger, from cMod by Noah Metzger (Chomenor), to avoid Com_QueueEvent overflows
 #define MASK_QUEUED_EVENTS ( MAX_QUEUED_EVENTS - 1 )
 
 static sysEvent_t  eventQueue[ MAX_QUEUED_EVENTS ];
@@ -2504,6 +2514,21 @@ void Com_ExecuteCfg(void)
 			}
 			Cvar_Get( "com_vkRangeFix", "0", CVAR_ARCHIVE );
 			Cvar_Set( "com_vkRangeFix", XSTRING( VK_RANGE_FIX_VERSION ) );
+			com_hmNetDefaultsApplied = qtrue;	// so the config is written with the stamp
+		}
+
+		// Light flares (r_flares) are on by default since 1.3.0. Configs from
+		// earlier builds archived the old default 0, which most players never
+		// chose: once, in single player and Holomatch alike, turn them on where
+		// the config still holds 0. A player who turns them off afterwards keeps
+		// that, because the stamp is saved with the config.
+#define FLARES_DEFAULT_VERSION 1	// v1: r_flares 1
+		if ( Cvar_VariableIntegerValue( "com_flaresDefault" ) < FLARES_DEFAULT_VERSION )
+		{
+			if ( !strcmp( Cvar_VariableString( "r_flares" ), "0" ) )
+				Cvar_Set( "r_flares", "1" );
+			Cvar_Get( "com_flaresDefault", "0", CVAR_ARCHIVE );
+			Cvar_Set( "com_flaresDefault", XSTRING( FLARES_DEFAULT_VERSION ) );
 			com_hmNetDefaultsApplied = qtrue;	// so the config is written with the stamp
 		}
 #endif
@@ -3277,7 +3302,11 @@ int Com_ModifyMsec( int msec ) {
 	if ( com_fixedtime->integer ) {
 		msec = com_fixedtime->integer;
 	} else if ( com_timescale->value ) {
-		msec *= com_timescale->value;
+		// Single player: the SP bridge applies timescale to its own sim (the game's cutscene skip
+		// sets it to 100), so the engine's clock -- menus, console, movies -- stays on real time
+		if ( Com_Holomatch() ) {
+			msec *= com_timescale->value;
+		}
 	} else if (com_cameraMode->integer) {
 		msec *= com_timescale->value;
 	}

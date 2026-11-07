@@ -175,7 +175,8 @@ void S_TransferPaintBuffer(int endtime)
 	{	// general case
 		p = (int *) paintbuffer;
 		count = (endtime - s_paintedtime) * dma.channels;
-		out_idx = ((unsigned int)s_paintedtime * dma.channels) % dma.samples;
+		// 64-bit, from cMod by Noah Metzger (Chomenor): s_paintedtime * channels overflows 32 bits after ~12 hours at 48 kHz
+		out_idx = ((unsigned long long)s_paintedtime * dma.channels) % dma.samples;
 		step = 3 - MIN(dma.channels, 2);
 
 		if ((dma.isfloat) && (dma.samplebits == 32))
@@ -536,6 +537,9 @@ void S_PaintChannels( int endtime ) {
 		// clear the paint buffer and mix any raw samples...
 		Com_Memset(paintbuffer, 0, sizeof (paintbuffer));
 		for (stream = 0; stream < MAX_RAW_STREAMS; stream++) {
+			if ( stream == 0 && s_gameSoundsHeld ) {
+				continue;	// paused: the music holds its place (S_PauseGameSounds)
+			}
 			if ( s_rawend[stream] >= s_paintedtime ) {
 				// copy from the streaming sound source
 				const portable_samplepair_t *rawsamples = s_rawsamples[stream];
@@ -551,7 +555,7 @@ void S_PaintChannels( int endtime ) {
 		// paint in the channels.
 		ch = s_channels;
 		for ( i = 0; i < MAX_CHANNELS ; i++, ch++ ) {		
-			if ( !ch->thesfx || (ch->leftvol<0.25 && ch->rightvol<0.25 )) {
+			if ( !ch->thesfx || ch->paused || (ch->leftvol<0.25 && ch->rightvol<0.25 )) {
 				continue;
 			}
 
