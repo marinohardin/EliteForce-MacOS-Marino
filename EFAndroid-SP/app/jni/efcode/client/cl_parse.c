@@ -318,6 +318,7 @@ void CL_ParseSnapshot( msg_t *msg ) {
 			break;
 		}
 	}
+	CL_AdaptivePacketdup_Snapshot();
 	// save the frame off in the backup array for later delta comparisons
 	cl.snapshots[cl.snap.messageNum & PACKET_MASK] = cl.snap;
 
@@ -483,6 +484,7 @@ void CL_ParseGamestate( msg_t *msg ) {
 
 	// wipe local client state
 	CL_ClearState();
+	CL_AdaptivePacketdup_Reset();
 
 	// a gamestate always marks a server command sequence
 	clc.serverCommandSequence = MSG_ReadLong( msg );

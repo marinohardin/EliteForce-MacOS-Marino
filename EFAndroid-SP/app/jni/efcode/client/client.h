@@ -539,6 +539,10 @@ void CL_ClearState (void);
 void CL_ReadPackets (void);
 
 void CL_WritePacket( void );
+void CL_AdaptivePacketdup_Init( void );
+void CL_AdaptivePacketdup_Reset( void );
+void CL_AdaptivePacketdup_Inbound( int dropped );
+void CL_AdaptivePacketdup_Snapshot( void );
 void IN_CenterView (void);
 
 void CL_VerifyCode( void );
