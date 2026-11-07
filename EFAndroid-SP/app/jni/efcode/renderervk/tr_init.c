@@ -1696,7 +1696,7 @@ static void R_Register( void )
 	ri.Cvar_SetDescription( r_lodCurveError, "Level of detail error on curved surface grids. Higher values result in better quality at a distance." );
 	r_lodbias = ri.Cvar_Get( "r_lodbias", "-2", CVAR_ARCHIVE_ND );
 	ri.Cvar_SetDescription( r_lodbias, "Sets the level of detail of in-game models:\n -2: Ultra (further delays LOD transition in the distance)\n -1: Very High (delays LOD transition in the distance)\n 0: High\n 1: Medium\n 2: Low" );
-	r_flares = ri.Cvar_Get ("r_flares", "0", CVAR_ARCHIVE_ND );
+	r_flares = ri.Cvar_Get ("r_flares", "1", CVAR_ARCHIVE_ND );	// on by default since 1.3.0 (com_flaresDefault in common.c updates old configs)
 	ri.Cvar_SetDescription( r_flares, "Enables corona effects on light sources." );
 	r_znear = ri.Cvar_Get( "r_znear", "4", CVAR_CHEAT );
 	ri.Cvar_CheckRange( r_znear, "0.001", "200", CV_FLOAT );

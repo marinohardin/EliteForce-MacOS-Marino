@@ -2516,6 +2516,21 @@ void Com_ExecuteCfg(void)
 			Cvar_Set( "com_vkRangeFix", XSTRING( VK_RANGE_FIX_VERSION ) );
 			com_hmNetDefaultsApplied = qtrue;	// so the config is written with the stamp
 		}
+
+		// Light flares (r_flares) are on by default since 1.3.0. Configs from
+		// earlier builds archived the old default 0, which most players never
+		// chose: once, in single player and Holomatch alike, turn them on where
+		// the config still holds 0. A player who turns them off afterwards keeps
+		// that, because the stamp is saved with the config.
+#define FLARES_DEFAULT_VERSION 1	// v1: r_flares 1
+		if ( Cvar_VariableIntegerValue( "com_flaresDefault" ) < FLARES_DEFAULT_VERSION )
+		{
+			if ( !strcmp( Cvar_VariableString( "r_flares" ), "0" ) )
+				Cvar_Set( "r_flares", "1" );
+			Cvar_Get( "com_flaresDefault", "0", CVAR_ARCHIVE );
+			Cvar_Set( "com_flaresDefault", XSTRING( FLARES_DEFAULT_VERSION ) );
+			com_hmNetDefaultsApplied = qtrue;	// so the config is written with the stamp
+		}
 #endif
 
 #ifdef __ANDROID__
