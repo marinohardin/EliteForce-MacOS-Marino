@@ -843,33 +843,41 @@ static void BuildGameState(void){
 // borgfieldhum.wav in holodeck.bsp; g_target.cpp links them "so the server can determine who to send updates
 // to") ran on through Tuvok's speech and into the turbolift, quieter only with distance.
 // The bridge still sends every entity, so nothing the cgame draws or predicts changes; it only drops the loop of
-// an entity outside the view's PVS. Only the cluster PVS, which is fixed per map: the area test also depends on
-// the areaportal state, which a save load doesn't restore yet (all portals start closed), so it could silence a
-// loop behind a door that's really open. So this drops a subset of the loops retail dropped, never more.
+// an entity outside the view's PVS, or in an area that a closed door (areaportal) cuts off from the view's area,
+// (a hum behind a shut door is silent). The area test needs the real portal state, which loads
+// restore since 1.4.0 (the save's PRTS chunk). An entity counts as connected if ANY area it touches is,
+// so this never drops a loop that should be heard.
 // No culling when the view is outside the map (no cluster), for unlinked or broadcast entities, or for an
-// entity spanning more leafs than we look at.
-struct SP_View { const unsigned char *pvs; };
+// entity spanning more leafs than we look at. No area test when the view leaf has no area.
+struct SP_View { const unsigned char *pvs; int area; };
 static void SP_GetView( SP_View *v ){
-    v->pvs = NULL;
+    v->pvs = NULL; v->area = -1;
     vec3_t org;
     if( !g_camPos || !g_camPos( org ) ){
         VectorCopy( g_snap.ps.origin, org );
         org[2] += g_snap.ps.viewheight;
     }
-    int cluster = CM_LeafCluster( CM_PointLeafnum( org ) );
+    int leaf = CM_PointLeafnum( org );
+    int cluster = CM_LeafCluster( leaf );
     if( cluster < 0 ) return;
     v->pvs = CM_ClusterPVS( cluster );
+    v->area = CM_LeafArea( leaf );
 }
 static qboolean SP_EntInView( const SP_View *v, gentity_t *e ){
     if( !v->pvs || !e->linked || (e->svFlags & SVF_BROADCAST) ) return qtrue;
     int leafs[128], lastLeaf = 0;
     int num = CM_BoxLeafnums( e->absmin, e->absmax, leafs, 128, &lastLeaf );
     if( num >= 128 ) return qtrue;
-    for( int i = 0; i < num; i++ ){
+    qboolean inPVS = qfalse, anyArea = qfalse, connected = ( v->area < 0 ) ? qtrue : qfalse;
+    for( int i = 0; i < num && !(inPVS && connected); i++ ){
         int c = CM_LeafCluster( leafs[i] );
-        if( c >= 0 && (v->pvs[c >> 3] & (1 << (c & 7))) ) return qtrue;
+        if( c >= 0 && (v->pvs[c >> 3] & (1 << (c & 7))) ) inPVS = qtrue;
+        if( !connected ){
+            int a = CM_LeafArea( leafs[i] );
+            if( a >= 0 ){ anyArea = qtrue; if( CM_AreasConnected( v->area, a ) ) connected = qtrue; }
+        }
     }
-    return qfalse;
+    return ( inPVS && ( connected || !anyArea ) ) ? qtrue : qfalse;
 }
 
 static void BuildSnapshot(void){
