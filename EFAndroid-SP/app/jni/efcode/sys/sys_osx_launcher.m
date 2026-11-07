@@ -15,7 +15,9 @@ menu does). It offers:
     instance of its own (started with --host-server, it shows nothing else),
     so the launcher stays open and can still play;
   - graphics: a quality preset, display (window / full screen), window size
-    in points, Retina resolution, anti-aliasing, texture detail, V-Sync;
+    in points, Retina resolution, anti-aliasing, texture detail, V-Sync, and
+    a brightness preset (Standard, or cMod's Plain, Full Contrast, Extra Bright
+    and Full Bright, from cMod by Noah Metzger; see "Brightness" below);
   - the Holomatch player name;
   - where the game files are (sys_osx_data.m's lookup and chooser);
   - a notice in the header when a newer release is on GitHub (see "Updates").
@@ -33,6 +35,7 @@ Test hooks (environment variables):
   VOYAGERSP_TEST_LAUNCHER_MODE=sp|hm|host     preselect the mode
   (Host a Server's hooks are listed in sys_osx_server.m)
   VOYAGERSP_TEST_LAUNCHER_PRESET=performance|balanced|best
+  VOYAGERSP_TEST_LAUNCHER_BRIGHTNESS=standard|plain|contrast|bright|fullbright
   VOYAGERSP_TEST_LAUNCHER_PLAY=1              press Play without showing it
   VOYAGERSP_TEST_LAUNCHER_AUTOPLAY=<s>        show it, press Play after <s> s
   VOYAGERSP_TEST_ADD=<path>                   press Add Game Files… with <path>
@@ -110,7 +113,45 @@ typedef struct {
 	int		msaa;				// 0, 2, 4, 8
 	int		picmip;				// 0 high, 1 medium, 2 low
 	BOOL	vsync;
+	int		brightness;			// a brightnessPresets[] index, or BRIGHTNESS_CUSTOM
 } gfx_t;
+
+/* ------------------------------------------------------------------------
+   Brightness
+
+   From cMod by Noah Metzger (Chomenor): his brightness templates (cMod's
+   Configure > Video > Brightness), plus Standard, this port's own look. Each
+   sets the renderer's brightness cvars (r_overBrightFactor, r_mapLightingFactor,
+   r_mapLightingGamma and so on, which renderervk takes from cMod too). Standard
+   is the engine defaults: 0 for the two factors means they follow
+   r_overBrightBits / r_mapOverBrightBits (0), as before cMod's settings came in.
+   A config that matches none of them (a brightness changed in the game's own
+   menu, say) shows as Custom, and Play then leaves those cvars alone.
+   ------------------------------------------------------------------------ */
+
+#define BRIGHTNESS_CUSTOM	-1
+
+static const struct {
+	NSString	*title, *help;
+	const char	*test;				// VOYAGERSP_TEST_LAUNCHER_BRIGHTNESS
+	float		gamma;				// r_gamma
+	float		overbright;			// r_overBrightFactor (0: r_overBrightBits)
+	float		mapLighting;		// r_mapLightingFactor (0: r_mapOverBrightBits)
+	float		mapGamma;			// r_mapLightingGamma
+	float		clampMin;			// r_mapLightingClampMin
+	NSString	*intensity;			// r_intensity, with cMod's fraction
+} brightnessPresets[] = {
+	{ @"Standard", @"This Mac version's own look: the original lighting, without overbright.", "standard",
+		1.0f, 0.0f, 0.0f, 1.0f, 0.0f, @"1" },
+	{ @"Plain", @"From cMod: safe values that work well with almost all maps.", "plain",
+		1.4f, 1.5f, 2.0f, 1.0f, 0.0f, @"1" },
+	{ @"Full Contrast", @"From cMod: the original Elite Force look. Good, but parts of some maps can be too bright.", "contrast",
+		1.3f, 2.0f, 2.0f, 1.0f, 0.0f, @"1" },
+	{ @"Extra Bright", @"From cMod: for better visibility in dark places.", "bright",
+		1.4f, 1.5f, 2.0f, 1.75f, 0.0f, @"1.1:0.5" },
+	{ @"Full Bright", @"From cMod: no shadows or lighting effects. Results vary between maps.", "fullbright",
+		1.1f, 1.0f, 2.0f, 10.0f, 1.0f, @"1.4:0.5" },
+};
 
 static const struct { preset_t preset; BOOL highdpi; int msaa, picmip; BOOL vsync; } presets[] = {
 	{ PRESET_PERFORMANCE,	NO,  0, 1, NO  },
@@ -170,6 +211,108 @@ static int CfgInt( NSDictionary *cfg, NSString *name, int def )
 	return v ? [v intValue] : def;
 }
 
+static float CfgFloat( NSDictionary *cfg, NSString *name, float def )
+{
+	NSString *v = cfg[name];
+	return [v length] ? [v floatValue] : def;
+}
+
+static BOOL Near( float a, float b )
+{
+	return fabsf( a - b ) < 0.005f;
+}
+
+// r_intensity's value and cMod's optional ":fraction" (1 without one)
+static void SplitIntensity( NSString *s, float *value, float *fraction )
+{
+	NSArray<NSString *> *parts = [s componentsSeparatedByString: @":"];
+	*value = [parts[0] length] ? [parts[0] floatValue] : 1.0f;
+	*fraction = [parts count] > 1 ? [parts[1] floatValue] : 1.0f;
+}
+
+// The brightness preset that the config's cvars (absent: the engine defaults) match.
+static int MatchBrightness( NSDictionary *cfg )
+{
+	float obf = CfgFloat( cfg, @"r_overbrightfactor", 0 ), mlf = CfgFloat( cfg, @"r_maplightingfactor", 0 );
+	float in, inFrac;
+	size_t i;
+
+	SplitIntensity( cfg[@"r_intensity"] ? cfg[@"r_intensity"] : @"1", &in, &inFrac );
+	if( !Near( CfgFloat( cfg, @"r_maplightingclampmax", 1 ), 1 ) || !Near( CfgFloat( cfg, @"r_texturegamma", 1 ), 1 ) )
+		return BRIGHTNESS_CUSTOM;
+	for( i = 0; i < ARRAY_LEN( brightnessPresets ); i++ )
+	{
+		float pin, pinFrac;
+
+		SplitIntensity( brightnessPresets[i].intensity, &pin, &pinFrac );
+		if( !Near( CfgFloat( cfg, @"r_gamma", 1 ), brightnessPresets[i].gamma ) ||
+			!Near( MAX( obf, 0 ), brightnessPresets[i].overbright ) ||
+			!Near( MAX( mlf, 0 ), brightnessPresets[i].mapLighting ) ||
+			!Near( CfgFloat( cfg, @"r_maplightinggamma", 1 ), brightnessPresets[i].mapGamma ) ||
+			!Near( CfgFloat( cfg, @"r_maplightingclampmin", 0 ), brightnessPresets[i].clampMin ) ||
+			!Near( in, pin ) || ( pin != 1.0f && !Near( inFrac, pinFrac ) ) )
+			continue;
+		// with a factor unset, its overbright bits decide; Standard has them at 0
+		if( ( brightnessPresets[i].overbright == 0 && CfgInt( cfg, @"r_overbrightbits", 0 ) != 0 ) ||
+			( brightnessPresets[i].mapLighting == 0 && CfgInt( cfg, @"r_mapoverbrightbits", 0 ) != 0 ) )
+			continue;
+		return (int)i;
+	}
+	return BRIGHTNESS_CUSTOM;
+}
+
+#define VSP_BRIGHTNESS_CFG	@"vsp_brightness.cfg"
+
+// The +set arguments for a brightness preset (none for Custom).
+static NSArray<NSString *> *BrightnessSets( int b )
+{
+	NSString *(^num)( float ) = ^NSString *( float f ) { return [NSString stringWithFormat: @"%g", f]; };
+	NSMutableArray<NSString *> *a = [NSMutableArray array];
+
+	if( b < 0 || b >= (int)ARRAY_LEN( brightnessPresets ) )
+		return a;
+	[a addObjectsFromArray: @[ @"+set", @"r_gamma", num( brightnessPresets[b].gamma ),
+		@"+set", @"r_overBrightFactor", num( brightnessPresets[b].overbright ),
+		@"+set", @"r_mapLightingFactor", num( brightnessPresets[b].mapLighting ),
+		@"+set", @"r_mapLightingGamma", num( brightnessPresets[b].mapGamma ),
+		@"+set", @"r_mapLightingClampMin", num( brightnessPresets[b].clampMin ),
+		@"+set", @"r_mapLightingClampMax", @"1",
+		@"+set", @"r_intensity", brightnessPresets[b].intensity,
+		@"+set", @"r_textureGamma", @"1" ]];
+	if( brightnessPresets[b].overbright == 0 )
+		[a addObjectsFromArray: @[ @"+set", @"r_overBrightBits", @"0" ]];
+	if( brightnessPresets[b].mapLighting == 0 )
+		[a addObjectsFromArray: @[ @"+set", @"r_mapOverBrightBits", @"0" ]];
+	return a;
+}
+
+// Those arguments, when they fit in the room left on the engine's command line
+// (MAX_STRING_CHARS in all). Otherwise the same settings go in a cfg file to
+// +exec: that runs once the renderer is up, so its (latched) cvars apply from
+// the first map on rather than in the menus, which is the next best thing.
+static NSArray<NSString *> *BrightnessArgs( int b, NSUInteger room )
+{
+	NSArray<NSString *> *sets = BrightnessSets( b );
+	NSMutableString *cfg;
+	NSString *path;
+	NSUInteger i;
+
+	if( ![sets count] || [[sets componentsJoinedByString: @" "] length] + 2 < room )
+		return sets;
+	cfg = [NSMutableString stringWithString: @"// Written by the Elite Force launcher: its Brightness preset. Edits here are overwritten.\n"];
+	for( i = 0; i + 2 < [sets count]; i += 3 )
+		[cfg appendFormat: @"set %@ \"%@\"\n", sets[i + 1], sets[i + 2]];
+	path = [VSP_HomeBase() stringByAppendingPathComponent: VSP_BRIGHTNESS_CFG];
+	[[NSFileManager defaultManager] createDirectoryAtPath: VSP_HomeBase() withIntermediateDirectories: YES attributes: nil error: NULL];
+	if( ![cfg writeToFile: path atomically: YES encoding: NSUTF8StringEncoding error: NULL] )
+	{
+		LLog( @"Couldn't write %@: brightness left as it is", path );
+		return @[];
+	}
+	LLog( @"Launcher: brightness in %@ (the command line is full)", VSP_BRIGHTNESS_CFG );
+	return @[ @"+exec", VSP_BRIGHTNESS_CFG ];
+}
+
 // Graphics from the config last used (or the other mode's, or defaults).
 static gfx_t LoadGraphics( BOOL holomatch, BOOL *fromConfig )
 {
@@ -179,6 +322,7 @@ static gfx_t LoadGraphics( BOOL holomatch, BOOL *fromConfig )
 	if( ![cfg count] )
 		cfg = ReadConfig( ConfigPath( !holomatch ) );
 	*fromConfig = [cfg count] > 0;
+	g.brightness = MatchBrightness( cfg );	// first run: Standard
 
 	g.fullscreen = CfgInt( cfg, @"r_fullscreen", 0 ) != 0;
 	g.width = 1920;
@@ -462,7 +606,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSView *graphicsGroup, *serverGroup;
 	NSTextField *srvName, *srvGame, *srvMaps, *srvPlayers, *srvNetwork, *srvAddress;
 	NSSegmentedControl *preset;
-	NSPopUpButton *display, *size, *msaa, *texture;
+	NSPopUpButton *display, *size, *msaa, *texture, *brightness;
+	NSTextField *brightnessHint;
 	NSButton *retina, *vsync;
 	NSTextField *nameLabel, *name, *nameHint, *mastersSummary;
 	NSButton *loopbackFix;
@@ -518,6 +663,12 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 			!Q_stricmp( p, "balanced" ) ? PRESET_BALANCED : PRESET_BEST];
 		[self presetChanged: preset];
 	}
+	for( size_t i = 0; i < ARRAY_LEN( brightnessPresets ); i++ )
+		if( VSP_TestEnvIs( "VOYAGERSP_TEST_LAUNCHER_BRIGHTNESS", brightnessPresets[i].test ) )
+		{
+			gfx.brightness = (int)i;
+			[self showGraphics];
+		}
 	return self;
 }
 
@@ -617,6 +768,22 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	msaa = [self popup: @[ @"Off", @"2×", @"4×", @"8×" ] tags: @[ @0, @2, @4, @8 ]];
 	texture = [self popup: @[ @"High", @"Medium", @"Low" ] tags: @[ @0, @1, @2 ]];
 	vsync = [self checkbox: @"Sync to the display (V-Sync)"];
+	// From cMod by Noah Metzger (Chomenor): his brightness presets (see "Brightness")
+	{
+		NSMutableArray *titles = [NSMutableArray array], *tags = [NSMutableArray array];
+		for( size_t i = 0; i < ARRAY_LEN( brightnessPresets ); i++ )
+		{
+			[titles addObject: brightnessPresets[i].title];
+			[tags addObject: @( i )];
+		}
+		[titles addObject: @"Custom"];
+		[tags addObject: @( BRIGHTNESS_CUSTOM )];
+		brightness = [self popup: titles tags: tags];
+		[brightness setAutoenablesItems: NO];
+		[[brightness lastItem] setEnabled: NO];
+		brightnessHint = VSP_WrapLabel( @"", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+		[brightnessHint setPreferredMaxLayoutWidth: 400];
+	}
 
 	grid = [NSGridView gridViewWithViews: @[
 		@[ VSP_Label( @"Quality:", [NSFont systemFontOfSize: 13], nil ), preset ],
@@ -626,6 +793,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		@[ VSP_Label( @"Anti-aliasing:", [NSFont systemFontOfSize: 13], nil ), msaa ],
 		@[ VSP_Label( @"Texture detail:", [NSFont systemFontOfSize: 13], nil ), texture ],
 		@[ [NSGridCell emptyContentView], vsync ],
+		@[ VSP_Label( @"Brightness:", [NSFont systemFontOfSize: 13], nil ), brightness ],
+		@[ [NSGridCell emptyContentView], brightnessHint ],
 	]];
 	[grid setRowSpacing: 7];
 	[grid setColumnSpacing: 10];
@@ -850,6 +1019,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[msaa selectItemWithTag: gfx.msaa];
 	[texture selectItemWithTag: gfx.picmip];
 	[vsync setState: gfx.vsync ? NSControlStateValueOn : NSControlStateValueOff];
+	[brightness selectItemWithTag: gfx.brightness];
+	[brightnessHint setStringValue: gfx.brightness >= 0 ? brightnessPresets[gfx.brightness].help :
+		@"Set in the game (its Brightness slider, say); Play leaves it as it is."];
 	[preset setSelectedSegment: [self matchingPreset]];
 	updating = NO;
 }
@@ -865,6 +1037,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	gfx.msaa = (int)[[msaa selectedItem] tag];
 	gfx.picmip = (int)[[texture selectedItem] tag];
 	gfx.vsync = [vsync state] == NSControlStateValueOn;
+	gfx.brightness = (int)[[brightness selectedItem] tag];
 	[self showGraphics];
 }
 
@@ -1216,6 +1389,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		@"+set", @"r_swapInterval", @( gfx.vsync ).stringValue,
 		@"+set", @"r_fbo", @"1", @"+set", @"r_ext_multisample", @( gfx.msaa ).stringValue,
 		@"+set", @"name", VSP_CleanName( [name stringValue] ) ]];
+	[a addObjectsFromArray: BrightnessArgs( gfx.brightness, 600 )];	// leaves room for the rest
 	if( basepath )
 		[a addObjectsFromArray: @[ @"+set", @"fs_basepath", basepath ]];
 	if( VSP_WriteMastersConfig() )
@@ -1239,6 +1413,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	// framebuffer objects always: multisampling needs them, and their gamma
 	// post-pass is what makes the Brightness sliders apply live
 	[args appendFormat: @"+set r_fbo 1 +set r_ext_multisample %d ", gfx.msaa];
+	// the brightness preset (Custom: whatever the config has)
+	// (after the rest, which then can't be crowded out)
 	if( holomatch )
 		[args appendFormat: @"+set name \"%@\" ", VSP_CleanName( [name stringValue] )];
 	if( basepath )
@@ -1254,6 +1430,11 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		if( joinPassword )
 			[args appendFormat: @"+set password \"%@\" ", joinPassword];
 		[args appendFormat: @"+connect %@ ", joinAddress];
+	}
+	{
+		NSUInteger used = strlen( commandLine ) + [args lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+		for( NSString *arg in BrightnessArgs( gfx.brightness, used < (NSUInteger)size ? size - used : 0 ) )
+			[args appendFormat: @"%@ ", arg];
 	}
 	LLog( @"Launcher: %@", joinPassword ? [args stringByReplacingOccurrencesOfString: joinPassword withString: @"••••"] : args );
 	Q_strcat( commandLine, size, [args UTF8String] );
