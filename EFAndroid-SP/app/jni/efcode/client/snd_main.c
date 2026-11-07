@@ -174,6 +174,19 @@ int S_StopAllSoundsCount( void )
 
 /*
 =================
+S_VoiceLipSync
+=================
+*/
+qboolean S_VoiceLipSync( int *levels, int numEntities )
+{
+	if( si.VoiceLipSync ) {
+		return si.VoiceLipSync( levels, numEntities );
+	}
+	return qfalse;
+}
+
+/*
+=================
 S_PauseGameSounds
 =================
 */

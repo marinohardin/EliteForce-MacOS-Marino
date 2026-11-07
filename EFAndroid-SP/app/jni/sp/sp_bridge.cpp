@@ -563,6 +563,7 @@ static int   g_sOverride[MAX_GENTITIES];
 // g_sOverride[] from that each frame before ge->RunFrame.
 static int   g_voiceEnd[MAX_GENTITIES];
 extern "C" int S_StopAllSoundsCount( void );   // snd_main.c: bumps on every S_StopAllSounds / S_StopGameSounds
+extern "C" qboolean S_VoiceLipSync( int *levels, int numEntities );   // snd_main.c: lip sync levels
 static void SP_ClearVoiceTimers(void){
     memset(g_voiceEnd, 0, sizeof(g_voiceEnd)); memset(g_sOverride, 0, sizeof(g_sOverride));
 }
@@ -581,6 +582,31 @@ static void SP_EndCutsceneSkip(void){
         Cvar_Set("timescale", "1");
     }
 }
+// gi.S_Override[ent] is the face, not a flag: the cgame draws head->customSkin = ci->headSkin + S_Override.
+// The head skins are -1 blink, -2 frown, -3 frown+blink, -4 neutral, -5..-8 mouth shapes. The sound
+// code sets it from the voice's own volume: -1 while talking but quiet (eyes open, mouth at rest), 5..8 by
+// loudness, 0 when not talking (the cgame then blinks and frowns on its own). The mixer computes the same
+// thing now (S_VoiceLipSync, snd_dma.c). The value also gates the dialog `wait` (nonzero keeps the script's
+// TID_CHAN_VOICE task pending), which g_voiceEnd keeps timing, so a talker is never 0 before its line ends.
+// Called every sim tick and every render frame (the cgame reads the array while drawing).
+static void SP_UpdateVisemes(void){
+    static int levels[MAX_GENTITIES];
+    qboolean mixer = S_VoiceLipSync( levels, MAX_GENTITIES );
+    for(int i=0;i<MAX_GENTITIES;i++){
+        if(g_voiceEnd[i] > g_levelTime){
+            if( mixer ){
+                g_sOverride[i] = levels[i] ? levels[i] : -1;
+            } else {
+                // no lip sync data (OpenAL backend): cycle the mouth shapes at a talking cadence
+                unsigned h = (unsigned)(g_levelTime/80 + i*131);
+                h = h*1103515245u + 12345u;
+                g_sOverride[i] = 5 + (int)((h>>16) % 4);
+            }
+        } else {
+            g_sOverride[i] = 0;
+        }
+    }
+}
 static void SP_UpdateVoiceOverride(void){
     // The voice timers count level time, so they must go when the clock jumps (a load sets the saved
     // time, an autosave load or a transition resets it to 1000) or the voices they time are stopped
@@ -597,23 +623,7 @@ static void SP_UpdateVoiceOverride(void){
           SP_ClearVoiceTimers();
       }
       s_lastStops = stops; s_lastTime = g_levelTime; }
-    // gi.S_Override[ent] is the facial VISEME index, not a flag: the cgame draws
-    // head->customSkin = ci->headSkin + S_Override, where the head ships 8 mouth-shape skins
-    // (head_*-1..8) now registered as viseme extensions in the renderer (RE_RegisterSkin). Retail
-    // derives the index from the playing CHAN_VOICE sample amplitude; our ioq3 mixer doesn't export
-    // that yet, so while a voice line plays we APPROXIMATE lip-sync by cycling the viseme 1..8 at a
-    // talking cadence (per-entity phase so characters don't lip-sync in lock-step). 0 = mouth closed
-    // (the cgame then runs its own idle blink/frown). This also still gates the dialog `wait` (any
-    // nonzero value keeps the TID_CHAN_VOICE task pending until g_voiceEnd elapses).
-    for(int i=0;i<MAX_GENTITIES;i++){
-        if(g_voiceEnd[i] > g_levelTime){
-            unsigned h = (unsigned)(g_levelTime/80 + i*131);   // ~12 Hz, offset per entity
-            h = h*1103515245u + 12345u;                        // cheap LCG hash -> natural variation
-            g_sOverride[i] = 1 + (int)((h>>16) % 8);           // viseme 1..8 (mouth shapes)
-        } else {
-            g_sOverride[i] = 0;                                // not talking -> closed/idle
-        }
-    }
+    SP_UpdateVisemes();
 }
 
 // One game frame at g_levelTime. With the regression harness on (qcommon/regress.c), rand() is
@@ -1263,7 +1273,7 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
             int dur = SPR_S_GetSampleLength(sSfx);
             g_voiceEnd[sEnt] = g_levelTime + (dur>0 ? dur : 2500);
             blog("voice: ent %d talks %d ms from levelTime %d\n", sEnt, dur>0 ? dur : 2500, g_levelTime);
-            g_sOverride[sEnt] = 1;
+            g_sOverride[sEnt] = -1;   // talking, mouth at rest until the mixer has a level
         }
         return 0; }
     case CG_S_STARTLOCALSOUND:    SPR_S_StartLocalSound((int)A(0),(int)A(1)); return 0;
@@ -2129,6 +2139,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     int skipNow = Cvar_VariableIntegerValue("skippingCinematic") && !g_spMovieQueued;
     s_spSoundsBlocked = skipNow;
     s_spSkipDraw = skipNow;
+    SP_UpdateVisemes();   // mouths follow the voice per render frame, not per sim tick
     SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
     s_spSkipDraw = 0;
     if( skipNow ){

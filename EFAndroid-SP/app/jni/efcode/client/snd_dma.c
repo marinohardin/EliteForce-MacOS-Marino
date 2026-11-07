@@ -1484,6 +1484,92 @@ void S_Base_PauseGameSounds( qboolean pause ) {
 
 /*
 ============
+S_Base_VoiceLipSync
+
+Single player lip sync: for every channel playing on the SP game's
+CHAN_VOICE (3) or CHAN_VOICE_ATTEN (4), take 10 samples 100 apart (at 22 kHz) from where the
+sound is now, average their squares (samples >> 8), and compare that with s_threshold1..4
+(0.5, 4, 7, 8) times the sound's loudest sample: below the first -1 (talking, mouth at rest),
+then mouth shapes 5, 6, 7, 8. The game adds the value to the head skin (head_*-5..-8.skin are
+the mouth shapes). It is redone every 800 samples (36 ms), keeping the last value between.
+Here the position is s_soundtime, what is being heard now.
+============
+*/
+static int	s_lipLevel[MAX_GENTITIES];
+static int	s_lipNextUpdate;
+
+static int S_LipLevel( const channel_t *ch ) {
+	const sfx_t	*sfx = ch->thesfx;
+	double		pos;
+	int			k, j, n, v, sum, mean;
+	float		range;
+
+	if ( !sfx->lipSamples || ch->startSample == START_SAMPLE_IMMEDIATE || s_soundtime < ch->startSample ) {
+		return -1;
+	}
+	pos = (double)( s_soundtime - ch->startSample ) * 22050.0 / dma.speed;
+	k = (int)( pos / 100.0 );
+	sum = n = 0;
+	for ( j = 0; j < 10 && k + j < sfx->lipCount; j++, n++ ) {
+		v = sfx->lipSamples[k + j];
+		sum += v * v;
+	}
+	if ( n == 0 ) {
+		return 0;	// past the end
+	}
+	mean = sum / n;
+	range = sfx->lipVolRange;
+	if ( mean < 0.5f * range ) return -1;
+	if ( mean < 4.0f * range ) return 5;
+	if ( mean < 7.0f * range ) return 6;
+	if ( mean < 8.0f * range ) return 7;
+	return 8;
+}
+
+qboolean S_Base_VoiceLipSync( int *levels, int numEntities ) {
+	channel_t	*ch;
+	int			i, e;
+	qboolean	update;
+
+	if ( !s_soundStarted || !levels || numEntities <= 0 ) {
+		return qfalse;
+	}
+	if ( numEntities > MAX_GENTITIES ) {
+		numEntities = MAX_GENTITIES;
+	}
+	Com_Memset( levels, 0, numEntities * sizeof( *levels ) );
+	update = ( s_soundtime > s_lipNextUpdate || s_soundtime < s_lipNextUpdate - dma.speed ) ? qtrue : qfalse;
+	if ( update ) {
+		s_lipNextUpdate = s_soundtime + 800 * dma.speed / 22050;
+	}
+	for ( i = 0, ch = s_channels; i < MAX_CHANNELS; i++, ch++ ) {
+		if ( !ch->thesfx || ( ch->entchannel != 3 && ch->entchannel != 4 ) ) {
+			continue;
+		}
+		e = ch->entnum;
+		if ( e < 0 || e >= numEntities ) {
+			continue;
+		}
+		if ( ch->paused ) {
+			levels[e] = -1;		// held by a pause: mouth at rest
+			continue;
+		}
+		if ( update || s_lipLevel[e] == 0 ) {
+			s_lipLevel[e] = S_LipLevel( ch );
+		}
+		levels[e] = s_lipLevel[e];
+	}
+	// entities no longer talking start fresh next time
+	for ( e = 0; e < numEntities; e++ ) {
+		if ( !levels[e] ) {
+			s_lipLevel[e] = 0;
+		}
+	}
+	return qtrue;
+}
+
+/*
+============
 S_Base_StopGameSounds
 
 Every sound effect and loop stops; the music and the raw streams play on.
@@ -1771,6 +1857,13 @@ void S_Base_Shutdown( void ) {
 	SNDDMA_Shutdown();
 	SND_shutdown();
 
+	{	// the lip sync copies (S_ComputeLipSync); s_knownSfx is cleared on the next start
+		int i;
+		for ( i = 0; i < s_numSfx; i++ ) {
+			free( s_knownSfx[i].lipSamples );
+			s_knownSfx[i].lipSamples = NULL;
+		}
+	}
 	s_soundStarted = 0;
 	s_numSfx = 0;
 
@@ -1834,6 +1927,7 @@ qboolean S_Base_Init( soundInterface_t *si ) {
 	si->SoundList = S_Base_SoundList;
 	si->PauseGameSounds = S_Base_PauseGameSounds;
 	si->StopGameSounds = S_Base_StopGameSounds;
+	si->VoiceLipSync = S_Base_VoiceLipSync;
 
 #ifdef USE_VOIP
 	si->StartCapture = S_Base_StartCapture;
