@@ -179,16 +179,26 @@ void QDECL Com_Printf( const char *fmt, ... ) {
   static qboolean opening_qconsole = qfalse;
 
 
+	const char	*plain;
+
 	va_start (argptr,fmt);
 	Q_vsnprintf (msg, sizeof(msg), fmt, argptr);
 	va_end (argptr);
 
+	// "[skipnotify]" (RTCW's prefix, handled in CL_ConsolePrint) keeps a line in the
+	// console but off the on-screen notify lines. Strip it for every other sink so the
+	// tty, redirects and qconsole.log get the plain text.
+	plain = msg;
+	if ( !Q_strncmp( msg, "[skipnotify]", 12 ) ) {
+		plain = msg + 12;
+	}
+
 	if ( rd_buffer ) {
-		if ((strlen (msg) + strlen(rd_buffer)) > (rd_buffersize - 1)) {
+		if ((strlen (plain) + strlen(rd_buffer)) > (rd_buffersize - 1)) {
 			rd_flush(rd_buffer);
 			*rd_buffer = 0;
 		}
-		Q_strcat(rd_buffer, rd_buffersize, msg);
+		Q_strcat(rd_buffer, rd_buffersize, plain);
     // TTimo nooo .. that would defeat the purpose
 		//rd_flush(rd_buffer);			
 		//*rd_buffer = 0;
@@ -200,7 +210,7 @@ void QDECL Com_Printf( const char *fmt, ... ) {
 #endif
 
 	// echo to dedicated console and early console
-	Sys_Print( msg );
+	Sys_Print( plain );
 
 	// logfile
 	if ( com_logfile && com_logfile->integer ) {
@@ -237,7 +247,7 @@ void QDECL Com_Printf( const char *fmt, ... ) {
       opening_qconsole = qfalse;
 		}
 		if ( logfile && FS_Initialized()) {
-			FS_Write(msg, strlen(msg), logfile);
+			FS_Write(plain, strlen(plain), logfile);
 		}
 	}
 }

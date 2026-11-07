@@ -2332,7 +2332,7 @@ static void RE_EndRegistration( void ) {
 	{
 		char summary[256];
 		vk_registration_report( summary, sizeof( summary ) );
-		ri.Printf( PRINT_ALL, "VKDIAG: %s", summary );
+		ri.Printf( PRINT_ALL, "[skipnotify]VKDIAG: %s", summary );
 	}
 #else
 	R_IssuePendingRenderCommands();
