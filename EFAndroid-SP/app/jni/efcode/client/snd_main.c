@@ -166,6 +166,21 @@ void S_StopAllSounds( void )
 
 /*
 =================
+S_ResetStaleSounds
+
+Unload cached sounds that a filesystem change replaced (base backend; OpenAL keeps its own
+buffers and isn't covered)
+=================
+*/
+void S_ResetStaleSounds( void )
+{
+	if( s_backend && !Q_stricmp( s_backend->string, "base" ) ) {
+		S_Base_ResetStaleSounds( );
+	}
+}
+
+/*
+=================
 S_ClearLoopingSounds
 =================
 */

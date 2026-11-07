@@ -58,6 +58,7 @@ typedef struct sfx_s {
 	int 			soundLength;
 	int			soundChannels;
 	char 			soundName[MAX_QPATH];
+	int				soundSource;			// S_CodecSoundSource when loaded
 	int				lastTimeUsed;
 	struct sfx_s	*next;
 } sfx_t;
@@ -252,6 +253,7 @@ extern sfx_t *sfxScratchPointer;
 extern int	   sfxScratchIndex;
 
 qboolean S_Base_Init( soundInterface_t *si );
+void S_Base_ResetStaleSounds( void );
 
 // OpenAL stuff
 typedef enum

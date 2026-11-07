@@ -1459,6 +1459,11 @@ and for each vertex of transparent shaders in fog dynamically
 float R_FogFactor( float s, float t ) {
 	float	d;
 
+	// NaN would index the table out of range (from cMod by Noah Metzger (Chomenor), CMOD_FOGFACTOR_FIX)
+	if ( Q_isnan( s ) || Q_isnan( t ) ) {
+		return 0;
+	}
+
 	s -= 1.0/512;
 	if ( s < 0 ) {
 		return 0;
