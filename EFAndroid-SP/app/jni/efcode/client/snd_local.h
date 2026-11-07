@@ -109,6 +109,7 @@ typedef struct
 	sfx_t		*thesfx;		// sfx structure
 	qboolean	doppler;
 	qboolean	fullVolume;
+	qboolean	paused;			// held by S_PauseGameSounds: not painted, position kept
 } channel_t;
 
 
@@ -148,6 +149,8 @@ typedef struct
 	void (*ClearSoundBuffer)( void );
 	void (*SoundInfo)( void );
 	void (*SoundList)( void );
+	void (*PauseGameSounds)( qboolean pause );	// optional (NULL: no pause support)
+	void (*StopGameSounds)( void );				// optional: stop effects + loops, keep music/streams
 #ifdef USE_VOIP
 	void (*StartCapture)( void );
 	int (*AvailableCaptureSamples)( void );
@@ -203,9 +206,10 @@ extern	vec3_t	listener_up;
 extern	dma_t	dma;
 
 #define	MAX_RAW_SAMPLES	16384
-#define MAX_RAW_STREAMS (MAX_CLIENTS * 2 + 1)
+#define MAX_RAW_STREAMS (MAX_CLIENTS * 2 + 2)	// stream 0 music, VoIP, S_RAW_STREAM_CINEMATIC
 extern	portable_samplepair_t s_rawsamples[MAX_RAW_STREAMS][MAX_RAW_SAMPLES];
 extern	int		s_rawend[MAX_RAW_STREAMS];
+extern	qboolean	s_gameSoundsHeld;	// S_PauseGameSounds is holding the game's channels + music
 
 extern cvar_t *s_volume;
 extern cvar_t *s_musicVolume;

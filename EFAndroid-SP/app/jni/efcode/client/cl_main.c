@@ -1507,6 +1507,13 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	SCR_StopCinematic ();
 	S_ClearSoundBuffer();
 
+	// single player: a camera-scene skip (skippingCinematic + timescale 100, set by the game) never
+	// outlives the level, e.g. quitting to the main menu from the pause menu mid-skip
+	if ( !Com_Holomatch() && Cvar_VariableIntegerValue( "skippingCinematic" ) ) {
+		Cvar_Set( "skippingCinematic", "0" );
+		Cvar_Set( "timescale", "1" );
+	}
+
 	// send a disconnect message to the server
 	// send it a few times in case one is dropped
 	if ( clc.state >= CA_CONNECTED ) {

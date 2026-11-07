@@ -917,8 +917,12 @@ void FS_Rename( const char *from, const char *to ) {
 		Com_Error( ERR_FATAL, "Filesystem call made without initialization" );
 	}
 
-	// don't let sound stutter
-	S_ClearSoundBuffer();
+	// don't let sound stutter. Not in single player: every save (the autosave right after a
+	// cutscene included) renames saves/current.sav into place, and the clear killed the voice
+	// line playing then (Munro's first line on voy1) and every other sound
+	if ( Com_Holomatch() ) {
+		S_ClearSoundBuffer();
+	}
 
 	from_ospath = FS_BuildOSPath( fs_homepath->string, fs_gamedir, from );
 	to_ospath = FS_BuildOSPath( fs_homepath->string, fs_gamedir, to );

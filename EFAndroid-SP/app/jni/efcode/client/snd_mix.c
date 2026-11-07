@@ -537,6 +537,9 @@ void S_PaintChannels( int endtime ) {
 		// clear the paint buffer and mix any raw samples...
 		Com_Memset(paintbuffer, 0, sizeof (paintbuffer));
 		for (stream = 0; stream < MAX_RAW_STREAMS; stream++) {
+			if ( stream == 0 && s_gameSoundsHeld ) {
+				continue;	// paused: the music holds its place (S_PauseGameSounds)
+			}
 			if ( s_rawend[stream] >= s_paintedtime ) {
 				// copy from the streaming sound source
 				const portable_samplepair_t *rawsamples = s_rawsamples[stream];
@@ -552,7 +555,7 @@ void S_PaintChannels( int endtime ) {
 		// paint in the channels.
 		ch = s_channels;
 		for ( i = 0; i < MAX_CHANNELS ; i++, ch++ ) {		
-			if ( !ch->thesfx || (ch->leftvol<0.25 && ch->rightvol<0.25 )) {
+			if ( !ch->thesfx || ch->paused || (ch->leftvol<0.25 && ch->rightvol<0.25 )) {
 				continue;
 			}
 

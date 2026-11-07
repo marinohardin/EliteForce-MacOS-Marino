@@ -3277,7 +3277,11 @@ int Com_ModifyMsec( int msec ) {
 	if ( com_fixedtime->integer ) {
 		msec = com_fixedtime->integer;
 	} else if ( com_timescale->value ) {
-		msec *= com_timescale->value;
+		// Single player: the SP bridge applies timescale to its own sim (the game's cutscene skip
+		// sets it to 100), so the engine's clock -- menus, console, movies -- stays on real time
+		if ( Com_Holomatch() ) {
+			msec *= com_timescale->value;
+		}
 	} else if (com_cameraMode->integer) {
 		msec *= com_timescale->value;
 	}

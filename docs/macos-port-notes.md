@@ -659,3 +659,45 @@ Test gotcha: `sv_minSnaps` and `sv_lanForceRate` are `CVAR_ARCHIVE`, so a test v
 `hmconfig_server.cfg` and affects later runs. A saved low `sv_minSnaps` would also cap High's benefit.
 
 Not tested: the retail Windows client, real latency or packet loss, several human clients, and feel.
+
+## Single player: pause keeps the sound, voy1 music, voice timers, cutscene skip (2026-11-07)
+
+Our own fixes (not from cMod).
+
+**Pause holds the sound instead of stopping it.** The SP bridge used to call `S_StopAllSounds` when
+the console, the pause menu or an in-game movie paused the sim, so the music and the current voice line
+were lost for good while the line's lip-sync and dialog timer kept running. Now `S_PauseGameSounds`
+(`snd_dma.c`, plus an OpenAL version) holds the channels playing when the pause starts and the music
+(raw stream 0): they aren't painted or refilled, and on resume their start positions and the music's
+buffered tail move forward by the paused time. Sounds started while paused (menu clicks, movie audio)
+play normally. The bridge drops the cgame's new sounds while paused, so the frozen frame can't start
+ambient blips. The voice timers count level time, which is frozen too. Holomatch never calls it.
+
+**voy1 bridge music.** `inGameCinematic` (`cl_cin.c`) also stopped all sounds, when the movie started
+and when it stopped. On the `Autosave - voy1` load the map's music starts, `st_01` (the captain's log)
+then killed it, and nothing restarted it until the script set the music again after `st_02`. In-game movies
+now pause the game's sounds and their audio has its own raw stream (`S_RAW_STREAM_CINEMATIC`), so the
+music resumes after the movie. Bink audio now waits in a FIFO in `bink_ff.c` and goes to the mixer only
+while the ring has room. A Bink file's audio starts about 0.8 s before its video, more than the ring holds,
+so it used to overflow and overwrite itself. This affects fullscreen movies too: no audio is dropped and the
+sound keeps time with the picture.
+
+**Voice timers and Munro's first line.** Every save renames `saves/current.sav` through `FS_Rename`,
+which called `S_ClearSoundBuffer` and killed every playing sound. The deferred autosave after a cutscene
+did this just as the next line started. `FS_Rename` no longer clears sounds in SP (Holomatch unchanged).
+The bridge drops its fake-voice timers when the level clock jumps (a load or transition) or sounds are stopped
+(`S_StopAllSoundsCount`). Mouths now move only while a voice plays.
+
+**Cutscene skip (Use Item / ENTER in a camera scene).** The game sets `skippingCinematic 1` and
+`timescale 100`. The bridge now scales its sim by timescale while skipping, up to 200 ticks or 12 ms of real time per frame
+(the rest carries over), and stops at once when the skip ends or the game queues a movie. Rendering
+calls are dropped and a black screen with five LCARS-orange dots is drawn. Game sounds stop at the
+start of the skip, but the music keeps playing. A movie, a load or new game (`SP_UnloadGame`) and a disconnect
+(`CL_Disconnect`) end the skip. In SP the engine clock ignores `timescale` (`Com_ModifyMsec`), so menus,
+console and movies always run in real time. Holomatch is unchanged. Enter outside a camera does what it did before.
+
+Tested (scratch HOME, developer log): console and pause menu mid-dialogue hold 2-3 channels and resume
+them, and the dialog waits line up exactly. The music holds across `st_01` and resumes. ENTER in the borg1 opening
+skips about 60 s of the scene in 0.3 s with the dots shown, and the game ends playable with `timescale` 1. ENTER in the voy1
+bridge skips to `st_02`. Voice timers drop on load and on the borg1->borg2 transition. A save mid-line keeps
+the line. A Holomatch local server game was unaffected. Not verified by ear: actual audio output and A/V sync of movies.

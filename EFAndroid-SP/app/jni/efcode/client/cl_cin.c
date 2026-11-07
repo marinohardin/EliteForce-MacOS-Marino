@@ -1165,17 +1165,17 @@ redump:
 		case	ZA_SOUND_MONO:
 			if (!cinTable[currentHandle].silent) {
 				ssize = RllDecodeMonoToStereo( framedata, sbuf, cinTable[currentHandle].RoQFrameSize, 0, (unsigned short)cinTable[currentHandle].roq_flags);
-                                S_RawSamples(0, ssize, 22050, 2, 1, (byte *)sbuf, 1.0f, -1);
+                                S_RawSamples(S_RAW_STREAM_CINEMATIC, ssize, 22050, 2, 1, (byte *)sbuf, 1.0f, -1);
 			}
 			break;
 		case	ZA_SOUND_STEREO:
 			if (!cinTable[currentHandle].silent) {
 				if (cinTable[currentHandle].numQuads == -1) {
 					S_Update();
-					s_rawend[0] = s_soundtime;
+					s_rawend[S_RAW_STREAM_CINEMATIC] = s_soundtime;
 				}
 				ssize = RllDecodeStereoToStereo( framedata, sbuf, cinTable[currentHandle].RoQFrameSize, 0, (unsigned short)cinTable[currentHandle].roq_flags);
-                                S_RawSamples(0, ssize, 22050, 2, 2, (byte *)sbuf, 1.0f, -1);
+                                S_RawSamples(S_RAW_STREAM_CINEMATIC, ssize, 22050, 2, 2, (byte *)sbuf, 1.0f, -1);
 			}
 			break;
 		case	ROQ_QUAD_INFO:
@@ -1612,7 +1612,7 @@ int CIN_PlayCinematic( const char *arg, int x, int y, int w, int h, int systemBi
 		}
 		Con_Close();
 		if ( !cinTable[currentHandle].silent ) {
-			s_rawend[0] = s_soundtime;
+			s_rawend[S_RAW_STREAM_CINEMATIC] = s_soundtime;
 		}
 		Com_DPrintf( "trFMV::play(), playing Bink %s\n", arg );
 		return currentHandle;
@@ -1638,7 +1638,7 @@ int CIN_PlayCinematic( const char *arg, int x, int y, int w, int h, int systemBi
 		Con_Close();
 
 		if (!cinTable[currentHandle].silent) {
-			s_rawend[0] = s_soundtime;
+			s_rawend[S_RAW_STREAM_CINEMATIC] = s_soundtime;
 		}
 
 		return currentHandle;
@@ -1862,7 +1862,20 @@ void CL_PlayInGameCinematic_f(void) {
 		SCR_StopCinematic();
 	}
 
-	S_StopAllSounds();
+	// Retail: a movie ends a camera-scene skip (Use Item in a cutscene sets skippingCinematic 1
+	// and timescale 100, Q3_Interface.cpp SET_VIDEO_PLAY: "set back to normal in the Bink code"),
+	// so a skip only skips one part of a multi-part scene (the voy1 bridge sequence) and the
+	// movie itself plays at normal speed.
+	if ( Cvar_VariableIntegerValue( "skippingCinematic" ) ) {
+		Cvar_Set( "skippingCinematic", "0" );
+		Cvar_Set( "timescale", "1" );
+	}
+
+	// Hold the level's sounds and music instead of stopping them (they were lost for good, e.g.
+	// no music on the voy1 bridge after the captain's log): CIN_PlayCinematic sets cl_paused, the
+	// SP bridge keeps S_PauseGameSounds on while it's set and they resume after the movie. The
+	// movie's audio has a raw stream of its own (S_RAW_STREAM_CINEMATIC).
+	S_PauseGameSounds( qtrue );
 
 	CL_handle = CIN_PlayCinematic( Cmd_Argv( 1 ), 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, CIN_inGame, CIN_CLIENT );
 	if ( CL_handle >= 0 ) {
@@ -1917,8 +1930,16 @@ void SCR_RunCinematic (void)
 
 void SCR_StopCinematic(void) {
 	if (CL_handle >= 0 && CL_handle < MAX_VIDEO_HANDLES) {
+		qboolean inGame = cinTable[CL_handle].inGameCinematic;
+
 		CIN_StopCinematic(CL_handle);
-		S_StopAllSounds ();
+		if ( inGame ) {
+			// in-game movie: drop only the movie's buffered audio; the level's held sounds
+			// and music resume when the SP bridge sees cl_paused cleared
+			s_rawend[S_RAW_STREAM_CINEMATIC] = 0;
+		} else {
+			S_StopAllSounds ();
+		}
 		CL_handle = -1;
 	}
 }

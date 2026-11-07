@@ -595,6 +595,7 @@ typedef struct src_s
 	vec3_t		loopSpeakerPos;		// Origin of the loop speaker
 	
 	qboolean	local;			// Is this local (relative to the cam)
+	qboolean	gamePaused;		// paused by S_AL_PauseGameSounds
 } src_t;
 
 #ifdef __APPLE__
@@ -823,6 +824,7 @@ static void S_AL_SrcSetup(srcHandle_t src, sfxHandle_t sfx, alSrcPriority_t prio
 	curSource->isLooping = qfalse;
 	curSource->isTracking = qfalse;
 	curSource->isStream = qfalse;
+	curSource->gamePaused = qfalse;
 	curSource->curGain = s_alGain->value * s_volume->value;
 	curSource->scaleGain = curSource->curGain;
 	curSource->local = local;
@@ -2240,9 +2242,13 @@ S_AL_StopAllSounds
 =================
 */
 static
+static qboolean alGamePaused = qfalse;	// S_AL_PauseGameSounds
+static qboolean alMusicPaused = qfalse;
+
 void S_AL_StopAllSounds( void )
 {
 	int i;
+	alGamePaused = alMusicPaused = qfalse;	// nothing is held after a full stop
 	S_AL_SrcShutup();
 	S_AL_StopBackgroundTrack();
 	for (i = 0; i < MAX_RAW_STREAMS; i++)
@@ -2285,6 +2291,91 @@ S_AL_Update
 =================
 */
 static
+/*
+=================
+S_AL_PauseGameSounds
+
+Single player pause (see S_PauseGameSounds): pause the one-shot sources and the music that are
+playing now, and play them again on resume. Sources started while paused (menu clicks, movie
+audio streams) are left alone; looping sources are re-added by the game every frame.
+=================
+*/
+static void S_AL_PauseGameSounds( qboolean pause )
+{
+	int i;
+	ALint state;
+
+	if( pause == alGamePaused )
+		return;
+	alGamePaused = pause;
+
+	for( i = 0; i < srcCount; i++ )
+	{
+		src_t *curSource = &srcList[i];
+
+		if( pause )
+		{
+			if( !curSource->isActive || !curSource->isPlaying || curSource->isLooping || curSource->isStream
+				|| curSource->isLocked )
+				continue;
+			qalGetSourcei( curSource->alSource, AL_SOURCE_STATE, &state );
+			if( state != AL_PLAYING )
+				continue;
+			qalSourcePause( curSource->alSource );
+			curSource->gamePaused = qtrue;
+		}
+		else if( curSource->gamePaused )
+		{
+			curSource->gamePaused = qfalse;
+			qalGetSourcei( curSource->alSource, AL_SOURCE_STATE, &state );
+			if( curSource->isActive && state == AL_PAUSED )
+				qalSourcePlay( curSource->alSource );
+		}
+	}
+
+	if( pause )
+	{
+		alMusicPaused = qfalse;
+		if( musicPlaying )
+		{
+			qalGetSourcei( musicSource, AL_SOURCE_STATE, &state );
+			if( state == AL_PLAYING )
+			{
+				qalSourcePause( musicSource );
+				alMusicPaused = qtrue;
+			}
+		}
+	}
+	else if( alMusicPaused )
+	{
+		alMusicPaused = qfalse;
+		if( musicPlaying )
+		{
+			qalGetSourcei( musicSource, AL_SOURCE_STATE, &state );
+			if( state == AL_PAUSED )
+				qalSourcePlay( musicSource );
+		}
+	}
+}
+
+/*
+=================
+S_AL_StopGameSounds
+
+Every sound effect and loop stops; the music and the raw streams (locked sources) play on.
+=================
+*/
+static void S_AL_StopGameSounds( void )
+{
+	int i;
+
+	for( i = 0; i < srcCount; i++ )
+	{
+		if( srcList[i].isActive && !srcList[i].isLocked && !srcList[i].isStream )
+			S_AL_SrcKill( i );
+	}
+}
+
 void S_AL_Update( void )
 {
 	int i;
@@ -2732,6 +2823,8 @@ qboolean S_AL_Init( soundInterface_t *si )
 	si->ClearSoundBuffer = S_AL_ClearSoundBuffer;
 	si->SoundInfo = S_AL_SoundInfo;
 	si->SoundList = S_AL_SoundList;
+	si->PauseGameSounds = S_AL_PauseGameSounds;
+	si->StopGameSounds = S_AL_StopGameSounds;
 
 #ifdef USE_VOIP
 	si->StartCapture = S_AL_StartCapture;

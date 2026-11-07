@@ -157,9 +157,44 @@ void S_RawSamples (int stream, int samples, int rate, int width, int channels,
 S_StopAllSounds
 =================
 */
+static int s_stopAllCount;
+
 void S_StopAllSounds( void )
 {
+	s_stopAllCount++;
 	if( si.StopAllSounds ) {
+		si.StopAllSounds( );
+	}
+}
+
+int S_StopAllSoundsCount( void )
+{
+	return s_stopAllCount;
+}
+
+/*
+=================
+S_PauseGameSounds
+=================
+*/
+void S_PauseGameSounds( qboolean pause )
+{
+	if( si.PauseGameSounds ) {
+		si.PauseGameSounds( pause );
+	}
+}
+
+/*
+=================
+S_StopGameSounds
+=================
+*/
+void S_StopGameSounds( void )
+{
+	s_stopAllCount++;	// the SP voice timers go with the voices
+	if( si.StopGameSounds ) {
+		si.StopGameSounds( );
+	} else if( si.StopAllSounds ) {
 		si.StopAllSounds( );
 	}
 }

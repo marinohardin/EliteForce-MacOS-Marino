@@ -154,6 +154,8 @@ static int        g_snapBaseTime = 0;        // serverTime of snapshot #1 this m
 #define SP_SV_FRAMEMSEC   50
 #define SP_INTERP_DELAY   50                  // trail newest snap by one tick so a nextSnap always exists
 #define SP_MAX_CATCHUP    5                   // drain at most 5 ticks (250ms) per render frame (hitch cap)
+#define SP_SKIP_MAX_TICKS 200                 // cutscene skip: up to 200 ticks (10 s of game time) per frame...
+#define SP_SKIP_BUDGET_MS 12                  // ...or 12 ms of real time, whichever comes first
 static int        g_simResidual = 0;          // millisecond accumulator (retail sv.timeResidual)
 
 // ---- savegame: byte-compatible with retail .sav (verified against real PC saves) ----
@@ -425,7 +427,9 @@ static qboolean W_AreasConnected( int a, int b ){ return CM_AreasConnected(a,b);
 static int   I_FS_ReadFile( const char *name, void **buf ){ return (int)FS_ReadFile(name,buf); }
 static void *I_Malloc( int bytes ){ return malloc((size_t)bytes); }
 static void  I_Free( void *p ){ free(p); }
+static int   g_spMovieQueued = 0;   // the game queued "inGameCinematic" this frame (see SP_DrawFrame's skip)
 static void  I_SendConsole( const char *t ){
+    if( t && !strncasecmp( t, "inGameCinematic", 15 ) ) g_spMovieQueued = 1;
     Cbuf_AddText(t);
 }
 static void  I_DropClient( int n, const char *r ){ (void)n;(void)r; }
@@ -525,7 +529,41 @@ static int   g_sOverride[MAX_GENTITIES];
 // We approximate it: when a CHAN_VOICE sound starts we record when it should finish, and refresh
 // g_sOverride[] from that each frame before ge->RunFrame.
 static int   g_voiceEnd[MAX_GENTITIES];
+extern "C" int S_StopAllSoundsCount( void );   // snd_main.c: bumps on every S_StopAllSounds / S_StopGameSounds
+static void SP_ClearVoiceTimers(void){
+    memset(g_voiceEnd, 0, sizeof(g_voiceEnd)); memset(g_sOverride, 0, sizeof(g_sOverride));
+}
+// Pause / cutscene-skip gates (SP_DrawFrame). While the sim is paused (console, menu, in-game movie) or a
+// camera scene is being skipped, the cgame's sound starts are dropped (the paused frame still runs the
+// cgame, and its ambient-set timers run on real time), and while skipping its renderer calls are dropped
+// too (retail stops drawing the 3D view during a skip).
+static int   s_spSoundsBlocked = 0;
+static int   s_spSkipDraw = 0;
+// Retail cutscene skip: Use Item in a camera scene sets skippingCinematic 1 + timescale 100 and the game
+// clears both when the camera ends (g_active.cpp ClientThink_real); an in-game movie clears them too
+// (cl_cin.c). This ends a skip wherever the level ends without the game seeing the camera end.
+static void SP_EndCutsceneSkip(void){
+    if( Cvar_VariableIntegerValue("skippingCinematic") ){
+        Cvar_Set("skippingCinematic", "0");
+        Cvar_Set("timescale", "1");
+    }
+}
 static void SP_UpdateVoiceOverride(void){
+    // The voice timers count level time, so they must go when the clock jumps (a load sets the saved
+    // time, an autosave load or a transition resets it to 1000) or the voices they time are stopped
+    // (S_StopAllSounds). Otherwise a stale end time from before keeps a mouth moving with no voice and
+    // holds the script's TID_CHAN_VOICE wait (Munro's lost first line after a load). The sim advances
+    // 50 or 100 ms between calls; anything else is a jump. A pause holds both the voice and the clock.
+    { static int s_lastTime = 0, s_lastStops = -1;
+      int stops = S_StopAllSoundsCount();
+      if( stops != s_lastStops || g_levelTime < s_lastTime || g_levelTime > s_lastTime + 1000 ){
+          int talking = 0;
+          for(int i=0;i<MAX_GENTITIES;i++) if(g_voiceEnd[i] > g_levelTime) talking++;
+          if( talking ) blog("voice: dropped %d voice timer(s) (%s, levelTime %d -> %d)\n", talking,
+                             stops != s_lastStops ? "sounds stopped" : "clock jump", s_lastTime, g_levelTime);
+          SP_ClearVoiceTimers();
+      }
+      s_lastStops = stops; s_lastTime = g_levelTime; }
     // gi.S_Override[ent] is the facial VISEME index, not a flag: the cgame draws
     // head->customSkin = ci->headSkin + S_Override, where the head ships 8 mouth-shape skins
     // (head_*-1..8) now registered as viseme extensions in the renderer (RE_RegisterSkin). Retail
@@ -565,6 +603,7 @@ extern "C" void SP_UnloadGame( void ){
         dlclose( g_lib );
     }
     g_lib = NULL; ge = NULL; g_vmMain = NULL; g_spActive = 0;
+    SP_EndCutsceneSkip();   // a load / new game / abort ends any camera-scene skip (timescale back to 1)
     // H3: g_linked[] holds raw gentity_t* into the module we just dlclose'd. Leaving them dangling is a
     // use-after-free waiting for one missing g_spActive gate. The next spawn resets g_numLinked anyway;
     // zero them now so nothing can walk a freed pointer in between.
@@ -923,14 +962,14 @@ static void SP_AS_ParseSets(void){
 static void SP_AS_UpdateAmbientSet(const char* name, const float* origin){
     as_set_t* s = AS_FindSet(name);
     if(!s) return;
-    if(s->looped > 0)
+    if(s->looped > 0 && !s_spSoundsBlocked)
         SPR_S_AddLoopingSound(MAX_GENTITIES-1, origin, s_asZero, s->looped);   // bed on ENTITYNUM_NONE
     if(s->numSubWaves > 0){
         int now = Sys_Milliseconds();
         if(s->nextWave == 0)        s->nextWave = now + AS_RandInterval(s);     // delay first blip
         else if(now >= s->nextWave){
             int h = s->subWaves[rand()%s->numSubWaves];
-            if(h > 0) SPR_S_StartSoundVol(NULL, 0, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // non-positional, volRange
+            if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(NULL, 0, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // non-positional, volRange
             s->nextWave = now + AS_RandInterval(s);
         }
     }
@@ -939,11 +978,11 @@ static int SP_AS_AddLocalSet(const char* name, const float* origin, int entID, i
     int now = Sys_Milliseconds();
     as_set_t* s = AS_FindSet(name);
     if(!s) return now;                                                          // retail: "retry next frame"
-    if(s->looped > 0 && entID>=0 && entID<MAX_GENTITIES)
+    if(s->looped > 0 && entID>=0 && entID<MAX_GENTITIES && !s_spSoundsBlocked)
         SPR_S_AddLoopingSound(entID, origin, s_asZero, s->looped);
     if(s->numSubWaves > 0 && now >= setTime){
         int h = s->subWaves[rand()%s->numSubWaves];
-        if(h > 0) SPR_S_StartSoundVol(origin, entID, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // positional, volRange
+        if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(origin, entID, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // positional, volRange
         return now + AS_RandInterval(s);
     }
     return setTime;
@@ -958,6 +997,21 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     intptr_t args[16]; va_list ap; va_start(ap,cmd);
     for(int i=0;i<16;i++) args[i]=va_arg(ap,intptr_t);
     va_end(ap);
+    if( s_spSkipDraw ){    // skipping a camera scene: the cgame runs (commands, camera) but draws nothing
+        switch(cmd){
+        case CG_R_ADDREFENTITYTOSCENE: case CG_R_ADDPOLYTOSCENE: case CG_R_ADDLIGHTTOSCENE:
+        case CG_R_RENDERSCENE: case CG_R_DRAWSTRETCHPIC: case CG_R_DRAWROTATEPIC: case CG_R_DRAWSCREENSHOT:
+            return 0;
+        default: break;
+        }
+    }
+    if( s_spSoundsBlocked ){   // paused or skipping: no new game sounds (the music still plays)
+        switch(cmd){
+        case CG_S_STARTSOUND: case CG_S_STARTLOCALSOUND: case CG_S_ADDLOOPINGSOUND:
+            return 0;
+        default: break;
+        }
+    }
     switch(cmd){
 #ifdef __ANDROID__
     case CG_PRINT:        blog("%s",(const char*)P(0)); return 0;
@@ -1073,6 +1127,7 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
         if((sChan==3 || sChan==4) && sEnt>=0 && sEnt<MAX_GENTITIES){
             int dur = SPR_S_GetSampleLength(sSfx);
             g_voiceEnd[sEnt] = g_levelTime + (dur>0 ? dur : 2500);
+            blog("voice: ent %d talks %d ms from levelTime %d\n", sEnt, dur>0 ? dur : 2500, g_levelTime);
             g_sOverride[sEnt] = 1;
         }
         return 0; }
@@ -1717,6 +1772,35 @@ extern "C" void SP_AbortState(void){
 // The currently-active SP map name (empty if none). Used by SP_MapWrap_f to debounce a spurious
 // repeat of 'map <same-map>' that would otherwise reload and hit the renderer's redundant-world guard.
 extern "C" const char* SP_CurMap(void){ return g_curMap; }
+extern "C" {
+    void  S_PauseGameSounds( qboolean pause );   // snd_main.c: hold / resume the game's sounds + music
+    void  S_StopGameSounds( void );              // snd_main.c: stop effects + loops, keep the music
+    void  S_ClearLoopingSounds( qboolean killall );
+    float Cvar_VariableValue( const char *name );
+}
+// The cutscene-skip screen: black, with a row of LCARS-orange dots, one lit and stepping along, in place
+// of the 3D view while the scene fast-forwards (retail drew nothing new while skipping).
+static void SP_DrawSkipProgress(void){
+    int w = g_glconfig.vidWidth, h = g_glconfig.vidHeight;
+    if( w <= 0 || h <= 0 ) SPR_GetVidSize(&w, &h);
+    if( w <= 0 || h <= 0 ) return;
+    int white = SPR_RegisterShaderNoMip("white");
+    static const float black[4] = { 0, 0, 0, 1 };
+    static const float dim[4]   = { 0.45f, 0.27f, 0.10f, 1 };
+    static const float lit[4]   = { 1.00f, 0.60f, 0.20f, 1 };
+    SPR_SetColor(black);
+    SPR_DrawStretchPic(0, 0, (float)w, (float)h, 0, 0, 1, 1, white);
+    const int n = 5;
+    float d = h / 60.0f; if( d < 4 ) d = 4;           // dot size scales with the screen
+    float gap = d * 1.5f, rowW = n*d + (n-1)*gap;
+    float x0 = (w - rowW) * 0.5f, y = h * 0.5f - d * 0.5f;
+    int on = ( Sys_Milliseconds() / 200 ) % n;
+    for( int i = 0; i < n; i++ ){
+        SPR_SetColor( i == on ? lit : dim );
+        SPR_DrawStretchPic(x0 + i*(d+gap), y, d, d, 0, 0, 1, 1, white);
+    }
+    SPR_SetColor(NULL);
+}
 // Advance the sim by REAL elapsed wall-clock time each rendered frame. This keeps the original's
 // smooth per-frame structure (RunFrame every frame -> smooth view) while running at CORRECT speed
 // (the prior code added a fixed 50ms/frame -> 3x at 60fps; a 20Hz accumulator was correct-speed but
@@ -1731,20 +1815,22 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     int delta = now - lastReal; lastReal = now;
     if(delta < 1) delta = 1; if(delta > 100) delta = 100;   // clamp hitches (no >100ms sim jumps)
 
-    // PAUSE when the in-game menu (ESC) or console is up: retail SP pauses the server; our loopback has no
-    // server, so freeze the sim here — do NOT advance g_levelTime or run ClientThink/RunFrame; just re-draw
-    // the frozen frame behind the menu. (lastReal is already updated above, so unpausing won't time-jump.)
+    // PAUSE when the in-game menu (ESC), the console or an in-game movie is up: retail SP pauses the
+    // server; our loopback has no server, so freeze the sim here -- do NOT advance g_levelTime or run
+    // ClientThink/RunFrame; just re-draw the frozen frame behind the menu. (lastReal is already updated
+    // above, so unpausing won't time-jump.)
     { extern int SP_MenuPaused(void);
       static int s_wasPaused = 0;
       if( SP_MenuPaused() ){
-        // EF1 SP 1:1: silence in-flight audio ONCE on the unpaused->paused edge. Retail pauses the SERVER,
-        // and its UI dll issues "stopsound" (-> S_StopAllSounds) the moment the in-game menu opens.
-        // The SP loopback has no server pause; the sound mixer clock (s_soundtime from
-        // SNDDMA_GetDMAPos) is WALL-CLOCK not sim-time, and CL_Frame calls S_Update every frame, so without
-        // this the VO mid-line, explosions, music and ambient loops keep playing audibly while the sim is
-        // frozen. Edge-triggered (NOT every frame) so it doesn't re-flush the DMA buffer or kill the menu's
-        // own click sounds. Matches retail "pause = stopsound on menu-open"; reset on the unpaused path below.
-        if( !s_wasPaused ){ extern void S_StopAllSounds(void); S_StopAllSounds(); s_wasPaused = 1;
+        // Hold the game's sounds and the music where they are (S_PauseGameSounds): they used to be
+        // stopped with S_StopAllSounds on this edge, which lost the music and the current voice line for
+        // good (and left its lip-sync / dialog timer running). Retail didn't stop sounds for the in-game
+        // menu either (the UI's "stopsound" there is commented out, ui_menu.cpp). Menu clicks still play,
+        // and the voice timers count level time, which is frozen with the voice. New game sounds are
+        // dropped while paused (s_spSoundsBlocked).
+        S_PauseGameSounds( qtrue );
+        s_spSoundsBlocked = 1;
+        if( !s_wasPaused ){ s_wasPaused = 1;
             // Grab the save-menu thumbnail ONCE here, on the gameplay->menu edge (not every gameplay
             // second). The capture is a full-screen GPU readback that stalls the Adreno pipeline ~100ms;
             // doing it per-second during play was the dominant stutter. You only save from this menu, so a
@@ -1754,7 +1840,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
             // drawn (CG_DRAW_ACTIVE_FRAME below) but the pause menu is skipped for this frame -> the readback is
             // just the game, not the menu over it. Was capturing menu+game; the saved 'SHOT' showed the menu.
             SPR_RequestSaveThumb(); SP_ArmMenuSuppress();
-            blog("EFSP: save-thumbnail capture armed (menu suppressed 1 frame for a clean game shot)\n"); }
+            blog("EFSP: paused: game sounds held, save-thumbnail capture armed\n"); }
         // Freeze the sim but redraw at the SAME trailing cg.time the active path uses below (g_levelTime and
         // g_simResidual are frozen while paused). Passing g_levelTime here instead would jump cg.time FORWARD
         // to the newest snap during the pause, then BACKWARD on unpause -> CG_ProcessSnapshots ERR_DROP
@@ -1762,18 +1848,39 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         int cgTime = g_levelTime - SP_SV_FRAMEMSEC + g_simResidual;
         if( cgTime >= g_levelTime )    cgTime = g_levelTime - 1;
         if( cgTime < g_snapBaseTime )  cgTime = g_snapBaseTime;
+        s_spSkipDraw = Cvar_VariableIntegerValue("skippingCinematic");   // paused mid-skip: keep the skip screen
         SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
-        // The paused CG_DRAW_ACTIVE_FRAME above re-adds every entity loopSound, and CL_Frame's
-        // unconditional per-frame S_Update re-mixes them -> machinery/ambient loops keep humming
-        // through the pause (the edge-only S_StopAllSounds can't catch them). Clear the loop list
-        // every paused frame so the pause is fully silent. One-shots/VO/music are event-driven and
-        // stay dead after the edge stop. (Diverges from retail, which leaves loops faintly audible;
-        // intentional — user wants a fully silent pause.)
-        { extern void S_ClearLoopingSounds(qboolean); S_ClearLoopingSounds(qtrue); }
+        s_spSkipDraw = 0;
+        if( Cvar_VariableIntegerValue("skippingCinematic") ) SP_DrawSkipProgress();
+        // The paused CG_DRAW_ACTIVE_FRAME above would re-add every entity loopSound, and CL_Frame's
+        // per-frame S_Update would mix them -> machinery/ambient loops hum through the pause. The adds are
+        // dropped while paused (s_spSoundsBlocked); clear the list too so loops added before the pause stop.
+        // The cgame re-adds them on its first frame after the pause. (Diverges from retail, which leaves
+        // loops faintly audible; intentional -- a silent pause.)
+        S_ClearLoopingSounds(qtrue);
         return;
       }
-      s_wasPaused = 0;   // unpaused this frame -> re-arm the pause-edge stopsound
+      if( s_wasPaused ){ s_wasPaused = 0; blog("EFSP: unpaused: game sounds resume\n"); }
+      S_PauseGameSounds( qfalse );   // resume held sounds where they were (no-op when not held)
     }
+
+    // CUTSCENE SKIP (retail): Use Item in a camera scene sets skippingCinematic 1 + timescale 100 (the
+    // game, g_active.cpp); the game ends it when the camera ends, an in-game movie ends it (cl_cin.c),
+    // and a load / quit ends it (SP_UnloadGame, CL_Disconnect). While skipping, timescale drives the sim
+    // (below), the 3D view isn't drawn (a progress screen instead), and the game's sounds stop -- like
+    // retail, which killed every sound but the music when a skip started.
+    static int s_wasSkipping = 0;
+    int skipping = Cvar_VariableIntegerValue("skippingCinematic");
+    if( skipping && !s_wasSkipping ){
+        S_StopGameSounds();      // effects, voices, loops; the music plays on
+        SP_ClearVoiceTimers();
+        blog("EFSP: cutscene skip started (timescale %g)\n", Cvar_VariableValue("timescale"));
+    } else if( !skipping && s_wasSkipping ){
+        blog("EFSP: cutscene skip ended at levelTime %d\n", g_levelTime);
+    }
+    s_wasSkipping = skipping;
+    s_spSoundsBlocked = skipping;
+    g_spMovieQueued = 0;
 
     // (Save-menu thumbnail capture is armed on the gameplay->menu edge in the pause block above, not here
     // every second — the per-second full-screen GPU readback was the dominant stutter. SP_SaveGame embeds
@@ -1795,9 +1902,21 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     // FIXED 50ms/20Hz SIM CADENCE — mirror retail SV_Frame:
     // accumulate real elapsed ms, then drain it in fixed SP_SV_FRAMEMSEC quanta, advancing g_levelTime by
     // exactly 50 each tick and emitting ONE snapshot per tick on the 50ms grid.
+    // While skipping a cutscene, timescale (100 from the game) scales the real delta, up to
+    // SP_SKIP_MAX_TICKS ticks and SP_SKIP_BUDGET_MS of real time per frame; what doesn't fit carries to
+    // the next frames, so a frame never hangs. The fast-forward stops at once when the skip ends (camera
+    // over) or the game queues an in-game movie, so the scene after it starts at normal speed.
+    int maxTicks = SP_MAX_CATCHUP;
+    if( skipping ){
+        float ts = Cvar_VariableValue("timescale");
+        if( ts < 1.0f ) ts = 1.0f; if( ts > 100.0f ) ts = 100.0f;
+        delta = (int)( delta * ts );
+        maxTicks = SP_SKIP_MAX_TICKS;
+    }
     g_simResidual += delta;
-    if( g_simResidual > SP_SV_FRAMEMSEC * SP_MAX_CATCHUP )   // hitch cap: bound catch-up, no spiral
-        g_simResidual = SP_SV_FRAMEMSEC * SP_MAX_CATCHUP;
+    if( g_simResidual > SP_SV_FRAMEMSEC * maxTicks )   // hitch cap: bound catch-up, no spiral
+        g_simResidual = SP_SV_FRAMEMSEC * maxTicks;
+    int simStart = Sys_Milliseconds();
     while( g_simResidual >= SP_SV_FRAMEMSEC ) {
         g_simResidual -= SP_SV_FRAMEMSEC;
         g_levelTime   += SP_SV_FRAMEMSEC;
@@ -1806,6 +1925,13 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         ge->ClientThink(0, &g_lastcmd);
         SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
         BuildSnapshot();
+        if( skipping ){
+            if( !Cvar_VariableIntegerValue("skippingCinematic") || g_spMovieQueued ){
+                g_simResidual %= SP_SV_FRAMEMSEC;   // skip over: back to real time from here
+                break;
+            }
+            if( Sys_Milliseconds() - simStart >= SP_SKIP_BUDGET_MS ) break;
+        }
     }
 
     // Deferred autosave: an autosave requested during a cutscene (in_camera) was held back by SP_SaveGame so it
@@ -1826,5 +1952,14 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     int cgTime = g_levelTime - SP_SV_FRAMEMSEC + g_simResidual;
     if( cgTime >= g_levelTime )    cgTime = g_levelTime - 1;
     if( cgTime < g_snapBaseTime )  cgTime = g_snapBaseTime;
+    // Still skipping after this frame's ticks: run the cgame (server commands, camera) without drawing.
+    int skipNow = Cvar_VariableIntegerValue("skippingCinematic") && !g_spMovieQueued;
+    s_spSoundsBlocked = skipNow;
+    s_spSkipDraw = skipNow;
     SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+    s_spSkipDraw = 0;
+    if( skipNow ){
+        SP_DrawSkipProgress();
+        S_ClearLoopingSounds(qtrue);
+    }
 }
