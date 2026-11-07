@@ -8,7 +8,9 @@
  *   tty][ui] SP UI loaded (UI_API_VERSIO--- Common Initialization Complete ---
  *
  *   ANDROID_LOG_DEBUG  -> only when 'developer' is set (bridge chatter)
- *   ANDROID_LOG_INFO   -> always
+ *   ANDROID_LOG_INFO   -> always, but console and log only: "[skipnotify]" keeps
+ *                         these diagnostics (e.g. the autosave's "save: wrote ...")
+ *                         off the on-screen notify lines, where they covered subtitles
  *   ANDROID_LOG_WARN   -> always, yellow
  *   ANDROID_LOG_ERROR  -> always, red
  *
@@ -38,6 +40,7 @@ int  Cvar_VariableIntegerValue( const char *var_name );
 static inline int ef_desktop_log( int prio, const char *tag, const char *fmt, va_list ap ) {
 	char buf[4096];
 	const char *color = "";
+	const char *notify = "";
 	size_t len;
 	int r = vsnprintf( buf, sizeof( buf ), fmt, ap );
 
@@ -51,11 +54,13 @@ static inline int ef_desktop_log( int prio, const char *tag, const char *fmt, va
 	}
 	if ( prio <= ANDROID_LOG_DEBUG && !Cvar_VariableIntegerValue( "developer" ) )
 		return r;
-	if ( prio == ANDROID_LOG_WARN )
+	if ( prio == ANDROID_LOG_INFO )
+		notify = "[skipnotify]";
+	else if ( prio == ANDROID_LOG_WARN )
 		color = "^3";
 	else if ( prio >= ANDROID_LOG_ERROR )
 		color = "^1";
-	SP_ComPrintf()( "%s[%s] %s\n", color, tag, buf );
+	SP_ComPrintf()( "%s%s[%s] %s\n", notify, color, tag, buf );
 	return r;
 }
 

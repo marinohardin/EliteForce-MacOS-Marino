@@ -1584,7 +1584,7 @@ void Sys_MacFrame( void )
 		if( [fileItem menu] )
 			[[fileItem menu] removeItem: fileItem];		// attached to an old menu bar
 		[bar insertItem: fileItem atIndex: 1];
-		Com_Printf( "macOS: %s the File menu (%s)\n", logged ? "re-added" : "added",
+		Com_Printf( "[skipnotify]macOS: %s the File menu (%s)\n", logged ? "re-added" : "added",
 			[[[[bar itemArray] valueForKey: @"title"] componentsJoinedByString: @" | "] UTF8String] );
 		logged = qtrue;
 	}

@@ -4594,12 +4594,12 @@ void vk_initialize( void )
 	// with the "Disabling MSAA" / "Clamping render resolution" / "skipping pixel
 	// readback" lines this pins the device, its real maxImageDimension2D (is the
 	// clamp a no-op?), and its MSAA support for any field crash report.
-	ri.Printf( PRINT_ALL, "VKDIAG: GPU '%s' vendor 0x%04X device 0x%04X\n",
+	ri.Printf( PRINT_ALL, "[skipnotify]VKDIAG: GPU '%s' vendor 0x%04X device 0x%04X\n",
 		props.deviceName, props.vendorID, props.deviceID );
-	ri.Printf( PRINT_ALL, "VKDIAG: api %u.%u.%u driverVersion 0x%08X\n",
+	ri.Printf( PRINT_ALL, "[skipnotify]VKDIAG: api %u.%u.%u driverVersion 0x%08X\n",
 		VK_VERSION_MAJOR( props.apiVersion ), VK_VERSION_MINOR( props.apiVersion ),
 		VK_VERSION_PATCH( props.apiVersion ), props.driverVersion );
-	ri.Printf( PRINT_ALL, "VKDIAG: maxImageDimension2D %u (render %dx%d) colorSamples 0x%X depthSamples 0x%X\n",
+	ri.Printf( PRINT_ALL, "[skipnotify]VKDIAG: maxImageDimension2D %u (render %dx%d) colorSamples 0x%X depthSamples 0x%X\n",
 		props.limits.maxImageDimension2D, glConfig.vidWidth, glConfig.vidHeight,
 		(unsigned)props.limits.sampledImageColorSampleCounts,
 		(unsigned)props.limits.sampledImageDepthSampleCounts );
@@ -4651,7 +4651,7 @@ void vk_initialize( void )
 		// registration); it does not touch steady-state rendering or resolution, and fast
 		// GPUs keep upload_flush_size == 0 (no change).
 		vk.upload_flush_size = TILER_UPLOAD_FLUSH_SIZE;
-		ri.Printf( PRINT_ALL, "VKDIAG: %s single-queue tiler -- capping upload submissions at %u KB\n",
+		ri.Printf( PRINT_ALL, "[skipnotify]VKDIAG: %s single-queue tiler -- capping upload submissions at %u KB\n",
 			( props.vendorID == 0x13B5 ) ? "Mali" : "PowerVR", (uint32_t)( vk.upload_flush_size / 1024 ) );
 #endif
 		// The real device loss on these parts (Mali-G52 MC2, stasis1 "Data Retrieval") is
@@ -4663,7 +4663,7 @@ void vk_initialize( void )
 		// vk.reg_img_* counters report the saving. Bump extraPicmip to 2 if 1 is not enough.
 		vk.extraPicmip = 1;
 		vk.maxTextureClamp = 512;
-		ri.Printf( PRINT_ALL, "VKDIAG: %s low-end tiler -- extraPicmip %d, maxTextureClamp %d (cut mission-load upload storm)\n",
+		ri.Printf( PRINT_ALL, "[skipnotify]VKDIAG: %s low-end tiler -- extraPicmip %d, maxTextureClamp %d (cut mission-load upload storm)\n",
 			( props.vendorID == 0x13B5 ) ? "Mali" : "PowerVR", vk.extraPicmip, vk.maxTextureClamp );
 	}
 #endif
@@ -7442,7 +7442,7 @@ void vk_prewarm_pipelines( void )
 		}
 	}
 	if ( count ) {
-		ri.Printf( PRINT_ALL, "Prewarmed %u pipelines (%u defs) in %i msec\n",
+		ri.Printf( PRINT_ALL, "[skipnotify]Prewarmed %u pipelines (%u defs) in %i msec\n",
 			count, vk.pipelines_count, ri.Milliseconds() - start_ms );
 	}
 

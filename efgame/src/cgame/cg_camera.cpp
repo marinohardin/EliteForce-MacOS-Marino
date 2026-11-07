@@ -15,6 +15,7 @@ void CGCam_TrackDisable( void );
 void CGCam_Distance( float distance, qboolean initLerp );
 void CGCam_DistanceDisable( void );
 extern int CG_CalcFOVFromX( float fov_x );
+extern qboolean CG_CalcFOVFromX43( float fov_x );   // cg_view.cpp: Hor+ on wide screens
 
 /*
 TODO:
@@ -988,11 +989,11 @@ void CGCam_Update( void )
 		{
 			actualFOV_X = client_camera.FOV + (( ( client_camera.FOV2 - client_camera.FOV ) ) / client_camera.FOV_duration ) * ( cg.time - client_camera.FOV_time );
 		}
-		CG_CalcFOVFromX( actualFOV_X );
+		CG_CalcFOVFromX43( actualFOV_X );   // camera FOVs are 4:3 values: Hor+ on a wide screen
 	}
 	else
 	{
-		CG_CalcFOVFromX( client_camera.FOV );
+		CG_CalcFOVFromX43( client_camera.FOV );
 	}
 
 	//Check for pan
