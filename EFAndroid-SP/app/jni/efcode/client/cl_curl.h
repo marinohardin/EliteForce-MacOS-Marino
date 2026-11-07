@@ -27,7 +27,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../qcommon/q_shared.h"
 #include "../qcommon/qcommon.h"
 
-#ifdef USE_LOCAL_HEADERS
+// USE_SYSTEM_CURL: the platform's own headers and library (macOS SDK, /usr/lib/libcurl)
+#if defined(USE_LOCAL_HEADERS) && !defined(USE_SYSTEM_CURL)
   #include "../curl-7.54.0/include/curl/curl.h"
 #else
   #include <curl/curl.h>
