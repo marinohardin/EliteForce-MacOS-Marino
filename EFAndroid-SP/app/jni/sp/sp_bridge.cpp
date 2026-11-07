@@ -1152,7 +1152,10 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     }
     if( s_spSoundsBlocked ){   // paused or skipping: no new game sounds (the music still plays)
         switch(cmd){
-        case CG_S_STARTSOUND: case CG_S_STARTLOCALSOUND: case CG_S_ADDLOOPINGSOUND:
+        case CG_S_STARTSOUND:
+            if( (int)A(2) == 3 || (int)A(2) == 4 ) blog("voice: dropped start on ent %d (sounds blocked)\n", (int)A(1));
+            return 0;
+        case CG_S_STARTLOCALSOUND: case CG_S_ADDLOOPINGSOUND:
             return 0;
         default: break;
         }
@@ -2106,6 +2109,11 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         g_lastcmd.serverTime = g_levelTime;
         Regress_SeedRand( g_levelTime );
         ge->ClientThink(0, &g_lastcmd);
+        // The game ends a skip in ClientThink (the camera is over: skippingCinematic 0, timescale 1), and the
+        // RunFrame right after it is already normal play: the script's next voice line starts there. Blocking
+        // sounds for the whole frame (from `skipping` above) dropped that line, and with no voice timer the
+        // dialog wait finished at once, so the line was lost for good.
+        if( skipping ) s_spSoundsBlocked = Cvar_VariableIntegerValue("skippingCinematic") ? 1 : 0;
         SP_GameRunFrame();
         BuildSnapshot();
         if( skipping ){

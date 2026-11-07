@@ -695,12 +695,18 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 
 	ch = S_ChannelMalloc();	// entityNum, entchannel);
 	if (!ch) {
+		// All channels busy: steal the oldest. Never a single player dialog line (SP channels 3 and 4,
+		// CHAN_VOICE / CHAN_VOICE_ATTEN): a line seconds long is always the oldest, and losing it in a
+		// busy fight also loses its subtitle timing and the script's wait. The new effect is dropped
+		// instead, as it is when only announcer sounds are left.
+		qboolean spVoice = !Com_Holomatch() ? qtrue : qfalse;
+#define S_STEALABLE( c ) ( (c)->entchannel != CHAN_ANNOUNCER && !( spVoice && ( (c)->entchannel == 3 || (c)->entchannel == 4 ) ) )
 		ch = s_channels;
 
 		oldest = sfx->lastTimeUsed;
 		chosen = -1;
 		for ( i = 0 ; i < MAX_CHANNELS ; i++, ch++ ) {
-			if (ch->entnum != listener_number && ch->entnum == entityNum && ch->allocTime<oldest && ch->entchannel != CHAN_ANNOUNCER) {
+			if (ch->entnum != listener_number && ch->entnum == entityNum && ch->allocTime<oldest && S_STEALABLE( ch )) {
 				oldest = ch->allocTime;
 				chosen = i;
 			}
@@ -708,7 +714,7 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 		if (chosen == -1) {
 			ch = s_channels;
 			for ( i = 0 ; i < MAX_CHANNELS ; i++, ch++ ) {
-				if (ch->entnum != listener_number && ch->allocTime<oldest && ch->entchannel != CHAN_ANNOUNCER) {
+				if (ch->entnum != listener_number && ch->allocTime<oldest && S_STEALABLE( ch )) {
 					oldest = ch->allocTime;
 					chosen = i;
 				}
@@ -717,7 +723,7 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 				ch = s_channels;
 				if (ch->entnum == listener_number) {
 					for ( i = 0 ; i < MAX_CHANNELS ; i++, ch++ ) {
-						if (ch->allocTime<oldest) {
+						if (ch->allocTime<oldest && !( spVoice && ( ch->entchannel == 3 || ch->entchannel == 4 ) )) {
 							oldest = ch->allocTime;
 							chosen = i;
 						}
@@ -729,6 +735,7 @@ static void S_Base_StartSoundEx( vec3_t origin, int entityNum, int entchannel, s
 				}
 			}
 		}
+#undef S_STEALABLE
 		ch = &s_channels[chosen];
 		ch->allocTime = sfx->lastTimeUsed;
 	}
