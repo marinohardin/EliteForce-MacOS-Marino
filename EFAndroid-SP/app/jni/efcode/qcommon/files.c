@@ -236,6 +236,7 @@ typedef struct {
 	int				pure_checksum;				// checksum for pure
 	int				numfiles;					// number of files in pk3
 	int				referenced;					// referenced file flags
+	qboolean		isDownload;					// loaded from <game>/downloads/
 	int				hashSize;					// hash table size (power of 2)
 	fileInPack_t*	*hashTable;					// hash table
 	fileInPack_t*	buildBuffer;				// buffer with the filenames etc.
@@ -304,6 +305,14 @@ static fileHandleData_t	fsh[MAX_FILE_HANDLES];
 // wether we did a reorder on the current search path when joining the server
 static qboolean fs_reordered;
 
+// From cMod by Noah Metzger (Chomenor): auto-downloaded pk3s live in
+// <game>/downloads/ and are kept below every other pak, so a server's pk3 can
+// add files (maps, models) but can't replace official or user-installed ones.
+// A downloaded pak listed by the remote server we're connected to
+// (sv_paks / sv_referencedPaks) gets its normal place instead.
+#define FS_DOWNLOAD_DIR "downloads"
+static qboolean fs_downloadsPromoted;	// a downloads/ pak currently has normal priority
+
 // never load anything from pk3 files that are not present at the server when pure
 static int		fs_numServerPaks = 0;
 static int		fs_serverPaks[MAX_SEARCH_PATHS];				// checksums
@@ -366,6 +375,42 @@ qboolean FS_PakIsPure( pack_t *pack ) {
 	return qtrue;
 }
 
+
+/*
+=================
+FS_DownloadPakListed
+
+From cMod by Noah Metzger (Chomenor): a pak from a downloads/ folder only
+gets normal search priority while we're connected to a remote server that
+lists it in sv_paks or sv_referencedPaks. When this process runs the server
+itself (local Holomatch hosting, single player) the lists come from our own
+filesystem, so downloads never get promoted there.
+=================
+*/
+static qboolean FS_DownloadPakListed( const pack_t *pack ) {
+	int i;
+
+	if ( !pack->isDownload ) {
+		return qfalse;
+	}
+	if ( !fs_numServerPaks && !fs_numServerReferencedPaks ) {
+		return qfalse;
+	}
+	if ( !com_sv_running || com_sv_running->integer ) {
+		return qfalse;
+	}
+	for ( i = 0 ; i < fs_numServerPaks ; i++ ) {
+		if ( pack->checksum == fs_serverPaks[i] ) {
+			return qtrue;
+		}
+	}
+	for ( i = 0 ; i < fs_numServerReferencedPaks ; i++ ) {
+		if ( pack->checksum == fs_serverReferencedPaks[i] ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
 
 /*
 =================
@@ -2843,6 +2888,10 @@ void FS_Path_f( void ) {
 	for (s = fs_searchpaths; s; s = s->next) {
 		if (s->pack) {
 			Com_Printf ("%s (%i files)\n", s->pack->pakFilename, s->pack->numfiles);
+			if ( s->pack->isDownload ) {
+				Com_Printf( "    downloaded pak (%s)\n", FS_DownloadPakListed( s->pack ) ?
+					"listed by server, normal priority" : "only adds files, never overrides" );
+			}
 			if ( fs_numServerPaks ) {
 				if ( !FS_PakIsPure(s->pack) ) {
 					Com_Printf( "    not on the pure list\n" );
@@ -2954,6 +3003,25 @@ static int QDECL paksort( const void *a, const void *b ) {
 	return FS_PathCmp( aa, bb );
 }
 
+// A pk3 found by FS_AddGameDirectory, either in the game folder itself or
+// in its downloads/ subfolder.
+typedef struct {
+	char		*name;			// file name, e.g. "pakcmod-1.pk3"
+	qboolean	isDownload;
+} pakEntry_t;
+
+static int QDECL pakentrysort( const void *a, const void *b ) {
+	const pakEntry_t *aa = (const pakEntry_t *)a;
+	const pakEntry_t *bb = (const pakEntry_t *)b;
+	int c = FS_PathCmp( aa->name, bb->name );
+
+	if ( c ) {
+		return c;
+	}
+	// same name in both places: the game folder copy sorts later, so it wins
+	return (int)bb->isDownload - (int)aa->isDownload;
+}
+
 /*
 ================
 FS_AddGameDirectory
@@ -2970,7 +3038,12 @@ void FS_AddGameDirectory( const char *path, const char *dir ) {
 	int				numfiles;
 	char			**pakfiles;
 	int				pakfilesi;
-	char			**pakfilestmp;
+	char			**dlfiles;
+	int				numdlfiles;
+	pakEntry_t		*pakentries;
+	char			dlpath[MAX_OSPATH + 1];
+	char			*pakentryname;
+	int				i;
 	int				numdirs;
 	char			**pakdirs;
 	int				pakdirsi;
@@ -2995,9 +3068,24 @@ void FS_AddGameDirectory( const char *path, const char *dir ) {
 	// Get .pk3 files
 	pakfiles = Sys_ListFiles(curpath, ".pk3", NULL, &numfiles, qfalse);
 
-	if ( pakfiles ) {
-		qsort( pakfiles, numfiles, sizeof(char*), paksort );
+	// From cMod by Noah Metzger (Chomenor): also load the pk3s in the
+	// downloads/ subfolder. They're sorted in with the others by name (their
+	// place while a server lists them) and FS_DemoteDownloadPaks moves the
+	// rest below everything else once the whole search path is built.
+	Com_sprintf( dlpath, sizeof( dlpath ), "%s%c%s", curpath, PATH_SEP, FS_DOWNLOAD_DIR );
+	dlfiles = Sys_ListFiles( dlpath, ".pk3", NULL, &numdlfiles, qfalse );
+
+	pakentries = Z_Malloc( ( numfiles + numdlfiles + 1 ) * sizeof( *pakentries ) );
+	for ( i = 0 ; i < numfiles ; i++ ) {
+		pakentries[i].name = pakfiles[i];
+		pakentries[i].isDownload = qfalse;
 	}
+	for ( i = 0 ; i < numdlfiles ; i++ ) {
+		pakentries[numfiles + i].name = dlfiles[i];
+		pakentries[numfiles + i].isDownload = qtrue;
+	}
+	numfiles += numdlfiles;
+	qsort( pakentries, numfiles, sizeof( *pakentries ), pakentrysort );
 
 	if ( fs_numServerPaks ) {
 		numdirs = 0;
@@ -3026,21 +3114,32 @@ void FS_AddGameDirectory( const char *path, const char *dir ) {
 		else {
 			// Could be either, compare to see which name comes first
 			// Need tmp variables for appropriate indirection for paksort()
-			pakfilestmp = &pakfiles[pakfilesi];
+			pakentryname = pakentries[pakfilesi].name;
 			pakdirstmp = &pakdirs[pakdirsi];
-			pakwhich = (paksort(pakfilestmp, pakdirstmp) < 0);
+			pakwhich = (paksort(&pakentryname, pakdirstmp) < 0);
 		}
 
 		if (pakwhich) {
 			// The next .pk3 file is before the next .pk3dir
-			pakfile = FS_BuildOSPath(path, dir, pakfiles[pakfilesi]);
-			if ((pak = FS_LoadZipFile(pakfile, pakfiles[pakfilesi])) == 0) {
+			if ( pakentries[pakfilesi].isDownload ) {
+				pakfile = FS_BuildOSPath( path, dir, va( "%s%c%s", FS_DOWNLOAD_DIR, PATH_SEP, pakentries[pakfilesi].name ) );
+			} else {
+				pakfile = FS_BuildOSPath( path, dir, pakentries[pakfilesi].name );
+			}
+			// a downloaded pak keeps its plain name (pakBasename) and game name,
+			// so it's reported to servers as <game>/<name> like the server expects
+			if ((pak = FS_LoadZipFile(pakfile, pakentries[pakfilesi].name)) == 0) {
 				// This isn't a .pk3! Next!
 				pakfilesi++;
 				continue;
 			}
 
-			Q_strncpyz(pak->pakPathname, curpath, sizeof(pak->pakPathname));
+			pak->isDownload = pakentries[pakfilesi].isDownload;
+			if ( pak->isDownload ) {
+				Q_strncpyz( pak->pakPathname, dlpath, sizeof( pak->pakPathname ) );
+			} else {
+				Q_strncpyz( pak->pakPathname, curpath, sizeof( pak->pakPathname ) );
+			}
 			// store the game name for downloading
 			Q_strncpyz(pak->pakGamename, dir, sizeof(pak->pakGamename));
 
@@ -3081,7 +3180,9 @@ void FS_AddGameDirectory( const char *path, const char *dir ) {
 	}
 
 	// done
+	Z_Free( pakentries );
 	Sys_FreeFileList( pakfiles );
+	Sys_FreeFileList( dlfiles );
 	Sys_FreeFileList( pakdirs );
 
 	//
@@ -3178,10 +3279,30 @@ we are not interested in a download string format, we want something human-reada
 
 ================
 */
+/*
+================
+FS_DownloadLocalName
+
+From cMod by Noah Metzger (Chomenor): where a pak the server calls
+"<game>/<name>" is saved: "<game>/downloads/<name>" (without .pk3).
+================
+*/
+static void FS_DownloadLocalName( const char *serverName, char *out, int outSize ) {
+	const char *slash = strchr( serverName, '/' );
+
+	if ( !slash || slash == serverName || !slash[1] ) {
+		Q_strncpyz( out, serverName, outSize );
+		return;
+	}
+	Com_sprintf( out, outSize, "%.*s/%s/%s", (int)( slash - serverName ), serverName,
+		FS_DOWNLOAD_DIR, slash + 1 );
+}
+
 qboolean FS_ComparePaks( char *neededpaks, int len, qboolean dlstring ) {
 	searchpath_t	*sp;
 	qboolean havepak;
 	char *origpos = neededpaks;
+	char localName[MAX_ZPATH];
 	int i;
 
 	if (!fs_numServerReferencedPaks)
@@ -3223,6 +3344,9 @@ qboolean FS_ComparePaks( char *neededpaks, int len, qboolean dlstring ) {
 		if ( !havepak && fs_serverReferencedPakNames[i] && *fs_serverReferencedPakNames[i] ) { 
 			// Don't got it
 
+			// new downloads go to <game>/downloads/ (from cMod)
+			FS_DownloadLocalName( fs_serverReferencedPakNames[i], localName, sizeof( localName ) );
+
 			if (dlstring)
 			{
 				// We need this to make sure we won't hit the end of the buffer or the server could
@@ -3239,17 +3363,17 @@ qboolean FS_ComparePaks( char *neededpaks, int len, qboolean dlstring ) {
 				// Local name
 				Q_strcat( neededpaks, len, "@");
 				// Do we have one with the same name?
-				if ( FS_SV_FileExists( va( "%s.pk3", fs_serverReferencedPakNames[i] ) ) )
+				if ( FS_SV_FileExists( va( "%s.pk3", localName ) ) )
 				{
 					char st[MAX_ZPATH];
 					// We already have one called this, we need to download it to another name
 					// Make something up with the checksum in it
-					Com_sprintf( st, sizeof( st ), "%s.%08x.pk3", fs_serverReferencedPakNames[i], fs_serverReferencedPaks[i] );
+					Com_sprintf( st, sizeof( st ), "%s.%08x.pk3", localName, fs_serverReferencedPaks[i] );
 					Q_strcat( neededpaks, len, st );
 				}
 				else
 				{
-					Q_strcat( neededpaks, len, fs_serverReferencedPakNames[i] );
+					Q_strcat( neededpaks, len, localName );
 					Q_strcat( neededpaks, len, ".pk3" );
 				}
 
@@ -3266,7 +3390,8 @@ qboolean FS_ComparePaks( char *neededpaks, int len, qboolean dlstring ) {
 				Q_strcat( neededpaks, len, fs_serverReferencedPakNames[i] );
 				Q_strcat( neededpaks, len, ".pk3" );
 				// Do we have one with the same name?
-				if ( FS_SV_FileExists( va( "%s.pk3", fs_serverReferencedPakNames[i] ) ) )
+				if ( FS_SV_FileExists( va( "%s.pk3", fs_serverReferencedPakNames[i] ) ) ||
+					FS_SV_FileExists( va( "%s.pk3", localName ) ) )
 				{
 					Q_strcat( neededpaks, len, " (local file exists with wrong checksum)");
 				}
@@ -3371,6 +3496,68 @@ static void FS_ReorderPurePaks( void )
 			p_previous = &s->next;
 		}
 	}
+}
+
+/*
+================
+FS_DemoteDownloadPaks
+
+From cMod by Noah Metzger (Chomenor): move pk3s from downloads/ folders to
+the end of the search path, below every pak and directory the player
+installed, so they only add files nobody else has. Paks listed by the remote
+server we're connected to keep their normal place. Relative order among the
+demoted paks is kept (a mod's downloads still beat baseEF's).
+================
+*/
+static void FS_DemoteDownloadPaks( void ) {
+	searchpath_t	*s, **prev;
+	searchpath_t	*demoted = NULL, **demotedTail = &demoted;
+
+	fs_downloadsPromoted = qfalse;
+
+	prev = &fs_searchpaths;
+	while ( ( s = *prev ) != NULL ) {
+		if ( s->pack && s->pack->isDownload ) {
+			if ( FS_DownloadPakListed( s->pack ) ) {
+				fs_downloadsPromoted = qtrue;
+			} else {
+				*prev = s->next;
+				s->next = NULL;
+				*demotedTail = s;
+				demotedTail = &s->next;
+				continue;
+			}
+		}
+		prev = &s->next;
+	}
+	*prev = demoted;
+}
+
+/*
+================
+FS_CleanDownloadTemps
+
+From cMod by Noah Metzger (Chomenor) (download folder): remove interrupted
+downloads (*.tmp) left in <game>/downloads/ under the home path. Called once
+at startup, before any download can be running.
+================
+*/
+static void FS_CleanDownloadTemps( const char *game ) {
+	char	dlpath[MAX_OSPATH];
+	char	**files;
+	int		numfiles, i;
+
+	if ( !game || !game[0] || !fs_homepath || !fs_homepath->string[0] ) {
+		return;
+	}
+
+	Q_strncpyz( dlpath, FS_BuildOSPath( fs_homepath->string, game, FS_DOWNLOAD_DIR ), sizeof( dlpath ) );
+	files = Sys_ListFiles( dlpath, ".tmp", NULL, &numfiles, qfalse );
+	for ( i = 0 ; i < numfiles ; i++ ) {
+		Com_Printf( "Removing interrupted download %s%c%s\n", dlpath, PATH_SEP, files[i] );
+		FS_Remove( va( "%s%c%s", dlpath, PATH_SEP, files[i] ) );
+	}
+	Sys_FreeFileList( files );
 }
 
 /*
@@ -3505,6 +3692,9 @@ static void FS_Startup( const char *gameName )
 	Cmd_AddCommand ("fdir", FS_NewDir_f );
 	Cmd_AddCommand ("touchFile", FS_TouchFile_f );
 	Cmd_AddCommand ("which", FS_Which_f );
+
+	// keep downloaded pk3s from overriding installed files (from cMod)
+	FS_DemoteDownloadPaks();
 
 	// https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=506
 	// reorder the pure pk3 files according to server order
@@ -4189,6 +4379,10 @@ void FS_PureServerSetLoadedPaks( const char *pakSums, const char *pakNames ) {
 			// https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=540
 			// force a restart to make sure the search order will be correct
 			Com_DPrintf( "FS search reorder is required\n" );
+			// the referenced list is being replaced or cleared too (systeminfo,
+			// disconnect); drop it now so the restart doesn't briefly promote
+			// downloaded paks (see FS_DownloadPakListed)
+			fs_numServerReferencedPaks = 0;
 			FS_Restart(fs_checksumFeed);
 			return;
 		}
@@ -4263,6 +4457,13 @@ void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames )
 		c = d;
 
 	fs_numServerReferencedPaks = c;	
+
+	if ( !fs_numServerPaks && !fs_numServerReferencedPaks && fs_downloadsPromoted ) {
+		// left a server that had promoted a downloaded pak: restart so it
+		// goes back below the installed files (from cMod by Noah Metzger)
+		Com_DPrintf( "FS restart to demote downloaded paks\n" );
+		FS_Restart( fs_checksumFeed );
+	}
 }
 
 /*
@@ -4288,6 +4489,12 @@ void FS_InitFilesystem( void ) {
 
 	// try to start up normally
 	FS_Startup(com_basegame->string);
+
+	// drop interrupted downloads from an earlier run (from cMod)
+	FS_CleanDownloadTemps( com_basegame->string );
+	if ( fs_gamedirvar->string[0] && Q_stricmp( fs_gamedirvar->string, com_basegame->string ) ) {
+		FS_CleanDownloadTemps( fs_gamedirvar->string );
+	}
 
 #ifndef STANDALONE
 	FS_CheckPak0( );
