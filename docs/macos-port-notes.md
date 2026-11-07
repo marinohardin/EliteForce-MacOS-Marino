@@ -659,3 +659,37 @@ Test gotcha: `sv_minSnaps` and `sv_lanForceRate` are `CVAR_ARCHIVE`, so a test v
 `hmconfig_server.cfg` and affects later runs. A saved low `sv_minSnaps` would also cap High's benefit.
 
 Not tested: the retail Windows client, real latency or packet loss, several human clients, and feel.
+
+## SP Level Start: Settle Frames, View Angles, Out-of-View Loops (2026-11-07)
+
+Three single-player start-of-level problems, all in the SP bridge (`EFAndroid-SP/app/jni/sp/sp_bridge.cpp`).
+
+**Settle frames.** Retail `SV_SpawnServer` runs three 100 ms game frames after `Init` and before any
+client connects (stock Q3 `sv_init.c`), and the client only enters the world after loading cgame, while the
+server keeps running. The bridge ran one frame and showed the first snapshot at once, so:
+- voy1 autosave: NPC `EV_PLAYER_TELEPORT_IN` events (fired at 1100) were still valid (300 ms) in the first
+  snapshots, and the crew visibly beamed in. The player also hung in the air.
+- New Game / borg transitions: the player was falling at the first snapshot (borg2: z 33 to 16 in 150 ms).
+
+Now `SP_SpawnServer` and eAUTO transitions run `SP_RunFrames(3)` after `Init`, and `SP_SettleClient(4)`
+runs four 50 ms ClientThink+RunFrame ticks after `ClientBegin` (with `cmd.weapon` matching `ps.weapon` so
+the weapon is not lowered) before the load screen goes. First snapshot is at 1500. eFULL saves skip the
+pre-client frames (the save already holds settled state). An eAUTO load keeps the save's `TIME` when it is
+later than the reset clock. The `level.time > 1000` gate in `g_target.cpp` is now always passed for fresh
+spawns, as in retail.
+
+**View angles.** `cl.viewangles` was never cleared on SP level changes (retail `CL_ClearState` zeroed it),
+so the previous level's mouse turn was added to the new spawn angles (borg2 faced -43 instead of -90).
+`SP_ResetViewAngles()` (`sp_integration.c`) clears it before `ClientBegin`.
+
+**Forcefield hum after the holodeck.** Retail only sent entities in the viewer's PVS; the bridge sends
+every entity, and cgame re-adds every snapshot entity's `loopSound` each frame, so holodeck's three
+`borgfieldhum` `target_speaker`s were heard from the corridor and turbolift. `BuildSnapshot` now zeroes
+`loopSound` (only) for linked, non-broadcast entities outside the viewpoint's PVS. The viewpoint is the
+cgame camera when one is active (`CG_GetCameraPos`, looked up by `dlsym` and exported from `efgame.exp` /
+`efgame.ver`), else the player's eye. No area test: the save `PRTS` chunk (areaportal state, numAreas²×4)
+is written as zeros and not restored, so area connectivity is wrong after loads. Full entity culling plus
+real `PRTS` save/restore is a possible follow-up. A loop seen only through a portal surface may be culled.
+
+Tested on Mac: New Game borg1, borg1 to borg2, voy1 autosave, eFULL loads (borg1, voy1), autosave reload,
+hum on/off between the sim room and corridor. Not tested: Android, by ear, the whole prologue played by hand.
