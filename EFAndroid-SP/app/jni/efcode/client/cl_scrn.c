@@ -1027,6 +1027,13 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 			// never enters CA_CINEMATIC for it. The world was just drawn (frozen, since the
 			// SP bridge holds the sim while cl_paused); draw the video stretched over it.
 			if ( CL_InGameCinematicActive() ) {
+				// The video is full screen (0,0,640,480) but keeps its 4:3 shape on a wide
+				// screen (cl_flexibleDisplay), so black out the frozen world and HUD first:
+				// the sides become black pillarbox bars instead of the paused level. Retail
+				// at 4:3 showed no world around the video either.
+				re.SetColor( g_color_table[0] );
+				re.DrawStretchPic( 0, 0, cls.glconfig.vidWidth, cls.glconfig.vidHeight, 0, 0, 0, 0, cls.whiteShader );
+				re.SetColor( NULL );
 				SCR_DrawCinematic();
 			}
 #ifdef USE_FLEXIBLE_DISPLAY
