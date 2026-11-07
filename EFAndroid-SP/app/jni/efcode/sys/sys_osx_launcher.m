@@ -63,6 +63,11 @@ Test hooks (environment variables):
   VOYAGERSP_TEST_LINK=<stvef://...>  open that link once the launcher is up
   VOYAGERSP_TEST_UPDATE_ALERT=<file.png>  run Check for Updates…, render its
                                 answer and quit
+  VOYAGERSP_TEST_NODIALOG=1   never show an error/question alert (sys_osx.m
+                                Sys_Dialog): print it on stderr and take the
+                                default, so a fatal error just exits (exit 3)
+  (the regression harness, macos/regress.sh, uses +set regress_* cvars: see
+  qcommon/regress.c)
 ===========================================================================
 */
 

@@ -33,6 +33,8 @@
 #                      record copies it into the baseline, and check loads that copy)
 #   EF_DATA=<dir>      the baseEF folder with pak0-pak3 (default ~/Library/Application Support/EliteForce-MacOS/baseEF)
 #   KEEP=1             keep the scratch folder (logs, console output) for a look
+#   TMPDIR=<dir>       where the scratch folder goes (default: your private temp folder; use one only
+#                      this run uses: it holds the scratch HOMEs while the game runs)
 #
 # Runtime: about 2 minutes for all five on an M-series Mac. A window opens for the SP and listen-server
 # runs: leave it alone (keys/mouse are ignored, but Esc or the console would pause single player).
@@ -85,7 +87,12 @@ T="${TMPDIR:-/tmp}"
 SCRATCH="$(mktemp -d "${T%/}/voyagersp-regress.XXXXXX")"
 OWN_APP=""
 cleanup() {
-	[ -n "${PID:-}" ] && kill "$PID" 2>/dev/null
+	# stop a run that's still going and wait for it to exit before its scratch HOME goes
+	if [ -n "${PID:-}" ]; then
+		kill "$PID" 2>/dev/null
+		n=0; while kill -0 "$PID" 2>/dev/null && [ $n -lt 20 ]; do sleep 0.5; n=$((n + 1)); done
+		kill -9 "$PID" 2>/dev/null; wait "$PID" 2>/dev/null
+	fi
 	if [ -n "$OWN_APP" ]; then
 		"$LSREGISTER" -u "$OWN_APP" 2>/dev/null
 		rm -rf "$OWN_APP"
@@ -131,11 +138,15 @@ esac
 # ---- one scenario ------------------------------------------------------------------
 # run_scenario NAME LOG: run it with a fresh HOME, write the fingerprint log to LOG
 run_scenario() {
+	RC=""
 	sc="$1"; log="$2"
 	H="$SCRATCH/home-$sc"
 	D="$H/Library/Application Support/EliteForce-MacOS/baseEF"
 	mkdir -p "$D/saves"
-	for p in pak0 pak1 pak2 pak3; do ln -s "$EF_DATA/$p.pk3" "$D/$p.pk3"; done
+	for p in pak0 pak1 pak2 pak3; do
+		ln -s "$EF_DATA/$p.pk3" "$D/$p.pk3"
+		[ -f "$D/$p.pk3" ] || { echo "regress: $D/$p.pk3 isn't readable" >&2; SECS=0; return 1; }
+	done
 	common="+set regress_log \"$log\" +set r_fullscreen 0 +set r_swapInterval 0 +set com_maxfps 0"
 	sp="+set com_holomatch 0 $common"
 	hm="+set com_holomatch 1 $common +set sv_hostname Regress +set sv_master1 \"\" +set sv_master2 \"\" +set sv_master3 \"\" +set g_gametype 0 +set bot_enable 1 +set bot_minplayers 4 +set sv_maxclients 8 +set net_port $PORT"
@@ -149,17 +160,18 @@ run_scenario() {
 	*) echo "regress: unknown scenario $sc" >&2; return 1 ;;
 	esac
 	eval "set -- $args"
-	env HOME="$H" "$EXE" "$@" >"$SCRATCH/$sc.out" 2>&1 </dev/null &
+	# VOYAGERSP_TEST_NODIALOG: an error prints and exits instead of showing an alert (sys_osx.m)
+	env HOME="$H" VOYAGERSP_TEST_NODIALOG=1 "$EXE" "$@" >"$SCRATCH/$sc.out" 2>&1 </dev/null &
 	PID=$!
 	t=0
 	while kill -0 "$PID" 2>/dev/null; do
 		sleep 1; t=$((t + 1))
 		[ $t -ge 600 ] && { kill "$PID"; echo "  (killed after ${t}s)"; break; }
 	done
-	wait "$PID" 2>/dev/null
+	wait "$PID" 2>/dev/null; RC=$?
 	PID=""
 	SECS=$t
-	grep -q '^end ' "$log" 2>/dev/null
+	grep -q '^end ' "$log" 2>/dev/null && [ $RC -eq 0 ]
 }
 
 # ---- compare -------------------------------------------------------------------------
@@ -230,7 +242,7 @@ for sc in $SCENARIOS; do
 	fi
 	if ! run_scenario "$sc" "$log"; then
 		last="$(grep '^f ' "$log" 2>/dev/null | tail -1)"
-		echo "FAILED after ${SECS}s: the run ended before its last frame (${last:-no frames logged}); see $sc.out:"
+		echo "FAILED after ${SECS}s (exit code ${RC:-?}): the run ended before its last frame (${last:-no frames logged}); see $sc.out:"
 		grep -iE 'error|fatal|signal|crash' "$SCRATCH/$sc.out" | head -5 | sed 's/^/    /'
 		KEEP=1; status=1; continue
 	fi

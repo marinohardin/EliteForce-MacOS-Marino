@@ -815,6 +815,11 @@ local client connecting and playing, 1200 frames. `hm-dedicated`: a dedicated se
   `playerState_t`, with all networked fields from msg.c's tables (`MSG_RegressFields`) except ping.
   A line is written only when an entity changed. Times that just follow the clock are logged
   relative to it.
+- **No dialogs.** The runner starts the game with `VOYAGERSP_TEST_NODIALOG=1`. With it, `Sys_Dialog`
+  (`sys_osx.m`) prints to stderr instead of showing an alert, as a dedicated server already did. A fatal
+  error ends the run with exit code 3, and `check` reports it as FAILED. The runner checks every
+  scratch HOME's pak symlinks before it launches. On exit or interrupt, it waits for its game process to
+  quit before it deletes the scratch folder.
 - `regress_frames` sets the number of frames before it quits. `regress_cmdframe`/`regress_cmd` run a
   command at a given frame (the transition).
 
@@ -827,3 +832,12 @@ data, and SP fields that aren't listed. It covers only what the scenarios reach.
 runs open a window: don't touch it, since Esc or the console would pause SP. A game change that adds
 rand() calls or moves them shifts everything after that point. That is a real difference, but a large
 one. The sp-save baseline needs a voy1 save (`REGRESS_SAVE=<file.sav>` picks one).
+
+Tested: `record` and then `check` on the same build gave identical results in all five scenarios,
+with the same hashes on three separate builds. A 1% gravity tweak in `PM_SlideMove` (efgame) was
+caught in all three SP scenarios, for example in sp-save at frame 10, player `org` z
+572.375 -> 572.36499 and `vel` 185 -> 184. Both Holomatch runs stayed identical, which is correct:
+Holomatch runs the retail QVM. Changing `SURFACE_CLIP_EPSILON` from 0.125 to 0.126 (engine) was caught
+in all five, at frame 0 or 2. Before `SV_RateMsec` stopped pacing in harness mode, hm-listen varied by
+one frame in when the client spawned. A missing pak0 now exits with code 3 and no alert. Not verified:
+runs on another Mac or another macOS version.
