@@ -35,7 +35,7 @@ simplifying hosting servers compared to the original game.
 
 - **Launcher.** Choose Single Player or Holomatch; a graphics **Quality** preset
   (Performance, Balanced, Best) or the individual settings: window or full screen, window
-  size, full Retina resolution, anti-aliasing, texture detail and V-Sync; your Holomatch
+  size, full Retina resolution, anti-aliasing, texture detail, V-Sync and **Brightness**; your Holomatch
   player name, internet master servers (**Servers…**) and a server browser (**Browse…**);
   **Host a Server** with its **Config…**; and where the game files are, whether the Expansion Pack was found, and
   **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last
@@ -52,7 +52,8 @@ simplifying hosting servers compared to the original game.
   with who's playing, the map and ping, favorites and filters, a look at custom maps (even in
   3D) and **Join links** from websites like [efservers.com](https://efservers.com). See
   [Finding a game: Browse…](#finding-a-game-browse).
-  It speaks the original Elite Force 1.2 network protocol, unchanged from lilium-voyager.
+  It speaks the original Elite Force 1.2 network protocol, with many fixes from
+  [cMod](https://github.com/Chomenor/ioef-cmod) by Noah Metzger.
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection.
 - **Dedicated server.** **Host a Server** runs a standalone server with a status window
@@ -65,7 +66,10 @@ simplifying hosting servers compared to the original game.
 - **Native macOS fullscreen, switchable live** with the green window button or **Alt+Enter**,
   even mid-mission. The window can be resized, and the Video menu has **Window Size**,
   **Fullscreen** and **High-DPI**.
-- **Bink cinematics** (intro, logos, in-game movies) decoded with FFmpeg.
+- **Bink cinematics** (intro, logos, in-game movies) decoded with FFmpeg. Scripted cutscenes
+  can be skipped with **Enter**, as in the original.
+- **Widescreen.** On wide displays the view is wider at the sides, not cropped at the top and
+  bottom (`cg_forceAspect 1` for the original 4:3 view).
 - **Original PC saves load.** Savegames from the Windows version can be loaded.
 - Mac keyboard and mouse: the macOS press-and-hold accent popup is disabled, so holding
   movement keys works, and text input is only active in the console, chat and menus.
@@ -141,7 +145,9 @@ Everyone needs their own copy of the game and the app (or Elite Force 1.2 on a P
 protocol is the original one). Holomatch uses `pak0.pk3`–`pak2.pk3` from the retail game, so
 copy all of them; extra map paks (`*.pk3` in `BaseEF`) must match between host and players
 for the maps they use. Custom maps download automatically when you join a server that has
-them; the official paks never do, so **Expansion Pack maps need the Expansion Pack** (a server
+them (over HTTP when the server offers it). They're kept in a `downloads` folder in the app's
+data folder and only override the game's own files on a server that uses them. The official
+paks never download, so **Expansion Pack maps need the Expansion Pack** (a server
 running one shows "Couldn't load maps/….bsp" otherwise).
 
 1. Everyone opens the app, picks **Holomatch**, sets a **player name** and clicks **Play**.
@@ -163,7 +169,8 @@ Notes:
 ### Hosting a server
 
 Instead of hosting from inside the game, pick **Host a Server** in the launcher. **Config…**
-sets the map rotation, game type, Holomatch modifiers, limits, bots, name, password and network.
+sets the map rotation, game type, Holomatch modifiers, limits, bots, name, password, network and
+**Tick Rate** (**High** sends players 40 updates a second instead of 20).
 **Start Server** runs a standalone server (no game window) in a window of its own, with its
 address, the players and its console; **Play on This Mac** joins it from the same Mac. The
 launcher stays open, so you can play single player while friends play on your server. Starting
