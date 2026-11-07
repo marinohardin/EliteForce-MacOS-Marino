@@ -841,3 +841,32 @@ Holomatch runs the retail QVM. Changing `SURFACE_CLIP_EPSILON` from 0.125 to 0.1
 in all five, at frame 0 or 2. Before `SV_RateMsec` stopped pacing in harness mode, hm-listen varied by
 one frame in when the client spawned. A missing pak0 now exits with code 3 and no alert. Not verified:
 runs on another Mac or another macOS version.
+
+## SP follow-ups: door state in saves, area sound culling, lip sync, voice lines (2026-11-07)
+
+1.4.0 branch `1_4_0/sp-followups`. Longer notes: `sp-followups.md` in the shared notes folder.
+
+- **Door (areaportal) state in saves.** The save's `PRTS` chunk holds
+  the areaportal reference counts, numAreas^2 ints (PC saves confirm it: 6 areas -> 144
+  bytes, nonzero symmetric pairs for open doors). The port wrote 1296 zero bytes and skipped it on
+  load, so every door read as closed after a load. Now `SP_SaveGameInternal` writes
+  `CM_PortalState()` and an eFULL load applies it after the spawn (`CM_SetPortalState`);
+  eAUTO loads respawn fresh and ignore it. The save doesn't say which entity
+  holds a portal, so `g_entPortalOpen` becomes -1 (unknown) and a close from unknown only releases
+  a portal that is held open (never a negative count, which CM ERR_DROPs on). A size that doesn't
+  match the map (old port saves on maps that don't have 18 areas) is ignored, as before.
+  New CM functions in `cm_test.c`: `CM_PortalStateSize`, `CM_PortalState`, `CM_SetPortalState`.
+- **Looping sounds behind closed doors.** `SP_EntInView` (`BuildSnapshot`'s loop culling) adds
+  an area test: a loop whose areas are all cut off from the view's area is silent. Any
+  connected area keeps it, so nothing that should be heard is dropped. Entities are still all sent (whole
+  entity culling was not done: the cgame's events, prediction and the 256 cap would change).
+- **Lip sync.** The head skins are -1 blink, -2 frown, -3 both, -4
+  neutral, -5..-8 mouth shapes, and `S_Override` is -1 (talking, quiet) or 5..8 from the voice's
+  own volume: the mean square of 10 samples 100 apart (22 kHz) at the play position against
+  `s_threshold1..4` (0.5, 4, 7, 8) times the sound's loudest sample, redone every 800 samples.
+  The port cycled random 1..8 (so talkers blinked and frowned). Now `S_VoiceLipSync`
+  (`snd_dma.c`, base mixer; the loader keeps every 100th sample as 8 bit in the sfx) feeds
+  `SP_UpdateVisemes` every sim tick and render frame. OpenAL: a 5..8 cycle.
+- **Voice lines.** A line the script started right after a cutscene skip ended (same render frame)
+  was dropped by the skip's sound block; the block is re-checked per tick now. In single player
+  the mixer no longer steals CHAN_VOICE / CHAN_VOICE_ATTEN channels when all are busy.
