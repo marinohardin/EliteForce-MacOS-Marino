@@ -617,3 +617,45 @@ if a packet would overflow 32 usercmds (low `cl_maxpackets`, high frame rate).
   jitter are not simulated), a server other than this engine's (server code is unchanged), and
   whether play feels better. Over a jittery connection without loss the outbound estimate may hold
   the count above the floor: compare `cl_packetdupEffective` with `cl_packetdup` on a real server.
+
+## Host a Server: Tick Rate (2026-11-01)
+
+Config… > Server has a Tick Rate choice: Standard (20, the default) or High (40), saved with the
+other host settings. High adds `set sv_fps 40` to `vsp_server.cfg`, which covers dedicated hosting
+and Play on This Mac (a client of that server). Standard writes no `sv_fps` line. Single player
+stays at 20 even with High saved. Test hook: `VOYAGERSP_TEST_SERVER_TICKRATE`.
+
+`sv_minSnaps`, from cMod by Noah Metzger (Chomenor), makes this work for clients with the stock
+`snaps 20`. It also raises bots, whose `snaps` is 20. No cMod code was ported for this change.
+
+`sv_fps` is `CVAR_SYSTEMINFO` only under `ELITEFORCE` (Thilo Schulz's patch, no reason recorded), so
+clients mirror the value. No engine client code or QVM strings in the data folder read it (retail, `vm.pk3`,
+tfgpak, cMod), so this has no measured effect. The client keeps the mirrored value until it quits.
+
+Measured on loopback, one client, Mac server (msg/s, payload bytes/s; add 28 bytes per packet for IP/UDP):
+
+| Case | 20 | 40 |
+| --- | --- | --- |
+| `snaps 20`, 11 bots | 20/s | 40/s (`sv_minSnaps 0` control: 20/s) |
+| `snaps 100`, 11 bots | not run | 40/s |
+| Protocol 24 mode of our client, 11 bots | not run | 40/s |
+| 31 bots, `rate 25000`, following a bot, hm_voy1 | 1000-1700 B/s | 1950-2600 B/s |
+| Same, hm_kln1 | 1400-1800 B/s | 2400-3400 B/s, largest message 377 B |
+| Same, `rate 3000` | 15-19/s | 14-24/s (rate limited, no worse) |
+| Server CPU, 31 bots (one core = 100%) | 3.8% | 6.4% |
+| Jump peak / airtime samples, run speed | 46-47, 246 ups | 47, 248 ups |
+
+Map change, `map_restart 0` and `map_restart 3` keep 40/s with no errors. The real data folder's add-ons
+(symlinked read-only) also gave 40/s. Bot kills in 60 s (4 vs 7) are too few to compare.
+
+Known costs of 40:
+- The snapshot delta window is counted in packets (`PACKET_BACKUP - 3`), so it shrinks from about 1450 ms to
+  725 ms. Beyond that a client gets uncompressed snapshots. From code, not tested with real latency.
+- Stock cgame cosmetics, from cMod's comments, not observed: the scavenger primary shot appears closer to
+  the muzzle (cMod's `cg_ents.c` delays it) and empty-phaser effects depend on prediction length (cMod's
+  `cg_weapons.c` emulates a 50 ms cycle). Those fixes are in cgame, so the engine can't apply them to stock clients.
+
+Test gotcha: `sv_minSnaps` and `sv_lanForceRate` are `CVAR_ARCHIVE`, so a test value persists in
+`hmconfig_server.cfg` and affects later runs. A saved low `sv_minSnaps` would also cap High's benefit.
+
+Not tested: the retail Windows client, real latency or packet loss, several human clients, and feel.
