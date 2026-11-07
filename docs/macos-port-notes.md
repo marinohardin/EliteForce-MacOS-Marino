@@ -489,3 +489,21 @@ dedicated) and single player share this code.
 - A non-inlined `LittleLong` in `cm_load.c` for bsps with unaligned lumps. (`CMOD_CM_ALIGN_FIX`)
 - NaN check in renderervk's `R_FogFactor`. (`CMOD_FOGFACTOR_FIX`)
 - renderervk (Quake3e) already had his fog side and FRCL fixes.
+## QVM float-to-int rounding (2026-10-27)
+
+cMod's (by Noah Metzger, Chomenor) `CMOD_VMFLOATCAST` (`VM_tonextint` in its interpreter, from Thilo Schulz's game code
+patch) makes the VM's `OP_CVFI` round to nearest instead of truncating. Elite Force's
+physics depend on that: the retail engine ran QVMs on x87 (`fistp`, round to nearest), and
+`bg_pmove.c` snaps the velocity every frame with `SnapVector` (`(int)` casts), so truncation
+loses up to one unit per axis per frame (a rough 125 fps model: jump apex ~42 instead of ~48.5).
+- **Our build already rounds.** On arm64 `Q_ftol` is `lrintf` (`q_shared.h`); clang inlines it
+  as `frintx` + `fcvtzs` in `vm_interpreted.c`, with `Sys_SetFloatEnv` setting
+  `FE_TONEAREST`. ioEF does the same on x86 (`asm/ftola.c`: `cvtss2si` and an x87 control
+  word of `0x007F` under `ELITEFORCE`). So the interpreter is unchanged apart from a comment.
+  The only difference from cMod is an exact .5 (we round to even, as x87 did; cMod rounds
+  away from zero), which is too rare to matter.
+- **aarch64 JIT** (`vm_aarch64.c`, not built: `EF_VM_JIT` is off) used `FCVTZS` (truncate);
+  it now uses `FCVTNS` (round to nearest, ties to even), so turning the JIT on later doesn't
+  change the physics.
+- Single player is not affected: its game code is native, and the HM qagame frame is skipped
+  while `SP_IsActive()` (`sv_main.c`).
