@@ -110,6 +110,7 @@ void MSG_ReadDeltaEntity( msg_t *msg, entityState_t *from, entityState_t *to,
 						 int number );
 
 void MSG_WriteDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct playerState_s *to );
+void MSG_RegressFields( const entityState_t *es, const playerState_t *ps, char *buf, int size );	// regress.c
 void MSG_ReadDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct playerState_s *to );
 
 
@@ -939,6 +940,17 @@ extern	cvar_t	*com_holomatch;
 // Holomatch (multiplayer) mode instead of single player; set once at launch
 // (+set com_holomatch 1, the macOS launcher) and fixed for the whole run.
 qboolean Com_Holomatch( void );
+
+// regress.c: the regression harness (macos/regress.sh); everything is a no-op unless +set regress_log
+void		Regress_Init( void );
+qboolean	Regress_Active( void );
+int			Regress_Seed( void );
+void		Regress_SeedRand( int gameTime );
+int			Regress_FrameNum( void );
+void		Regress_BeginFrame( const char *map, int gameTime );
+void		Regress_State( int kind, int num, const char *fields );	// 0 entity, 1 player state, 2 level
+void		Regress_EndFrame( void );
+void		Regress_Usercmd( int angles[3], signed char *forward, signed char *right, signed char *up, int *buttons );
 qboolean Com_DedicatedServer( void );
 // Holomatch's default UDP download rate (sv_dlRate, KB/s per client): LAN speed
 #define HM_DEFAULT_DLRATE	"4000"

@@ -3038,6 +3038,7 @@ void Com_Init( char *commandLine ) {
 	com_showtrace = Cvar_Get ("com_showtrace", "0", CVAR_CHEAT);
 	com_speeds = Cvar_Get ("com_speeds", "0", 0);
 	com_timedemo = Cvar_Get ("timedemo", "0", CVAR_CHEAT);
+	Regress_Init();	// the regression harness (regress.c): off unless +set regress_log
 	com_cameraMode = Cvar_Get ("com_cameraMode", "0", CVAR_CHEAT);
 
 	cl_paused = Cvar_Get ("cl_paused", "0", CVAR_ROM);
@@ -3299,7 +3300,11 @@ int Com_ModifyMsec( int msec ) {
 	//
 	// modify time for debugging values
 	//
-	if ( com_fixedtime->integer ) {
+	if ( Regress_Active() ) {
+		// regression harness: one game frame per engine frame (sv_fps 20: 50 ms)
+		int fps = Cvar_VariableIntegerValue( "sv_fps" );
+		msec = 1000 / ( fps > 0 ? fps : 20 );
+	} else if ( com_fixedtime->integer ) {
 		msec = com_fixedtime->integer;
 	} else if ( com_timescale->value ) {
 		// Single player: the SP bridge applies timescale to its own sim (the game's cutscene skip
@@ -3402,7 +3407,7 @@ void Com_Frame( void ) {
 	}
 
 	// Figure out how much time we have
-	if(!com_timedemo->integer)
+	if(!com_timedemo->integer && !Regress_Active())	// the harness doesn't wait for the clock
 	{
 		if(com_dedicated->integer)
 			minMsec = SV_FrameMsec();

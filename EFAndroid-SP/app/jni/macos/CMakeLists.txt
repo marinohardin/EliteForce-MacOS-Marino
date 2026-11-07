@@ -81,7 +81,8 @@ set(QCOMMON_SRC
   ${EF}/qcommon/msg.c       ${EF}/qcommon/net_chan.c  ${EF}/qcommon/net_ip.c
   ${EF}/qcommon/huffman.c   ${EF}/qcommon/q_math.c    ${EF}/qcommon/q_shared.c
   ${EF}/qcommon/unzip.c     ${EF}/qcommon/ioapi.c     ${EF}/qcommon/puff.c
-  ${EF}/qcommon/vm.c        ${EF}/qcommon/vm_interpreted.c)
+  ${EF}/qcommon/vm.c        ${EF}/qcommon/vm_interpreted.c
+  ${EF}/qcommon/regress.c)
 if(EF_VM_JIT)
   list(APPEND QCOMMON_SRC ${EF}/qcommon/vm_aarch64.c)
 endif()
