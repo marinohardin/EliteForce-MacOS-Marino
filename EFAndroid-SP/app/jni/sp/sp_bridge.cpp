@@ -91,6 +91,9 @@ extern "C" {
     unsigned char *CM_ClusterPVS( int cluster );
     qboolean CM_AreasConnected( int area1, int area2 );
     void  CM_AdjustAreaPortalState( int area1, int area2, qboolean open );
+    int   CM_PortalStateSize( void );                      // save 'PRTS': numAreas^2 ref counts (bytes)
+    const int *CM_PortalState( void );
+    qboolean CM_SetPortalState( const int *counts, int size );
     int   CM_BoxLeafnums( const vec3_t mins, const vec3_t maxs, int *list, int listsize, int *lastLeaf );
     void  Cvar_Register( vmCvar_t *vmCvar, const char *varName, const char *defaultValue, int flags );
     void  Cvar_Update( vmCvar_t *vmCvar );
@@ -137,7 +140,11 @@ static int        g_numLinked = 0;
 static char       g_curMap[64] = {0};   // current SP map name (for save framing + transitions)
 static int        g_entClip[SP_MAX_ENT];   // bmodel clipHandle per entity number (for mover traces)
 static int        g_entArea[SP_MAX_ENT][2]; // [0]=areanum [1]=areanum2 (-1 none); per-entity, set at link (retail svEntity_t)
-static qboolean   g_entPortalOpen[SP_MAX_ENT]; // per-door areaportal open state -> idempotent guard vs CM ref-count under/overflow
+static signed char g_entPortalOpen[SP_MAX_ENT]; // per-door areaportal state: 1 open, 0 closed, -1 unknown (a load
+                                                // restored CM's counts from the save's PRTS) -> guard vs CM ref-count drift
+static int        *g_loadPortals = NULL;        // a user load's PRTS chunk, applied in SP_FinishTransition
+static int         g_loadPortalsSize = 0;
+static void SP_DropLoadPortals( void ){ free(g_loadPortals); g_loadPortals = NULL; g_loadPortalsSize = 0; }
 static int SP_EntNum( gentity_t *e ){ return (int)(((unsigned char*)e - (unsigned char*)ge->gentities) / ge->gentitySize); }
 
 
@@ -434,8 +441,17 @@ static void W_AdjustAreaPortalState( gentity_t *ent, qboolean open ){
     int eNum = SP_EntNum(ent);
     if( eNum < 0 || eNum >= SP_MAX_ENT ) return;
     if( g_entArea[eNum][1] == -1 ) return;            // doesn't straddle two areas -> no portal to toggle
-    if( g_entPortalOpen[eNum] == open ) return;       // already in this state -> avoid CM ref-count drift
-    g_entPortalOpen[eNum] = open;
+    signed char was = g_entPortalOpen[eNum];
+    if( was == (open ? 1 : 0) ) return;               // already in this state -> avoid CM ref-count drift
+    g_entPortalOpen[eNum] = open ? 1 : 0;
+    // Unknown (the portal counts came from a save, which doesn't say which entity holds them): a close only
+    // releases a portal that is actually held open, so it can't go negative (CM ERR_DROPs on that).
+    if( was < 0 && !open ){
+        int a1 = g_entArea[eNum][0], a2 = g_entArea[eNum][1];
+        int size = CM_PortalStateSize(), n = 0;
+        while( (n+1)*(n+1)*(int)sizeof(int) <= size ) n++;
+        if( a1 < 0 || a2 < 0 || a1 >= n || a2 >= n || CM_PortalState()[a1*n + a2] <= 0 ) return;
+    }
     CM_AdjustAreaPortalState( g_entArea[eNum][0], g_entArea[eNum][1], open );
 }
 static qboolean W_AreasConnected( int a, int b ){ return CM_AreasConnected(a,b); }
@@ -722,6 +738,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     // transition takes g_levelTime from the save (SP_LoadGameFile/SP_FinishTransition), unaffected.
     g_numLinked = 0; g_levelTime = 1000;
     memset(g_entPortalOpen, 0, sizeof(g_entPortalOpen));  // New Game: CM (re)loaded -> all areaportals start sealed
+    SP_DropLoadPortals();                                 // a stale, never-applied load's portal state
     Cvar_Set( "cl_paused", "0" );   // EF1 SP 1:1: retail SV_SpawnServer unpauses every spawn (sv_init.c:464)
     memset(g_voiceEnd, 0, sizeof(g_voiceEnd)); memset(g_sOverride, 0, sizeof(g_sOverride)); // fresh map: no stale voices
     // BRIDGE-side statics dlclose does NOT touch (these live in libmain, not libefgame) — reset per map:
@@ -1451,6 +1468,21 @@ extern "C" qboolean SP_FinishTransition(void){
     } else if( s_sgFile ){
         SG_Close();   // forward transition (eAUTO): discard the level snapshot; the player carries via cvars
     }
+    // A user (eFULL) load: put back which areaportals were open,
+    // after the spawn. Without it every door read as closed after a load: an open door blocked sight, and the
+    // CM counts no longer matched the doors. The save doesn't record which entity holds which portal, so the
+    // per-entity guard goes to "unknown" (see W_AdjustAreaPortalState). An autosave (eAUTO) respawns every entity
+    // fresh, with its doors closed, so its counts are not applied.
+    if( g_transGameFlag == 0 && g_loadPortals ){
+        if( CM_SetPortalState( g_loadPortals, g_loadPortalsSize ) ){
+            memset(g_entPortalOpen, -1, sizeof(g_entPortalOpen));
+            int open=0; for(int i=0;i<g_loadPortalsSize/(int)sizeof(int);i++) if(g_loadPortals[i]>0) open++;
+            blog("SP_FinishTransition: restored areaportal state (%d bytes, %d open entries)\n", g_loadPortalsSize, open);
+        } else {
+            blog("SP_FinishTransition: save's areaportal state is %d bytes, map has %d -> ignored\n", g_loadPortalsSize, CM_PortalStateSize());
+        }
+    }
+    SP_DropLoadPortals();
     memset(&g_lastcmd,0,sizeof(g_lastcmd)); g_lastcmd.serverTime = g_levelTime;
     SP_ResetViewAngles();   // the usercmd angles restart at 0, matching g_lastcmd (see SP_ResetViewAngles)
     ge->ClientBegin(0, &g_lastcmd, sg);
@@ -1624,10 +1656,9 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
     }
     I_Append('TIME', &tnow, 4);
     I_Append('TIMR', &zero, 4);
-    // PRTS: retail emits a particle/precip grid chunk here, between TIMR and CSCN. The port
-    // doesn't simulate that grid (particles reseed on spawn), but write a zero PRTS so the chunk stream is
-    // structurally retail-identical and frames the same on both sides; SP_LoadGameFile read-skips it.
-    { static unsigned char prts[1296]; I_Append('PRTS', prts, (int)sizeof(prts)); }
+    // PRTS: the areaportal reference counts (numAreas^2 ints). Which doors
+    // are open, so sight, PVS and sound culling stay right after a load. (1.3.0 and older wrote 1296 zero bytes.)
+    I_Append('PRTS', (void*)CM_PortalState(), CM_PortalStateSize());
     // CSCN/CSIN/CSDA: persist the configstring table so a load can rebuild the EXACT index->string map that
     // every entity's s.modelindex (and the cgame's model_draw[]/sound indices) were assigned against. The
     // bridge's g_configstrings lives in libmain and is NEVER cleared per-map, so a load that doesn't restore
@@ -1749,7 +1780,11 @@ extern "C" void SP_LoadGameFile(const char* name){
         for(int i=0;i<32;i++){ char d[512]; d[0]=0; I_ReadSG('ADPT', d,0,0); d[sizeof(d)-1]=0; char nm[32]; snprintf(nm,sizeof(nm),"borgadapt%d",i); Cvar_Set(nm,d); }
     }
     I_ReadSG('TIME',&tnow,4,0); I_ReadSG('TIMR',&timr,4,0);
-    { void* pr=0; if(I_ReadSGOpt('PRTS',0,0,&pr)>0 && pr) free(pr); }   // L-1: consume retail's particle-grid chunk if present
+    // PRTS: the areaportal counts. CM isn't loaded for the save's map yet, so keep it
+    // for SP_FinishTransition. Old port saves wrote zeros here (all doors closed: what they loaded as before).
+    SP_DropLoadPortals();
+    { void* pr=0; int n=I_ReadSGOpt('PRTS',0,0,&pr);
+      if( n>0 && pr && game==0 ){ g_loadPortals=(int*)pr; g_loadPortalsSize=n; } else free(pr); }
     I_ReadSG('CSCN',&cscn,4,0);
     // Restore the saved configstring table (retail SV_ReadGame: clear the whole table, then write each saved
     // index->string back). The cgame's model_draw[]/sound indices and every entity's s.modelindex were assigned
