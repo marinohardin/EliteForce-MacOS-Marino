@@ -1,4 +1,5 @@
 #include "b_local.h"
+#include "coop_public.h"
 #include "g_navigator.h"
 #include "g_nav.h"
 
@@ -745,7 +746,7 @@ void CNavigator::ShowNodes( void )
 	{
 		(*ni)->GetPosition( position );
 
-		if ( gi.inPVS( g_entities[0].currentOrigin, position ) )
+		if ( COOP_AnyPlayerInPVS( position ) )
 			(*ni)->Draw();
 	}
 }
@@ -791,7 +792,7 @@ void CNavigator::ShowEdges( void )
 			//Set this as drawn
 			drawMap[id][(*ni)->GetID()] = true;
 
-			if ( ( gi.inPVS( g_entities[0].currentOrigin, start ) == false ) && ( gi.inPVS( g_entities[0].currentOrigin, end ) == false ) )
+			if ( ( COOP_AnyPlayerInPVS( start ) == false ) && ( COOP_AnyPlayerInPVS( end ) == false ) )
 				continue;
 
 			if ( flags & EFLAG_BROKEN )
