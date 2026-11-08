@@ -23,6 +23,8 @@
 #define COOP_NearestPlayer(org)		(&g_entities[0])
 #define COOP_NumPlayers()			1
 #define COOP_PlayerByIndex(i)		(&g_entities[0])
+#define COOP_AnyPlayerInPVS(org)	gi.inPVS( g_entities[0].currentOrigin, (org) )
+#define COOP_AnyPlayerInPVSRev(org)	gi.inPVS( (org), g_entities[0].currentOrigin )
 
 #define COOP_Init()					((void)0)
 #define COOP_RunFrame()				((void)0)
@@ -35,6 +37,7 @@
 #define COOP_OnCameraDisable()		((void)0)
 #define COOP_ConsoleCommand(c)		0
 #define COOP_RegisterCommands()		((void)0)
+#define COOP_FindPlayerWaypoints()	((void)0)
 
 #else // EF_COOP
 
@@ -67,6 +70,12 @@ gentity_t	*COOP_NearestPlayer( const vec3_t org );
 // loop over the players in the level: index 0 is P1, 1 is P2 (alive and not hidden)
 int			COOP_NumPlayers( void );
 gentity_t	*COOP_PlayerByIndex( int i );
+
+// a player has org in its PVS (Rev: the old code passed the two points the other way round)
+qboolean	COOP_AnyPlayerInPVS( const vec3_t org );
+qboolean	COOP_AnyPlayerInPVSRev( const vec3_t org );
+// NAV_FindPlayerWaypoint: keep P2's waypoint current too (NPCs chasing P2 path to it)
+void		COOP_FindPlayerWaypoints( void );
 
 // the shooter's third-person setting (game code reads the host cgame's cvar for it)
 int			COOP_ThirdPerson( const gentity_t *e );

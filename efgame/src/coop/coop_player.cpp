@@ -11,6 +11,10 @@
 #include "boltons.h"
 #include "coop_public.h"
 #include "coop_local.h"
+#include "g_nav.h"
+#include "g_navigator.h"
+
+extern CNavigator	navigator;
 
 extern vec3_t	playerMins;
 extern vec3_t	playerMaxs;
@@ -508,6 +512,27 @@ gentity_t *COOP_NearestPlayer( const vec3_t org )
 		return p2;
 	}
 	return DistanceSquared( org, p2->currentOrigin ) < DistanceSquared( org, p1->currentOrigin ) ? p2 : p1;
+}
+
+qboolean COOP_AnyPlayerInPVS( const vec3_t org )
+{
+	gentity_t *p2 = COOP_LiveP2();
+	return (qboolean)( gi.inPVS( g_entities[0].currentOrigin, org ) || ( p2 && gi.inPVS( p2->currentOrigin, org ) ) );
+}
+
+qboolean COOP_AnyPlayerInPVSRev( const vec3_t org )
+{
+	gentity_t *p2 = COOP_LiveP2();
+	return (qboolean)( gi.inPVS( org, g_entities[0].currentOrigin ) || ( p2 && gi.inPVS( org, p2->currentOrigin ) ) );
+}
+
+void COOP_FindPlayerWaypoints( void )
+{
+	gentity_t *p2 = COOP_LiveP2();
+	if ( p2 )
+	{
+		p2->waypoint = navigator.GetNearestNode( p2, p2->lastWaypoint, NF_CLEAR_PATH );
+	}
 }
 
 int COOP_ThirdPerson( const gentity_t *e )

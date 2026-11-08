@@ -899,3 +899,9 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   the Vohrsoth boss, stasis fliers) it now takes the nearest player. Pointer compares use
   `COOP_IsPlayerPtr`. Tested on borg2 (1500 frames): NPCs 88, 197 and 203 switch to P2, P2 dies and
   comes back next to P1; voy3 runs clean.
+- **Perception and navigation (B7).** Dead-body removal and shy spawns wait until no player is close or
+  sees the spot (a loop over the players, same checks in the same order). PVS tests for the "remove when
+  unseen" behavior state and the nav debug drawing accept either player (`COOP_AnyPlayerInPVS`, and a
+  `Rev` form where the old call had the points the other way round). Blocking, stacked-canyon and
+  goal-is-the-player checks in `g_nav.cpp` include P2, and `NAV_FindPlayerWaypoint` also keeps P2's
+  waypoint current, so NPCs chasing P2 can path to it. Tested on borg2 and voy3 (1500 frames).

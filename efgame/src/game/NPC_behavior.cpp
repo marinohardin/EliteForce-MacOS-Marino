@@ -7,6 +7,7 @@ we need it...
 */
 
 #include "b_local.h"
+#include "coop_public.h"
 #include "anims.h"
 #include "g_functions.h"
 #include "g_nav.h"
@@ -2715,7 +2716,7 @@ void NPC_BSJump (void)
 void NPC_BSRemove (void)
 {
 	NPC_UpdateAngles ( qtrue, qtrue );
-	if( !gi.inPVS( NPC->currentOrigin, g_entities[0].currentOrigin ) )//FIXME: use cg.vieworg?
+	if( !COOP_AnyPlayerInPVSRev( NPC->currentOrigin ) )//FIXME: use cg.vieworg?
 	{
 		G_UseTargets2( NPC, NPC, NPC->target3 );
 		NPC->s.eFlags |= EF_NODRAW;
