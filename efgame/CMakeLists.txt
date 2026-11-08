@@ -125,6 +125,12 @@ function(ef_module_link target exp ver)
         # then fails the link. Override (last-one-wins) so armv7 links cleanly.
         -Wl,--no-fatal-warnings)
     endif()
+    if(NOT ANDROID)
+      # desktop glibc < 2.34 keeps pthread_create in libpthread; ignore-all above would hide
+      # that and the module would only load when the host process already has libpthread
+      find_package(Threads REQUIRED)
+      target_link_libraries(${target} Threads::Threads)
+    endif()
     set_target_properties(${target} PROPERTIES LINK_DEPENDS ${AND}/${ver})
   endif()
 endfunction()

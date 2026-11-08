@@ -68,6 +68,10 @@ fi
 for f in efsp libefgame.so libefui.so; do
 	[ -f "$BUILD/$f" ] || { echo "$BUILD/$f is missing (build it first; modules must sit next to efsp)" >&2; exit 1; }
 done
+# the sniper SDK image has no patchelf; install it when we are root in a container
+if ! command -v patchelf >/dev/null 2>&1 && [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then
+	apt-get update -qq >/dev/null && apt-get install -y -qq patchelf >/dev/null
+fi
 command -v patchelf >/dev/null 2>&1 || { echo "patchelf is needed (apt-get install patchelf)" >&2; exit 1; }
 
 # ---- 2. AppDir ------------------------------------------------------------------
@@ -206,7 +210,14 @@ fi
 rm -f "$OUT"
 # --appimage-extract-and-run: no FUSE inside the container. appimagetool 1.9 embeds the
 # static type-2 runtime, so the result needs no libfuse2 beyond what the user's system has.
-ARCH=x86_64 "$AIT" --appimage-extract-and-run --no-appstream "$APPDIR" "$OUT"
+# Run a copy with the AppImage magic ("AI\002" at ELF offset 8) zeroed: emulated amd64
+# containers (Rosetta, qemu-user binfmt on Apple Silicon) refuse to exec it otherwise
+# ("Exec format error"). Native Linux doesn't care either way.
+AIT_RUN="$TOOLS/appimagetool-run"
+cp "$AIT" "$AIT_RUN"
+printf '\000\000\000' | dd of="$AIT_RUN" bs=1 seek=8 count=3 conv=notrunc 2>/dev/null
+chmod +x "$AIT_RUN"
+ARCH=x86_64 "$AIT_RUN" --appimage-extract-and-run --no-appstream "$APPDIR" "$OUT"
 chmod 755 "$OUT"
 if [ -n "${HOST_UID:-}" ]; then
 	chown -R "$HOST_UID:$HOST_GID" "$DIST" "$ROOT/build/appimage" 2>/dev/null || true
