@@ -11,21 +11,33 @@
 #include "tr_types.h"             // glconfig_t, refEntity_t, refdef_t
 #include "../cgame/cg_public.h"   // cgameImport_t (CG_*), snapshot_t
 #include "../client/vmachine.h"   // cgameExport_t (CG_INIT, CG_DRAW_ACTIVE_FRAME)
-#include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <stdarg.h>
 #include <time.h>
 #include <android/log.h>
+
+// Portable case-insensitive compare (strcasecmp/strncasecmp are POSIX-only; the SP Q_stricmp has
+// C++ linkage here and would not resolve against the C engine).
+static int sp_stricmpn( const char *a, const char *b, int n ){
+    while( n-- > 0 ){
+        int ca = (unsigned char)*a++, cb = (unsigned char)*b++;
+        if( ca >= 'A' && ca <= 'Z' ) ca += 32;
+        if( cb >= 'A' && cb <= 'Z' ) cb += 32;
+        if( ca != cb ) return ca < cb ? -1 : 1;
+        if( !ca ) return 0;
+    }
+    return 0;
+}
 
 // Save-game description typed in the EF Save menu (set by UII_SG_StoreSaveGameComment,
 // sp_ui_bridge.cpp). SP_SaveGame writes it into the COMM chunk so the Load list shows a name.
 extern char g_spSaveComment[128];
 
 // Com_Printf/Com_Error come via the C shim (SP headers declare them C++-linkage).
-extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*); }
+extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*);
+    void *SP_ModuleLoad(const char*,int); void *SP_ModuleSym(void*,const char*); void SP_ModuleUnload(void*); const char *SP_ModuleError(void); }
 // Bridge logging. Android: everything to logcat at INFO, as before. Desktop (macos/android/log.h):
 // blog = developer-only chatter, binfo = always shown, bwarn = always shown in yellow.
 #ifdef __ANDROID__
@@ -153,7 +165,7 @@ static void SP_CoopSetBridge( void ){
     typedef void (*coopSetBridge_t)( const coopBridge_t * );
     static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName, SP_CoopGuestConnected,
                                    CoopNet_GuestViewTime, CoopNet_GuestSex };
-    coopSetBridge_t set = (coopSetBridge_t)dlsym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
+    coopSetBridge_t set = (coopSetBridge_t)SP_ModuleSym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
     if( set ) set( &bridge );
 }
 // The replica (co-op M1): the host sends its world after every game frame; a guest's level
@@ -223,7 +235,7 @@ static void SP_CoopHoldStart( void ){
 static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd );
 static void SP_CoopGetReplica( void ){
     typedef const coopReplica_t *(*coopGetReplica_t)( void );
-    coopGetReplica_t get = (coopGetReplica_t)dlsym( g_lib, "COOP_GetReplica" );
+    coopGetReplica_t get = (coopGetReplica_t)SP_ModuleSym( g_lib, "COOP_GetReplica" );
     g_coopRep = get ? get() : NULL;
     if( g_coopRep && g_coopRep->version != COOP_REPLICA_VERSION ) g_coopRep = NULL;
 }
@@ -568,7 +580,7 @@ static char  g_coopMovie[64];       // ...and its name
 static void  SP_CoopNoteMovie( const char *t );
 #endif
 static void  I_SendConsole( const char *t ){
-    if( t && !strncasecmp( t, "inGameCinematic", 15 ) ){
+    if( t && !sp_stricmpn( t, "inGameCinematic", 15 ) ){
         g_spMovieQueued = 1;
 #ifdef EF_COOP
         SP_CoopNoteMovie( t );
@@ -797,7 +809,7 @@ extern "C" void SP_UnloadGame( void ){
     if( g_lib ){
         if( g_spActive && g_vmMain )            SP_VmMain(CG_SHUTDOWN, 0,0,0);   // cgame teardown
         if( g_spActive && ge && ge->Shutdown )  ge->Shutdown();                // game/level teardown
-        dlclose( g_lib );
+        SP_ModuleUnload( g_lib );
     }
     g_lib = NULL; ge = NULL; g_vmMain = NULL; g_camPos = NULL; g_spActive = 0;
 #ifdef EF_COOP
@@ -813,9 +825,9 @@ extern "C" void SP_UnloadGame( void ){
 
 extern "C" qboolean SP_LoadGame( const char *solib ){
     if( g_lib ) SP_UnloadGame();   // drop the stale module first -> every (re)load lands on a fresh, zeroed .so
-    g_lib = dlopen( SP_ModulePath( solib ), RTLD_NOW );
-    if(!g_lib){ bwarn("SP_LoadGame: dlopen failed: %s\n", dlerror()); return qfalse; }
-    GetGameAPI_t GetGameAPI = (GetGameAPI_t)dlsym(g_lib, "_Z10GetGameAPIP13game_import_t");
+    g_lib = SP_ModuleLoad( SP_ModulePath( solib ), 0 );
+    if(!g_lib){ bwarn("SP_LoadGame: dlopen failed: %s\n", SP_ModuleError()); return qfalse; }
+    GetGameAPI_t GetGameAPI = (GetGameAPI_t)SP_ModuleSym(g_lib, "_Z10GetGameAPIP13game_import_t");
     if(!GetGameAPI){ bwarn("SP_LoadGame: GetGameAPI not found\n"); return qfalse; }
 
     static game_import_t gi; memset(&gi,0,sizeof(gi));
@@ -840,11 +852,11 @@ extern "C" qboolean SP_LoadGame( const char *solib ){
     ge = GetGameAPI(&gi);
     if(!ge){ bwarn("SP_LoadGame: GetGameAPI returned NULL\n"); return qfalse; }
     // wire the cgame syscall dispatcher (no-op) so server-side FX calls don't hit a null pointer
-    dllEntry_t dllEntry = (dllEntry_t)dlsym(g_lib, "_Z8dllEntryPFiizE");
+    dllEntry_t dllEntry = (dllEntry_t)SP_ModuleSym(g_lib, "_Z8dllEntryPFiizE");
     if(dllEntry) dllEntry(SP_CgameSyscall);
-    g_vmMain = (vmMain_t)dlsym(g_lib, "_Z6vmMainiiiiiiiii");
-    g_camPos = (camPos_t)dlsym(g_lib, "_Z15CG_GetCameraPosPf");   // optional (snapshot loop-sound culling)
-    g_regressDump = (regressDump_t)dlsym(g_lib, "G_RegressDump");  // optional (the regression harness)
+    g_vmMain = (vmMain_t)SP_ModuleSym(g_lib, "_Z6vmMainiiiiiiiii");
+    g_camPos = (camPos_t)SP_ModuleSym(g_lib, "_Z15CG_GetCameraPosPf");   // optional (snapshot loop-sound culling)
+    g_regressDump = (regressDump_t)SP_ModuleSym(g_lib, "G_RegressDump");  // optional (the regression harness)
 #ifdef EF_COOP
     SP_CoopSetBridge();   // before the level's InitGame
     SP_CoopGetReplica();
@@ -1123,7 +1135,7 @@ static void SP_CgameConsoleCmd(void){
 static void SP_CgameAddCommand(const char *name){
     static char names[256][32]; static int count = 0;
     if(!name || !name[0]) return;
-    for(int i = 0; i < count; i++) if(!strcasecmp(names[i], name)) return;
+    for(int i = 0; i < count; i++) if(!sp_stricmpn(names[i], name, 0x7fffffff)) return;
     if(count < 256 && strlen(name) < sizeof(names[0])){ strcpy(names[count], name); count++; }
     Cmd_AddCommand(name, SP_CgameConsoleCmd);
 }
