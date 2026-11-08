@@ -65,7 +65,7 @@ void CL_GetGlconfig( glconfig_t *glconfig ) {
 	*glconfig = cls.glconfig;
 
 #ifdef USE_FLEXIBLE_DISPLAY
-	if ( cl_flexibleDisplay->integer ) {
+	if ( CL_FLEX_CGAME ) {
 		glconfig->vidWidth = 640;
 		glconfig->vidHeight = 480;
 	}
@@ -607,6 +607,7 @@ void CL_ShutdownCGame( void ) {
 	VM_Call( cgvm, CG_SHUTDOWN );
 	VM_Free( cgvm );
 	cgvm = NULL;
+	cls.cgameNativeAspect = qfalse;
 }
 
 static int	FloatAsInt( float f ) {
@@ -802,7 +803,7 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 #endif
 	case CG_R_RENDERSCENE:
 #ifdef USE_FLEXIBLE_DISPLAY
-		if ( cl_flexibleDisplay->integer ) {
+		if ( CL_FLEX_CGAME ) {
 			refdef_t fd;
 			float x, y, width, height;
 
@@ -879,7 +880,7 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 	case CG_R_DRAWSTRETCHPIC:
 #ifdef USE_FLEXIBLE_DISPLAY
-		if ( cl_flexibleDisplay->integer ) {
+		if ( CL_FLEX_CGAME ) {
 			float x = VMF(1);
 			float y = VMF(2);
 			float width = VMF(3);
@@ -1174,6 +1175,8 @@ void CL_InitCGame( void ) {
 	if ( !cgvm ) {
 		Com_Error( ERR_DROP, "VM_Create on cgame failed" );
 	}
+	// cMod's cgame (by Noah Metzger) gets the real screen size and does its own widescreen HUD
+	cls.cgameNativeAspect = VM_FromCmodPak( cgvm );
 	clc.state = CA_LOADING;
 
 	// init for this gamestate

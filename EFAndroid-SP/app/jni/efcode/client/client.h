@@ -315,6 +315,10 @@ typedef struct {
 	qboolean	cddialog;			// bring up the cd needed dialog next frame
 #ifdef USE_FLEXIBLE_DISPLAY
 	qboolean	syncUICursor;		// sync mouse cursor position in UI next frame
+	// From cMod by Noah Metzger (Chomenor): his cgame / ui handle wide screens themselves
+	// (cg_aspectCorrect), so cl_flexibleDisplay's 640x480 layer stays out of their way
+	qboolean	cgameNativeAspect;	// cgvm is cMod's
+	qboolean	uiNativeAspect;		// uivm is cMod's
 #endif
 
 	// when the server clears the hunk, all of these must be restarted
@@ -479,6 +483,9 @@ extern	cvar_t	*cl_voip;
 extern	cvar_t	*cl_viewsize;
 extern	cvar_t	*cl_viewmode;
 extern	cvar_t	*cl_flexibleDisplay;
+// cl_flexibleDisplay's 640x480 layer for this module (off for cMod's, which do their own widescreen)
+#define CL_FLEX_CGAME	( cl_flexibleDisplay->integer && !cls.cgameNativeAspect )
+#define CL_FLEX_UI		( cl_flexibleDisplay->integer && !cls.uiNativeAspect )
 #endif
 
 //=================================================

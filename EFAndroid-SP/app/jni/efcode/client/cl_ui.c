@@ -595,7 +595,7 @@ static void CL_GetGlconfig( glconfig_t *config ) {
 	*config = cls.glconfig;
 
 #ifdef USE_FLEXIBLE_DISPLAY
-	if ( cl_flexibleDisplay->integer ) {
+	if ( CL_FLEX_UI ) {
 		config->vidWidth = 640;
 		config->vidHeight = 480;
 	}
@@ -610,6 +610,17 @@ CL_GetUIScreenPlacement
 */
 static int CL_GetUIScreenPlacement( void ) {
 	int placement;
+
+	// cMod's ui (by Noah Metzger) draws its menus in a centered 4:3 area when its
+	// widescreen support is on (ui_aspectCorrect, -1: follow cg_aspectCorrect), stretched
+	// otherwise: map the mouse the same way
+	if ( cls.uiNativeAspect ) {
+		int aspect = Cvar_VariableIntegerValue( "ui_aspectCorrect" );
+		if ( aspect < 0 || Cvar_Flags( "ui_aspectCorrect" ) == CVAR_NONEXISTENT ) {
+			aspect = Cvar_VariableIntegerValue( "cg_aspectCorrect" );
+		}
+		return aspect ? SCR_VERT_CENTER | SCR_HOR_CENTER : SCR_VERT_STRETCH | SCR_HOR_STRETCH;
+	}
 
 	// EFSP 4:3 (cg_forceAspect, the video-menu Aspect toggle): when 4:3 is requested, pillarbox the menu
 	// into a centered 4:3 box. SCR_HOR_CENTER|SCR_VERT_CENTER makes SCR_AdjustTo640 map a screen tap to
@@ -1013,7 +1024,8 @@ static int CL_HMVideo_FOpenFile( const char *qpath, fileHandle_t *f, fsMode_t mo
 	char *text, *patched;
 	int newLen;
 
-	if ( !Com_Holomatch() || mode != FS_READ || !f || !*f || len <= 0 || len > 0x100000
+	// not for cMod's ui (by Noah Metzger): it has its own video menu
+	if ( !Com_Holomatch() || cls.uiNativeAspect || mode != FS_READ || !f || !*f || len <= 0 || len > 0x100000
 		|| Q_stricmpn( qpath, "ext_data/mp_normaltext", 22 ) )
 		return len;
 
@@ -1061,7 +1073,7 @@ static void CL_HMVideo_FCloseFile( fileHandle_t f ) {
 
 // UI_CVAR_VARIABLEVALUE / VARIABLESTRINGBUFFER "r_mode"
 static qboolean CL_HMVideo_IsMode( const char *name ) {
-	return hmv_active && name && !Q_stricmp( name, "r_mode" );
+	return hmv_active && !cls.uiNativeAspect && name && !Q_stricmp( name, "r_mode" );
 }
 
 // UI_CVAR_SET / SETVALUE "r_mode": an index into the window sizes
@@ -1246,7 +1258,7 @@ intptr_t CL_UISystemCalls( intptr_t *args ) {
 
 	case UI_R_RENDERSCENE:
 #ifdef USE_FLEXIBLE_DISPLAY
-		if ( cl_flexibleDisplay->integer ) {
+		if ( CL_FLEX_UI ) {
 			refdef_t fd;
 			float x, y, width, height;
 
@@ -1277,7 +1289,7 @@ intptr_t CL_UISystemCalls( intptr_t *args ) {
 
 	case UI_R_DRAWSTRETCHPIC:
 #ifdef USE_FLEXIBLE_DISPLAY
-		if ( cl_flexibleDisplay->integer ) {
+		if ( CL_FLEX_UI ) {
 			float x = VMF(1);
 			float y = VMF(2);
 			float width = VMF(3);
@@ -1654,6 +1666,7 @@ void CL_ShutdownUI( void ) {
 	VM_Call( uivm, UI_SHUTDOWN );
 	VM_Free( uivm );
 	uivm = NULL;
+	cls.uiNativeAspect = qfalse;
 }
 
 /*
@@ -1688,6 +1701,8 @@ void CL_InitUI( void ) {
 	if ( !uivm ) {
 		Com_Error( ERR_FATAL, "VM_Create on UI failed" );
 	}
+	// cMod's ui (by Noah Metzger) gets the real screen size and does its own widescreen menus
+	cls.uiNativeAspect = VM_FromCmodPak( uivm );
 
 	// sanity check
 	v = VM_Call( uivm, UI_GETAPIVERSION );

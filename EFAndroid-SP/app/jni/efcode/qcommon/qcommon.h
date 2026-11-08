@@ -402,6 +402,7 @@ typedef enum {
 typedef intptr_t (QDECL *vmMainProc)(int callNum, int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7, int arg8, int arg9, int arg10, int arg11);
 
 void	VM_Init( void );
+qboolean VM_FromCmodPak( vm_t *vm );	// loaded from a cMod pak (cMod by Noah Metzger)
 vm_t	*VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *), 
 				   vmInterpret_t interpret );
 // module should be bare: "cgame", not "cgame.dll" or "vm/cgame.qvm"

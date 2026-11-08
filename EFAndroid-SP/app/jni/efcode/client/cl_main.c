@@ -4654,6 +4654,13 @@ void CL_Init( void ) {
 	Cvar_CheckRange( cl_flexibleDisplay, 0, 6, qtrue );
 #endif
 
+	// From cMod by Noah Metzger (Chomenor): the widescreen HUD and menus of his cgame and ui
+	// on by default, as his engine has them (the modules alone default to 0). Only cMod's
+	// modules read it.
+	if ( Com_Holomatch() ) {
+		Cvar_Get( "cg_aspectCorrect", "1", CVAR_ARCHIVE );
+	}
+
 	//
 	// register our commands
 	//
