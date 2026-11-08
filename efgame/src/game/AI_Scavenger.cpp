@@ -1,4 +1,5 @@
 #include "b_local.h"
+#include "coop_public.h"
 #include "g_nav.h"
 #include "anims.h"
 
@@ -314,7 +315,7 @@ void NPC_BSScav_Sleep( void )
 		//See if it was enough to wake us up
 		if ( level.alertEvents[alertEvent].level == AEL_DISCOVERED )
 		{
-			G_SetEnemy( NPC, &g_entities[0] );
+			G_SetEnemy( NPC, COOP_NearestPlayer( NPC->currentOrigin ) );
 			return;
 		}
 
@@ -337,7 +338,7 @@ qboolean NPC_CheckEnemyStealth( void )
 	//			he is the main focus.  Squad members and rivals do not
 	//			fall into this category and will be ignored.
 
-	gentity_t	*target = &g_entities[0];	//Change this pointer to assess other entities
+	gentity_t	*target = COOP_NearestPlayer( NPC->currentOrigin );	//Change this pointer to assess other entities
 
 	//In case we aquired one some other way
 	if ( NPC->enemy != NULL )
@@ -505,7 +506,7 @@ static void NPC_Scav_InvestigateEvent( int eventID, bool extraSuspicious )
 	//If they've given themselves away, just take them as an enemy
 	if ( level.alertEvents[eventID].level == AEL_DISCOVERED )
 	{
-		G_SetEnemy( NPC, &g_entities[0] );
+		G_SetEnemy( NPC, COOP_NearestPlayer( NPC->currentOrigin ) );
 		return;
 	}
 
