@@ -32,6 +32,7 @@
 #   REGRESS_SAVE=<file.sav>  the save for sp-save (default: the newest voy1 save in your saves folder;
 #                      record copies it into the baseline, and check loads that copy)
 #   EF_DATA=<dir>      the baseEF folder with pak0-pak3 (default ~/Library/Application Support/EliteForce-MacOS/baseEF)
+#   REGRESS_ARGS="..." extra arguments for every run, e.g. "+set sp_coop 0" (default: none)
 #   KEEP=1             keep the scratch folder (logs, console output) for a look
 #   REGRESS_CMOD=1     Holomatch with cMod's game modules (the app's Contents/Resources/cmod) instead of
 #                      the stock ones the runs use otherwise (+set sv_cmodGame 0 +set cl_cmodModules 0):
@@ -153,7 +154,7 @@ run_scenario() {
 		ln -s "$EF_DATA/$p.pk3" "$D/$p.pk3"
 		[ -f "$D/$p.pk3" ] || { echo "regress: $D/$p.pk3 isn't readable" >&2; SECS=0; return 1; }
 	done
-	common="+set regress_log \"$log\" +set r_fullscreen 0 +set r_swapInterval 0 +set com_maxfps 0"
+	common="+set regress_log \"$log\" +set r_fullscreen 0 +set r_swapInterval 0 +set com_maxfps 0 ${REGRESS_ARGS:-}"
 	sp="+set com_holomatch 0 $common"
 	# the stock game modules (pak2): the app's cMod modules (by Noah Metzger, macos/cmod) are other game code
 	# and would change every Holomatch run; REGRESS_CMOD=1 keeps them (for a baseline of its own)
