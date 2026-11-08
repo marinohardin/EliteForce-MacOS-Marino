@@ -7,6 +7,7 @@
 #include "bg_local.h"
 #include "anims.h"
 #include "Q3_Interface.h"
+#include "coop_public.h"
 
 extern pmove_t		*pm;
 extern pml_t		pml;
@@ -369,7 +370,7 @@ void PM_TorsoAnimation( void )
 		{
 			PM_SetAnim(pm,SETANIM_TORSO,BOTH_WALK2,SETANIM_FLAG_NORMAL);
 		}
-		else if((pm->ps->legsAnim & ~ANIM_TOGGLEBIT) == BOTH_CROUCH1IDLE && pm->ps->clientNum != 0 &&//player falls through
+		else if((pm->ps->legsAnim & ~ANIM_TOGGLEBIT) == BOTH_CROUCH1IDLE && !COOP_IsPlayerNum( pm->ps->clientNum ) &&//player falls through
 			pm->ps->weapon != WP_PALADIN )//crossbow guy falls through
 		{
 			//??? Why nothing?  What if you were running???
@@ -381,7 +382,7 @@ void PM_TorsoAnimation( void )
 		}
 		else
 		{//Used to default to both_stand1 which is an arms-down anim
-			if(pm->gent != NULL && pm->gent->s.number == 0)
+			if(pm->gent != NULL && COOP_IsPlayer( pm->gent ))
 			{//PLayer- temp hack for weapon frame
 				if ( pm->ps->weapon == WP_TRICORDER )
 				{

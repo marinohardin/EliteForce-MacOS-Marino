@@ -884,3 +884,6 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   scaling of player damage is commented out in this code, so there is nothing to scale for P2. The
   falling clamp only covers client attackers; world falling damage (attacker NULL) can kill P1 too, and
   does the same to P2. `coop_p2_damage <n> fall` tests it.
+- **Movement (B4).** `bg_pmove.cpp` and `bg_panimate.cpp` (also built into the cgame prediction) use
+  `COOP_IsPlayer` / `COOP_IsPlayerNum` for footstep alerts, landing, use and crouch rules, and
+  `COOP_ViewClientNum()` (0 on the host) where the code means "the client whose view is drawn".

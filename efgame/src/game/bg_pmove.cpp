@@ -9,6 +9,7 @@
 #include "g_shared.h"
 #include "bg_local.h"			   
 #include "g_local.h"			   
+#include "coop_public.h"
 #include "anims.h"
 #include "../cgame/cg_local.h"	// yeah I know this is naughty, but we're shipping soon...
 #include "../speedrun/overbounce_prediction/OverbouncePrediction.hpp"
@@ -212,7 +213,7 @@ static void PM_Accelerate( vec3_t wishdir, float wishspeed, float accel )
 	int			i;
 	float		addspeed, accelspeed, currentspeed;
 
-	if (pm->ps->clientNum == 0) {
+	if (pm->ps->clientNum == COOP_ViewClientNum()) {
 		StrafeHelper_SetAccelerationValues(pm->ps->velocity, wishdir,
 		                                   wishspeed, accel, pml.frametime);
 	}
@@ -1011,7 +1012,7 @@ static void PM_CrashLand( void ) {
 		if ( delta > 50 ) 
 		{
 			PM_AddEvent( EV_FALL_FAR );//damage is dealt in g_active, ClientEvents
-			if ( pm->gent && pm->gent->s.number == 0 ) 
+			if ( pm->gent && COOP_IsPlayer( pm->gent ) ) 
 			{
 				vec3_t	bottom;
 
@@ -1029,7 +1030,7 @@ static void PM_CrashLand( void ) {
 			if ( pm->ps->stats[STAT_HEALTH] > 0 ) 
 			{
 				PM_AddEvent( EV_FALL_MEDIUM );//damage is dealt in g_active, ClientEvents
-				if ( pm->gent && pm->gent->s.number == 0 ) 
+				if ( pm->gent && COOP_IsPlayer( pm->gent ) ) 
 				{
 					vec3_t	bottom;
 
@@ -1045,7 +1046,7 @@ static void PM_CrashLand( void ) {
 		else if ( delta > 7 ) 
 		{
 			PM_AddEvent( EV_FALL_SHORT );
-			if ( pm->gent && pm->gent->s.number == 0 ) 
+			if ( pm->gent && COOP_IsPlayer( pm->gent ) ) 
 			{
 				vec3_t	bottom;
 
@@ -1736,7 +1737,7 @@ DoFootSteps:
 				} else {
 					PM_AddEvent( PM_FootstepForSurface() );	//still on ground
 				}
-				if ( pm->gent && pm->gent->s.number == 0 ) 
+				if ( pm->gent && COOP_IsPlayer( pm->gent ) ) 
 				{
 					if ( pm->gent->client && pm->gent->client->playerTeam != TEAM_DISGUISE )
 					{
@@ -1751,7 +1752,7 @@ DoFootSteps:
 			if ( footstep && !pm->noFootsteps ) 
 			{
 				PM_AddEvent( PM_FootstepForSurface() );
-				if ( pm->gent && pm->gent->s.number == 0 ) 
+				if ( pm->gent && COOP_IsPlayer( pm->gent ) ) 
 				{
 					vec3_t	bottom;
 
@@ -1768,7 +1769,7 @@ DoFootSteps:
 		{
 			// splashing
 			PM_AddEvent( EV_FOOTSPLASH );
-			if ( pm->gent && pm->gent->s.number == 0 ) 
+			if ( pm->gent && COOP_IsPlayer( pm->gent ) ) 
 			{
 				vec3_t	bottom;
 
@@ -1784,7 +1785,7 @@ DoFootSteps:
 		{
 			// wading / swimming at surface
 			PM_AddEvent( EV_SWIM );
-			if ( pm->gent && pm->gent->s.number == 0 ) 
+			if ( pm->gent && COOP_IsPlayer( pm->gent ) ) 
 			{
 				if ( pm->gent->client && pm->gent->client->playerTeam != TEAM_DISGUISE )
 				{
@@ -1850,7 +1851,7 @@ qboolean G_WeaponChangeEffect ( gentity_t *ent )
 	if ( torsoAnim == TORSO_DROPWEAP1 || torsoAnim == TORSO_DROPWEAP2 || torsoAnim == TORSO_DROPWEAP3 ||
 		torsoAnim == TORSO_RAISEWEAP1 || torsoAnim == TORSO_RAISEWEAP2 || torsoAnim == TORSO_RAISEWEAP3 )
 	{//are getting the weapon from our transporter buffer
-		if ( ent->s.number == 0 || strstr( ent->client->renderInfo.torsoModelName , "hazard" ) != NULL ||
+		if ( COOP_IsPlayer( ent ) || strstr( ent->client->renderInfo.torsoModelName , "hazard" ) != NULL ||
 			   Q_stricmp( "alexascav", ent->NPC_type ) == 0 ||
 			   Q_stricmp( "munroscav", ent->NPC_type ) == 0 )
 		{//UGH... hacky way of knowing if this is a hazard guy
@@ -2038,7 +2039,7 @@ static void PM_Weapon( void )
 	if ( pm->ps->weaponstate == WEAPON_RAISING ) 
 	{//Just selected the weapon
 		pm->ps->weaponstate = WEAPON_IDLE;
-		if(pm->gent && pm->gent->s.number == 0)
+		if(pm->gent && COOP_IsPlayer( pm->gent ))
 		{
 			PM_SetAnim(pm,SETANIM_TORSO,BOTH_STAND1,SETANIM_FLAG_NORMAL);
 		}
@@ -2348,7 +2349,7 @@ void PM_SetSpecialMoveValues (void )
 	{
 		if ( g_timescale->value < 1.0f )
 		{
-			if ( pm->ps->clientNum == 0 )
+			if ( pm->ps->clientNum == COOP_ViewClientNum() )
 			{
 				MatrixMode = qtrue;
 			}
@@ -2497,7 +2498,7 @@ void Pmove( pmove_t *pmove )
 	VectorCopy (pm->ps->velocity, pml.previous_velocity);
 
 	pml.frametime = pml.msec * 0.001;
-	if ( cg_drawOverbounceInfo.integer && pm->ps->clientNum == 0 ) {
+	if ( cg_drawOverbounceInfo.integer && pm->ps->clientNum == COOP_ViewClientNum() ) {
 		OverbouncePrediction::reportLastFrametime( pml.frametime );
 	}
 
@@ -2615,7 +2616,7 @@ void Pmove( pmove_t *pmove )
 	// weapons
 	PM_Weapon();
 
-	if(pm->gent && pm->gent->s.number == 0)
+	if(pm->gent && COOP_IsPlayer( pm->gent ))
 	{//player only
 		// Use
 		PM_Use();
