@@ -1,0 +1,329 @@
+# Builds Elite Force (Marino port) for macOS arm64, Windows x64 and Linux x86_64.
+#
+#   push to main / pull requests / manual : build + smoke tests + upload artifacts
+#   tag macos-v<ver>, windows-v<ver>, linux-v<ver> : build that platform only and
+#       attach its artifacts to a DRAFT GitHub release for the tag (publish by hand)
+#
+# Signed/notarized macOS releases stay local (Developer ID + notary profile live on
+# the maintainer's Mac); CI builds unsigned (ad-hoc signed) macOS artifacts.
+# No retail game data is used anywhere in CI: smoke tests use a one-file fixture.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['macos-v*', 'windows-v*', 'linux-v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------ Linux
+  linux:
+    if: github.ref_type != 'tag' || startsWith(github.ref_name, 'linux-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Steam Runtime 3 "sniper" SDK: old-glibc toolchain so the AppImage runs on
+    # Ubuntu 22.04+, Fedora, SteamOS (Steam Deck).
+    container:
+      image: registry.gitlab.steamos.cloud/steamrt/sniper/sdk
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Version
+        run: |
+          if [ "${{ github.ref_type }}" = tag ]; then echo "VERSION=${GITHUB_REF_NAME#linux-v}" >> "$GITHUB_ENV"; fi
+
+      - name: Cache dependencies
+        id: cache
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            build-deps/linux
+            build-ffmpeg/linux
+          key: deps-linux-${{ hashFiles('deps/versions.sh', 'linux/build-deps.sh', 'linux/build-ffmpeg.sh') }}
+
+      - name: Build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          linux/build-deps.sh
+          linux/build-ffmpeg.sh
+
+      - name: Configure and build
+        run: |
+          cmake --preset linux-x64
+          cmake --build build/linux-x64 -j"$(nproc)"
+
+      - name: Package AppImage
+        run: linux/make-appimage.sh
+
+      - name: Build module-load test
+        run: cc -Wall -O1 -o dist/modload tests/smoke/modload.c -ldl
+
+      - uses: actions/upload-artifact@v4.6.0
+        with:
+          name: linux-x86_64
+          path: |
+            dist/EliteForce-Marino-*-x86_64.AppImage
+            dist/modload
+          if-no-files-found: error
+
+  # Runs the packaged AppImage on a stock Ubuntu runner (no container), i.e. the
+  # way users run it; the GPU path uses Mesa lavapipe (software Vulkan) under Xvfb.
+  linux-smoke:
+    needs: linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/download-artifact@v4.1.8
+        with:
+          name: linux-x86_64
+          path: dist
+      - name: Install Xvfb and software Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb mesa-vulkan-drivers libvulkan1 libasound2t64 pulseaudio-utils
+      - name: Unpack AppImage
+        run: |
+          chmod +x dist/*.AppImage dist/modload
+          mkdir -p unpacked && cd unpacked
+          ../dist/EliteForce-Marino-*-x86_64.AppImage --appimage-extract >/dev/null
+      - name: Module load (efgame, efui)
+        run: |
+          game="$(find unpacked/squashfs-root -name 'libefgame*.so' | head -1)"
+          ui="$(find unpacked/squashfs-root -name 'libefui*.so' | head -1)"
+          test -n "$game" && test -n "$ui"
+          LD_LIBRARY_PATH="$(dirname "$game")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" dist/modload "$game" "$ui"
+      - name: Dedicated server smoke (no GPU)
+        run: tests/smoke/run-smoke.sh server "$(echo dist/EliteForce-Marino-*-x86_64.AppImage)"
+      - name: Client smoke (Xvfb + lavapipe)
+        run: |
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)"
+          export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd"
+          xvfb-run -a -s "-screen 0 1280x720x24" \
+            tests/smoke/run-smoke.sh client "$(echo dist/EliteForce-Marino-*-x86_64.AppImage)"
+
+  linux-release:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'linux-v')
+    needs: [linux, linux-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.1.8
+        with:
+          name: linux-x86_64
+          path: dist
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "Elite Force for Linux ${GITHUB_REF_NAME#linux-v}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/EliteForce-Marino-*-x86_64.AppImage
+
+  # ---------------------------------------------------------------- Windows
+  windows-cross:
+    if: github.ref_type != 'tag' || startsWith(github.ref_name, 'windows-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Version
+        run: |
+          if [ "${{ github.ref_type }}" = tag ]; then echo "VERSION=${GITHUB_REF_NAME#windows-v}" >> "$GITHUB_ENV"; fi
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mingw-w64 cmake ninja-build nasm pkg-config make zip curl python3 \
+            wine wine64
+          # the posix thread model has std::thread etc.; the win32 one lacks them
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix || true
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix || true
+
+      - name: Cache dependencies
+        id: cache
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            build-deps/windows
+            build-ffmpeg/windows
+          key: deps-windows-${{ hashFiles('deps/versions.sh', 'windows/build-deps.sh', 'windows/build-ffmpeg.sh') }}
+
+      - name: Build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          windows/build-deps.sh
+          windows/build-ffmpeg.sh
+
+      - name: Configure and build
+        run: |
+          cmake --preset windows-x64
+          cmake --build build/windows-x64 -j"$(nproc)"
+
+      - name: Package zip
+        run: windows/make-release.sh
+
+      - name: Build module-load test
+        run: x86_64-w64-mingw32-gcc -Wall -O1 -o dist/modload.exe tests/smoke/modload.c
+
+      # Smoke tests run the Windows binaries under Wine.
+      - name: Module load under Wine (efgame, efui)
+        run: |
+          rm -rf unpacked && mkdir unpacked
+          unzip -q dist/EliteForce-Marino-*-windows-x64.zip -d unpacked
+          game="$(find unpacked -iname 'efgame*.dll' | head -1)"
+          ui="$(find unpacked -iname 'efui*.dll' | head -1)"
+          test -n "$game" && test -n "$ui"
+          export WINEDEBUG=-all WINEPREFIX="$RUNNER_TEMP/wine"
+          wineboot -i >/dev/null 2>&1 || true
+          cp dist/modload.exe "$(dirname "$game")/"
+          # cwd = module dir so Wine finds the DLLs' dependencies (SDL2, FFmpeg)
+          cd "$(dirname "$game")"
+          wine modload.exe "$(basename "$game")" "$(basename "$ui")"
+
+      # The engine under Wine in CI is best-effort: a Wine problem must not block a release.
+      - name: Dedicated server smoke under Wine
+        continue-on-error: true
+        run: |
+          engine="$(find unpacked -iname 'efsp.exe' | head -1)"
+          test -n "$engine"
+          cd "$(dirname "$engine")"
+          "$GITHUB_WORKSPACE/tests/smoke/run-smoke.sh" server "$PWD/efsp.exe" --wine
+
+      - uses: actions/upload-artifact@v4.6.0
+        with:
+          name: windows-x64
+          path: |
+            dist/EliteForce-Marino-*-windows-x64.zip
+          if-no-files-found: error
+
+  # Inno Setup only runs on Windows; consumes the cross-built zip. Tags only.
+  windows-installer:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'windows-v')
+    needs: windows-cross
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/download-artifact@v4.1.8
+        with:
+          name: windows-x64
+          path: dist
+      - name: Build installer
+        shell: pwsh
+        run: |
+          if (-not (Test-Path windows/installer.iss)) { Write-Host "no windows/installer.iss: skipping"; exit 0 }
+          choco install innosetup --version=6.4.3 --no-progress -y
+          $ver = "${{ github.ref_name }}".Substring("windows-v".Length)
+          $zip = Get-ChildItem dist/EliteForce-Marino-*-windows-x64.zip | Select-Object -First 1
+          Expand-Archive $zip.FullName -DestinationPath dist/stage
+          # installer.iss takes /DAppVersion and /DSourceDir (the unzipped release folder)
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DSourceDir=$((Resolve-Path dist/stage).Path)" "/O$((Resolve-Path dist).Path)" "/FEliteForce-Marino-$ver-setup" windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4.6.0
+        with:
+          name: windows-installer
+          path: dist/EliteForce-Marino-*-setup.exe
+          if-no-files-found: ignore
+
+  windows-release:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'windows-v')
+    needs: [windows-cross, windows-installer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.1.8
+        with:
+          pattern: windows-*
+          merge-multiple: true
+          path: dist
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "Elite Force for Windows ${GITHUB_REF_NAME#windows-v}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/EliteForce-Marino-*
+
+  # ------------------------------------------------------------------ macOS
+  macos:
+    if: github.ref_type != 'tag' || startsWith(github.ref_name, 'macos-v')
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Version
+        run: |
+          if [ "${{ github.ref_type }}" = tag ]; then echo "VERSION=${GITHUB_REF_NAME#macos-v}" >> "$GITHUB_ENV"; fi
+
+      - name: Install tools
+        # MoltenVK + Vulkan headers are bundled/used from Homebrew; SDL3, sdl2-compat,
+        # the Vulkan loader and FFmpeg are built from source by macos/build-*.sh.
+        run: brew install cmake ninja pkg-config molten-vk vulkan-headers
+
+      - name: Cache dependencies
+        id: cache
+        uses: actions/cache@v4.2.0
+        with:
+          path: |
+            build-deps
+            build-ffmpeg
+          key: deps-macos-${{ hashFiles('deps/versions.sh', 'macos/build-deps.sh', 'macos/build-ffmpeg.sh') }}
+
+      # make-app.sh builds anything missing (deps, FFmpeg, game modules, engine)
+      - name: Build and package (unsigned)
+        env:
+          UNSIGNED: '1'
+        run: macos/make-release.sh
+
+      - name: Build module-load test
+        run: cc -Wall -O1 -o dist/modload tests/smoke/modload.c
+
+      - name: Module load (efgame, efui)
+        run: |
+          app="dist/Elite Force.app/Contents/MacOS"
+          dist/modload "$app/libefgame.dylib" "$app/libefui.dylib"
+
+      - name: Dedicated server smoke
+        run: tests/smoke/run-smoke.sh server "dist/Elite Force.app/Contents/MacOS/Elite Force"
+
+      - uses: actions/upload-artifact@v4.6.0
+        with:
+          name: macos-arm64
+          path: |
+            dist/EliteForce-MacOS-Marino-*-arm64.dmg
+            dist/EliteForce-MacOS-Marino-*-arm64.zip
+          if-no-files-found: error
+
+  macos-release:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'macos-v')
+    needs: macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.1.8
+        with:
+          name: macos-arm64
+          path: dist
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "Elite Force for Mac ${GITHUB_REF_NAME#macos-v}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/EliteForce-MacOS-Marino-*

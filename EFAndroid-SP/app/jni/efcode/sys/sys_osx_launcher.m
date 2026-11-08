@@ -1726,7 +1726,7 @@ static void FetchLatestRelease( void ( ^done )( NSString *version, NSString *url
 		return;
 	}
 	req = [NSMutableURLRequest requestWithURL: [NSURL URLWithString:
-		[NSString stringWithFormat: @"https://api.github.com/repos/%@/releases?per_page=30", UPDATE_REPO]]];
+		[NSString stringWithFormat: @"https://api.github.com/repos/%@/releases?per_page=100", UPDATE_REPO]]];
 	[req setValue: @"application/vnd.github+json" forHTTPHeaderField: @"Accept"];
 	[req setValue: [NSString stringWithFormat: @"EliteForce-MacOS/%@", AppVersion()] forHTTPHeaderField: @"User-Agent"];
 	cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
