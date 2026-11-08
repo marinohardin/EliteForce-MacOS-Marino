@@ -1504,9 +1504,102 @@ long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueF
 
 /*
 =================
+FS_IsCorePak
+
+One of the game's own paks (pak0-pak3 of the retail game and its patches),
+recognized by checksum, whatever the file is called.
+=================
+*/
+static qboolean FS_IsCorePak( const pack_t *pack ) {
+#if !defined( STANDALONE ) && defined( ELITEFORCE )
+	int i;
+
+	for ( i = 0; i < ARRAY_LEN( pak_checksums ); i++ ) {
+		if ( (unsigned int)pack->checksum == pak_checksums[i] ) {
+			return qtrue;
+		}
+	}
+#endif
+	return qfalse;
+}
+
+/*
+=================
+FS_VMSearchOrder
+
+The search paths in the order FS_FindVM tries them, into list (Z_Malloc'd,
+the caller frees it); returns how many.
+
+Normally the search path order, with one change: when we're not on a pure
+server, the base game's other pk3s (any baseEF pk3 that isn't pak0-pak3)
+come after everything else. Pk3s sort by name, so a third-party pak such as
+tfgpak.pk3 or vm.pk3 used to win over pak2.pk3 and replace the game's own
+cgame, ui or qagame. A mod folder's own modules (fs_game) still come first,
+and loose vm/ files keep their place. Same rule as cMod by Noah Metzger
+(Chomenor), whose filesystem puts the core paks ahead of other baseEF pk3s.
+On a pure server the server's order applies, as before.
+=================
+*/
+static int FS_VMSearchOrder( searchpath_t ***list ) {
+	searchpath_t *search;
+	int count = 0, n = 0, pass;
+
+	for ( search = fs_searchpaths; search; search = search->next ) {
+		count++;
+	}
+	*list = Z_Malloc( ( count + 1 ) * sizeof( **list ) );
+
+	for ( pass = 0; pass < 2; pass++ ) {
+		for ( search = fs_searchpaths; search; search = search->next ) {
+			qboolean later = !fs_numServerPaks && search->pack && !FS_IsCorePak( search->pack )
+				&& !Q_stricmp( search->pack->pakGamename, com_basegame->string );
+
+			if ( later == ( pass == 1 ) ) {
+				(*list)[n++] = search;
+			}
+		}
+	}
+	return n;
+}
+
+/*
+=================
+FS_VMInSearchPath
+
+The DLL (if enableDll) or QVM in this search path: VMI_NATIVE with its path
+in "found", VMI_COMPILED, or -1.
+=================
+*/
+static int FS_VMInSearchPath( searchpath_t *search, char *found, int foundlen,
+		const char *dllName, const char *qvmName, int enableDll ) {
+	if ( search->dir && !fs_numServerPaks ) {
+		directory_t *dir = search->dir;
+
+		if ( enableDll ) {
+			char *netpath = FS_BuildOSPath( dir->path, dir->gamedir, dllName );
+
+			if ( FS_FileInPathExists( netpath ) ) {
+				Q_strncpyz( found, netpath, foundlen );
+				return VMI_NATIVE;
+			}
+		}
+
+		if ( FS_FOpenFileReadDir( qvmName, search, NULL, qfalse, qfalse ) > 0 ) {
+			return VMI_COMPILED;
+		}
+	} else if ( search->pack ) {
+		if ( FS_FOpenFileReadDir( qvmName, search, NULL, qfalse, qfalse ) > 0 ) {
+			return VMI_COMPILED;
+		}
+	}
+	return -1;
+}
+
+/*
+=================
 FS_FindVM
 
-Find a suitable VM file in search path order.
+Find a suitable VM file, in the order of FS_VMSearchOrder.
 
 In each searchpath try:
  - open DLL file if DLL loading enabled
@@ -1515,85 +1608,60 @@ In each searchpath try:
 Enable search for DLL by setting enableDll to FSVM_ENABLEDLL
 
 write found DLL or QVM to "found" and return VMI_NATIVE if DLL, VMI_COMPILED if QVM
-Return the searchpath in "startSearch".
+Return the searchpath in "startSearch". Called again with that searchpath (when
+its VM didn't load), it goes on with the next one.
 =================
 */
 
 int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, int enableDll)
 {
-	searchpath_t *search, *lastSearch;
-	directory_t *dir;
-	pack_t *pack;
+	searchpath_t **list, *lastSearch;
 	char dllName[MAX_OSPATH], qvmName[MAX_OSPATH];
-	char *netpath;
+	int count, i, retval = -1;
 
 	if(!fs_searchpaths)
 		Com_Error(ERR_FATAL, "Filesystem call made without initialization");
 
+	dllName[0] = '\0';
 	if(enableDll)
 		Com_sprintf(dllName, sizeof(dllName), "%s" ARCH_STRING DLL_EXT, name);
 
 	Com_sprintf(qvmName, sizeof(qvmName), "vm/%s.qvm", name);
 
+	count = FS_VMSearchOrder( &list );
+
 	lastSearch = *startSearch;
-	if(*startSearch == NULL)
-		search = fs_searchpaths;
-	else
-		search = lastSearch->next;
-
-	while(search)
-	{
-		if(search->dir && !fs_numServerPaks)
-		{
-			dir = search->dir;
-
-			if(enableDll)
-			{
-				netpath = FS_BuildOSPath(dir->path, dir->gamedir, dllName);
-
-				if(FS_FileInPathExists(netpath))
-				{
-					Q_strncpyz(found, netpath, foundlen);
-					*startSearch = search;
-
-					return VMI_NATIVE;
-				}
-			}
-
-			if(FS_FOpenFileReadDir(qvmName, search, NULL, qfalse, qfalse) > 0)
-			{
-				*startSearch = search;
-				return VMI_COMPILED;
-			}
+	i = 0;
+	if ( lastSearch ) {
+		// go on after the one that didn't load
+		while ( i < count && list[i] != lastSearch ) {
+			i++;
 		}
-		else if(search->pack)
-		{
-			pack = search->pack;
-
-			if(lastSearch && lastSearch->pack)
-			{
-				// make sure we only try loading one VM file per game dir
-				// i.e. if VM from pak7.pk3 fails we won't try one from pak6.pk3
-
-				if(!FS_FilenameCompare(lastSearch->pack->pakPathname, pack->pakPathname))
-				{
-					search = search->next;
-					continue;
-				}
-			}
-
-			if(FS_FOpenFileReadDir(qvmName, search, NULL, qfalse, qfalse) > 0)
-			{
-				*startSearch = search;
-
-				return VMI_COMPILED;
-			}
-		}
-
-		search = search->next;
+		i++;
 	}
 
-	return -1;
+	for ( ; i < count; i++ )
+	{
+		searchpath_t *search = list[i];
+
+		if ( search->pack && lastSearch && lastSearch->pack )
+		{
+			// make sure we only try loading one VM file per game dir
+			// i.e. if VM from pak7.pk3 fails we won't try one from pak6.pk3
+			if ( !FS_FilenameCompare( lastSearch->pack->pakPathname, search->pack->pakPathname ) )
+				continue;
+		}
+
+		retval = FS_VMInSearchPath( search, found, foundlen, dllName, qvmName, enableDll );
+		if ( retval >= 0 )
+		{
+			*startSearch = search;
+			break;
+		}
+	}
+
+	Z_Free( list );
+	return retval >= 0 ? retval : -1;
 }
 
 /*
