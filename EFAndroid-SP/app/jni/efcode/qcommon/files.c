@@ -1645,20 +1645,43 @@ static qboolean FS_IsStockVMPak( const pack_t *pack ) {
 =================
 FS_LoadCmodPaks
 
-The cMod paks shipped in the app bundle: <app>/Contents/Resources/cmod/*.pk3
-(fs_apppath is Contents/MacOS). Only paks on cMod's list are kept.
+The cMod paks shipped with the app. Only paks on cMod's list are kept.
+  macOS:   <app>/Contents/Resources/cmod/*.pk3 (fs_apppath is Contents/MacOS)
+  Windows: <folder of the .exe>/cmod/*.pk3
+  Linux:   <bin>/../share/eliteforce-marino/cmod/*.pk3 (AppImage: usr/share/...),
+           else <folder of the binary>/cmod/*.pk3
 =================
 */
 static void FS_LoadCmodPaks( void ) {
-#ifdef __APPLE__
+#ifdef EF_DESKTOP
 	char dir[MAX_OSPATH];
 	char **files;
 	int numFiles, i;
 
+#ifdef __APPLE__
 	if ( !Com_Holomatch() || !fs_apppath || !fs_apppath->string[0] ) {
 		return;
 	}
 	Com_sprintf( dir, sizeof( dir ), "%s%c..%cResources%ccmod", fs_apppath->string, PATH_SEP, PATH_SEP, PATH_SEP );
+#else
+	extern char *Sys_BinaryPath( void );	// sys_main.c
+	extern int Sys_FileTime( char *path );
+	const char *bin = Sys_BinaryPath();
+
+	if ( !Com_Holomatch() || !bin || !bin[0] ) {
+		return;
+	}
+	Com_sprintf( dir, sizeof( dir ), "%s%ccmod", bin, PATH_SEP );
+#ifndef _WIN32
+	{
+		char share[MAX_OSPATH];
+		Com_sprintf( share, sizeof( share ), "%s/../share/eliteforce-marino/cmod", bin );
+		if ( Sys_FileTime( share ) != -1 ) {	// exists
+			Q_strncpyz( dir, share, sizeof( dir ) );
+		}
+	}
+#endif
+#endif
 	files = Sys_ListFiles( dir, ".pk3", NULL, &numFiles, qfalse );
 	for ( i = 0; i < numFiles; i++ ) {
 		char path[MAX_OSPATH];

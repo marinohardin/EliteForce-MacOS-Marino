@@ -35,7 +35,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../sys/sys_local.h"
 #include "sdl_icon.h"
 
-#ifdef __APPLE__
+#ifdef EF_DESKTOP
 // the window title names the mode the app was launched in
 #undef CLIENT_WINDOW_TITLE
 #define CLIENT_WINDOW_TITLE ( ri.Cvar_VariableIntegerValue( "com_holomatch" ) ? \
