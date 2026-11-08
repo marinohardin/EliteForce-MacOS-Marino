@@ -1118,3 +1118,37 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   single counter on P1 (P2's hits already count there), and `player_locked` already freezes P2 (B1),
   so neither needed a hook. Tested on dn1: P2 picks up the tricorder and both players get it; a
   `coop_p2save` value carries into borg2 (health 55, armor 20, ammo 150).
+- **Launcher: Co-op… (2026-11-08).** `sys/sys_osx_coop.m` (new, compiled only with `EF_COOP`, which the
+  engine CMakeLists now also defines for `efsp`). The Single Player card gets a "Co-op…" button (non-co-op
+  builds have no button and the same launcher code). Its sheet has **Host**, which plays single player
+  exactly as the card's Play does, plus `+set sp_coop 1`, and lists this Mac's IPv4 addresses (en0 first)
+  for the friend; and **Join**: an address field (`host` or `host:port`) and **Check**, which shows what a
+  host answers (mission and map, difficulty, minutes on the level, players, the host's app and co-op
+  versions), "No co-op game found" after 2 s without an answer, or a version mismatch (another co-op
+  protocol or app version). **Connect** is shown but disabled until M1 ("Joining a co-op game comes with
+  the next co-op update (M1)").
+  - **Port and protocol.** UDP **29760** (`VSP_COOP_PORT`): clear of Holomatch's 27960, the test ports
+    27980-27983 and Jedi Academy's 29070. In SP the engine's networking is off (`net_enabled` 0), so a host
+    with `sp_coop 1` opens its own small socket there, polled once a frame from `Com_Frame` (an `EF_COOP`
+    line), and closes it when `sp_coop` is 0. Query `\xff\xff\xff\xffgetcoopinfo [challenge]`, answer
+    `\xff\xff\xff\xffcoopInfoResponse\n` and an infostring: `coopProtocol` (`VSP_COOP_PROTOCOL`, 1),
+    `version`, `hostname` (the Mac's name), `state` (playing or menu), `map` (`SP_CurMap`), `mission`,
+    `skill` (`g_spskill`), `players`, `maxPlayers`, `time` and the challenge (at most 32 letters, digits,
+    `-` or `_`; nothing else of a query is sent back). Rate limited like the server's getinfo (10 a second
+    per address, 10 per 100 ms in all); anything else on the port is ignored. The game side publishes
+    `coop_mission` (the level title, as the loading screen shows it), `coop_players` and `coop_time` about
+    once a second (`efgame/src/coop/coop_info.cpp`). `sp_bridge.cpp` is not touched.
+  - **Permissions.** The first Check of a LAN address (and a host's first answer) may bring up macOS's
+    "find devices on your local network" prompt. If sending fails (as it can when that was denied), Check
+    says so and points to System Settings > Privacy & Security > Local Network. With the macOS firewall on, the host may also be asked
+    to accept incoming connections. (Neither prompt came up in testing: host and checker ran on the same Mac.)
+  - **Test hooks** (top of `sys_osx_coop.m`): `VOYAGERSP_TEST_COOP_SHEET=<png>`, `..._QUERY=<address>`,
+    `..._HOLD=<s>`, `..._HOST=1`.
+  - **Tested.** Regression harness against `coop-launcher-base` (8443f66, `EF_COOP` OFF): OFF build and
+    `EF_COOP` ON with `+set sp_coop 0` ALL IDENTICAL; the OFF build's launcher object code is the same as
+    before. Host pressed through the test hook on voy1: answers on 127.0.0.1 and the LAN address (players 2
+    once P2 spawned), ignores other packets, never echoes junk after the query, answers 10 of 30 queries sent at once. Join's check (run in
+    a second instance): found, no answer, version mismatch (a scripted fake host), and bad addresses.
+  - **For M1.** The query is a status probe only. The co-op protocol replaces the stand-in P2 count, adds
+    the `.pk3` checksum check to the version check, and probably moves the answer onto the co-op netchan
+    socket on the same port. Connect, Copy Invite and router port opening come then.

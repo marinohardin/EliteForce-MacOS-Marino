@@ -392,6 +392,7 @@ void COOP_RunFrame( void )
 		return;
 	}
 	coop_p2.levelFrames++;
+	COOP_PublishInfo();
 
 	ent = COOP_P2();
 	if ( !ent )
