@@ -1,5 +1,6 @@
 //NPC_reactions.cpp
 #include "b_local.h"
+#include "coop_public.h"
 #include "anims.h"
 #include "g_functions.h"
 #include "characters.h"
@@ -60,7 +61,7 @@ static void NPC_CheckAttacker( gentity_t *other )
 		return;
 
 	//Special case player interactions
-	if ( other == &g_entities[0] )
+	if ( COOP_IsPlayerPtr( other ) )
 	{
 		//Account for the skill level to skew the results
 		float	luckThreshold;
@@ -587,7 +588,7 @@ void NPC_UseResponse( gentity_t *self, gentity_t *user, qboolean useWhenDone )
 		return;
 	}
 
-	if ( user->s.number != 0 )
+	if ( !COOP_IsPlayer( user ) )
 	{//not used by the player
 		if ( useWhenDone )
 		{
@@ -622,7 +623,7 @@ void NPC_UseResponse( gentity_t *self, gentity_t *user, qboolean useWhenDone )
 		}
 	}
 
-	if ( !noGreet && user->s.number == 0 && G_PlayerGreet( self, useWhenDone ) )
+	if ( !noGreet && COOP_IsPlayer( user ) && G_PlayerGreet( self, useWhenDone ) )
 	{
 		return;
 	}
@@ -668,7 +669,7 @@ void NPC_Use( gentity_t *self, gentity_t *other, gentity_t *activator )
 					}
 				}
 			}
-			else if ( !self->enemy && activator->s.number == 0 && !gi.S_Override[self->s.number] && !(self->NPC->scriptFlags&SCF_NO_RESPONSE) )
+			else if ( !self->enemy && COOP_IsPlayer( activator ) && !gi.S_Override[self->s.number] && !(self->NPC->scriptFlags&SCF_NO_RESPONSE) )
 			{//I don't have an enemy and I'm not talking and I was used by the player
 				NPC_UseResponse( self, other, qfalse );
 			}
@@ -681,7 +682,7 @@ void NPC_Use( gentity_t *self, gentity_t *other, gentity_t *activator )
 		{//Heal me NOW, dammit!
 			NPC_TakePatient( activator );
 		}
-		else if ( !self->enemy && activator->s.number == 0 && !gi.S_Override[self->s.number] && !(self->NPC->scriptFlags&SCF_NO_RESPONSE) )
+		else if ( !self->enemy && COOP_IsPlayer( activator ) && !gi.S_Override[self->s.number] && !(self->NPC->scriptFlags&SCF_NO_RESPONSE) )
 		{//I don't have an enemy and I'm not talking and I was used by the player
 			NPC_UseResponse( self, other, qfalse );
 		}

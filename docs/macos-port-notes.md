@@ -1104,3 +1104,7 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   `Rev` form where the old call had the points the other way round). Blocking, stacked-canyon and
   goal-is-the-player checks in `g_nav.cpp` include P2, and `NAV_FindPlayerWaypoint` also keeps P2's
   waypoint current, so NPCs chasing P2 can path to it. Tested on borg2 and voy3 (1500 frames).
+- **NPC reactions (B8).** Use, greet and "hit by the player" reactions in `NPC_reactions.cpp` accept
+  P2 (greetings play Munro's lines, which P2 shares). Tested on the voy1 save: P2 placed next to a crew
+  member, facing it, presses use, and the NPC answers (a sound event that a run without the use does
+  not have).
