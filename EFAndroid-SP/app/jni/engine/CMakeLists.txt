@@ -31,11 +31,12 @@ option(EF_VM_JIT "QVM JIT (aarch64: needs MAP_JIT work on macOS; x86_64: vm_x86.
 # single-player co-op (experimental). The engine side adds nothing yet; the game side is
 # efgame's option of the same name (make-app.sh passes both).
 option(EF_COOP "Single-player co-op (experimental)" OFF)
-# GOG installer extraction (sys_osx_gog.c + liblzma). macOS only until it is made portable.
+# GOG installer extraction (sys_osx_gog.c + liblzma). Portable now, but only the Mac launcher
+# calls it until the Windows/Linux launchers (M2) exist, so it stays off there by default.
 if(APPLE)
   option(EF_GOG "GOG offline-installer extraction (sys_osx_gog.c, liblzma)" ON)
 else()
-  option(EF_GOG "GOG offline-installer extraction (sys_osx_gog.c, liblzma; macOS only for now)" OFF)
+  option(EF_GOG "GOG offline-installer extraction (sys_osx_gog.c, liblzma; no caller until M2)" OFF)
 endif()
 if(WIN32)
   option(EF_WIN_GUI "Windows GUI-subsystem executable (-mwindows, like ioq3's client)" ON)
@@ -44,9 +45,6 @@ endif()
 # game modules and macos/make-app.sh finds it at $ENGINE_BUILD/efsp as before
 set(EF_ENGINE_OUTPUT_DIR "${CMAKE_BINARY_DIR}" CACHE PATH "Output directory for efsp")
 
-if(EF_GOG AND NOT APPLE)
-  message(FATAL_ERROR "EF_GOG needs sys_osx_gog.c to be made portable first (it #errors off Apple)")
-endif()
 
 set(JNI ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(EF  ${JNI}/efcode)
@@ -179,15 +177,21 @@ if(APPLE)
 elseif(WIN32)
   set(SYS_SRC
     ${EF}/sys/sys_win32.c ${EF}/sys/con_win32.c ${EF}/sys/con_log.c ${EF}/sys/sys_main.c
+    ${EF}/sys/sys_autoupdater.c ${EF}/sys/sys_platform_stub.c ${EF}/sys/sys_data.c
     ${EF}/sys/win_resource.rc)
   # win_resource.rc: its manifest is next to it; under mingw it wants the icon at
   # "misc/lilium.ico", which cmake/windows/misc/lilium.ico provides via the include path
+  # windres resolves relative paths from its working directory, so the icon path is absolute
   set_source_files_properties(${EF}/sys/win_resource.rc PROPERTIES
-    INCLUDE_DIRECTORIES "${EF}/sys;${EF_ROOT}/cmake/windows")
+    INCLUDE_DIRECTORIES "${EF}/sys;${EF_ROOT}/cmake/windows"
+    COMPILE_DEFINITIONS "EF_WIN_ICON=\\\"${EF_ROOT}/windows/icon.ico\\\"")
 else()
   set(SYS_SRC
     ${EF}/sys/sys_unix.c ${EF}/sys/con_tty.c ${EF}/sys/con_log.c ${EF}/sys/sys_main.c
-    ${EF}/sys/sys_autoupdater.c)
+    ${EF}/sys/sys_autoupdater.c ${EF}/sys/sys_platform_stub.c ${EF}/sys/sys_data.c)
+endif()
+if(EF_GOG AND NOT APPLE)
+  list(APPEND SYS_SRC ${EF}/sys/sys_osx_gog.c)
 endif()
 
 file(GLOB RENDERCOMMON_SRC ${EF}/renderercommon/*.c)
@@ -297,7 +301,7 @@ target_compile_definitions(efsp PRIVATE
   EF_HOMEPATH_NAME="${EF_HOMEPATH_NAME}")
 if(WIN32)
   # no WIN32_LEAN_AND_MEAN: sys_win32.c needs <mmsystem.h> (timeGetTime, timeBeginPeriod)
-  target_compile_definitions(efsp PRIVATE NOMINMAX)
+  target_compile_definitions(efsp PRIVATE NOMINMAX UNICODE _UNICODE)
 endif()
 
 target_compile_options(efsp PRIVATE ${EF_ENGINE_COPTS})
@@ -311,7 +315,7 @@ if(APPLE)
   endif()
   target_link_libraries(efsp PRIVATE curl)	# the system's libcurl (/usr/lib/libcurl.4.dylib), for HTTP map downloads
 elseif(WIN32)
-  target_link_libraries(efsp PRIVATE ws2_32 winmm iphlpapi dbghelp psapi)
+  target_link_libraries(efsp PRIVATE ws2_32 winmm iphlpapi dbghelp psapi advapi32 shell32 ole32)
   # libgcc / libstdc++ / winpthread linked in: no mingw runtime DLLs to ship
   target_link_options(efsp PRIVATE -static)
 else()
@@ -320,6 +324,9 @@ else()
   # find libefgame.so / libefui.so and bundled libs next to the binary or in ../lib
   set_target_properties(efsp PROPERTIES BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib"
     INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib")
+endif()
+if(EF_GOG AND NOT APPLE)
+  target_link_libraries(efsp PRIVATE lzma)	# static liblzma from the deps prefix
 endif()
 if(EF_BINK)
   target_link_libraries(efsp PRIVATE PkgConfig::FFMPEG)
