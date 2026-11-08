@@ -238,7 +238,7 @@ if(EF_COMPILER_GCC)
 endif()
 target_compile_definitions(sp_game_bridge PRIVATE NDEBUG EF_DYLIB_MODULES)
 if(WIN32)
-  target_compile_definitions(sp_game_bridge PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_definitions(sp_game_bridge PRIVATE NOMINMAX)
 endif()
 set_property(TARGET sp_game_bridge PROPERTY CXX_STANDARD 17)
 
@@ -296,7 +296,8 @@ target_compile_definitions(efsp PRIVATE
   USE_LOCAL_HEADERS=1
   EF_HOMEPATH_NAME="${EF_HOMEPATH_NAME}")
 if(WIN32)
-  target_compile_definitions(efsp PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  # no WIN32_LEAN_AND_MEAN: sys_win32.c needs <mmsystem.h> (timeGetTime, timeBeginPeriod)
+  target_compile_definitions(efsp PRIVATE NOMINMAX)
 endif()
 
 target_compile_options(efsp PRIVATE ${EF_ENGINE_COPTS})

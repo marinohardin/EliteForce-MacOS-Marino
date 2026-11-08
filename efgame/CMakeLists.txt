@@ -70,7 +70,9 @@ if(EF_COMPILER_GCC)
   list(APPEND EF_COPTS $<$<COMPILE_LANGUAGE:CXX>:-fpermissive> $<$<COMPILE_LANGUAGE:CXX>:-Wno-narrowing>)
 endif()
 if(WIN32)
-  list(APPEND EF_COPTS -DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+  # No WIN32_LEAN_AND_MEAN: the Raven code relies on the full <windows.h> as on MSVC
+  # (e.g. timeGetTime from <mmsystem.h> in g_main.cpp; winmm linked below).
+  list(APPEND EF_COPTS -DNOMINMAX)
 endif()
 
 # ---- per-platform linking ----
@@ -106,6 +108,7 @@ function(ef_module_link target exp ver)
     target_sources(${target} PRIVATE ${_deffile})
     set_target_properties(${target} PROPERTIES PREFIX "" IMPORT_PREFIX "" OUTPUT_NAME ${target})
     target_link_options(${target} PRIVATE -static -Wl,--no-undefined)
+    target_link_libraries(${target} winmm)   # timeGetTime
   else()
     if(EF_NO_UNDEFINED)
       target_link_options(${target} PRIVATE -Wl,--version-script=${AND}/${ver} -Wl,--no-undefined)

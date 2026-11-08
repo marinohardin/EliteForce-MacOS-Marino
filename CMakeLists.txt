@@ -11,10 +11,10 @@ cmake_minimum_required(VERSION 3.21)
 # cmake -S EFAndroid-SP/app/jni/macos); both stay standalone projects.
 # Options: EF_APP_VERSION, EF_BINK, EF_VM_JIT, EF_COOP, EF_GOG, EF_DEPS_PREFIX, EF_FFMPEG_PREFIX.
 
-if(APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-  project(EliteForce C CXX OBJC)
-else()
-  project(EliteForce C CXX)
+# (APPLE/WIN32 are only meaningful after project(), once a toolchain file has been read)
+project(EliteForce C CXX)
+if(APPLE)
+  enable_language(OBJC)
 endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/EFPlatform.cmake)
 
