@@ -878,3 +878,9 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   `COOP_IsPlayer`, so P2's shots get the player muzzle, spread, damage and impact rules. P2 is always
   first person (`COOP_ThirdPerson`), and the co-op module keeps P2's eye point and view angles current
   (only the cgame updates P1's). Tested: P2 fires on borg2, ammo drops 2 per shot, no warnings.
+- **Combat (B3).** `G_Damage`, friendly fire and the mission status text treat P2 as the player (no
+  half damage from crew, crew shots by accident do not hurt it, pain scripts). The pointer compare in
+  `G_FriendlyFireReaction` uses `COOP_IsPlayerPtr` (a freed entity also has number 0). The skill
+  scaling of player damage is commented out in this code, so there is nothing to scale for P2. The
+  falling clamp only covers client attackers; world falling damage (attacker NULL) can kill P1 too, and
+  does the same to P2. `coop_p2_damage <n> fall` tests it.

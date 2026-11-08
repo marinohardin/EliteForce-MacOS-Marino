@@ -62,7 +62,7 @@ The M0 puppet controls (host console; reached through the game's ClientCommand):
 	coop_p2_use                      press use once
 	coop_p2_weapon <n>               switch to weapon n (if P2 has it)
 	coop_p2_tele                     move P2 next to P1
-	coop_p2_damage <n>               hurt P2 by n (test death and respawn)
+	coop_p2_damage <n> [fall]        hurt P2 by n (test death and respawn; fall: as falling damage)
 */
 qboolean COOP_ConsoleCommand( const char *cmd )
 {
@@ -138,7 +138,8 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 	else if ( !Q_stricmp( cmd, "coop_p2_damage" ) )
 	{
 		vec3_t dir = { 0, 0, 1 };
-		G_Damage( ent, NULL, NULL, dir, ent->currentOrigin, atoi( gi.argv( 1 ) ), DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR, MOD_UNKNOWN );
+		G_Damage( ent, NULL, NULL, dir, ent->currentOrigin, atoi( gi.argv( 1 ) ), DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR,
+			!Q_stricmp( gi.argv( 2 ), "fall" ) ? MOD_FALLING : MOD_UNKNOWN );
 	}
 	else
 	{

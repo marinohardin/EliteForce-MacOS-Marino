@@ -16,6 +16,7 @@
 #define COOP_IsP2(e)				0
 #define COOP_IsPlayer(e)			((e)->s.number == 0)
 #define COOP_IsPlayerNum(n)			((n) == 0)
+#define COOP_IsPlayerPtr(e)			((e) == &g_entities[0])
 #define COOP_StoryActivator(e)		(e)
 #define COOP_ThirdPerson(e)			cg_thirdPerson.integer
 
@@ -47,6 +48,9 @@ inline bool COOP_IsPlayer( const gentity_t *e ) { return e->s.number == 0 || COO
 
 // a client number (ps->clientNum) is either player; works where there is no gentity (cgame prediction)
 inline bool COOP_IsPlayerNum( int n ) { return n == 0 || ( coop_p2Num >= 0 && n == coop_p2Num ); }
+
+// for code that compared pointers with &g_entities[0] (a freed entity also has s.number 0)
+inline bool COOP_IsPlayerPtr( const gentity_t *e ) { return e == &g_entities[0] || ( e && COOP_IsP2( e ) ); }
 
 // story scripts expect "the player" as activator: P2 becomes P1
 inline gentity_t *COOP_StoryActivator( gentity_t *e ) { return ( e && COOP_IsP2( e ) ) ? &g_entities[0] : e; }

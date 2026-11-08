@@ -363,7 +363,7 @@ void G_SetMissionStatusText( gentity_t *attacker, int mod )
 //		statusTextIndex = Q_irand( IGT_JUDGEMENTDESIRED, IGT_JUDGEMENTMUCHDESIRED );
 		statusTextIndex = IGT_JUDGEMENTMUCHDESIRED;
 	}
-	else if ( attacker && attacker->s.number != 0 && attacker->client && attacker->client->playerTeam == TEAM_STARFLEET )
+	else if ( attacker && !COOP_IsPlayer( attacker ) && attacker->client && attacker->client->playerTeam == TEAM_STARFLEET )
 	{//killed by a teammate
 		statusTextIndex = IGT_INSUBORDINATION;
 	}
@@ -546,7 +546,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 
 	// if client is in a nodrop area, don't drop anything
 	contents = gi.pointcontents( self->currentOrigin, -1 );
-	if ( self->s.number != 0 && !( contents & CONTENTS_NODROP ) && (self->s.weapon == WP_COMPRESSION_RIFLE || self->s.weapon == WP_SCAVENGER_RIFLE)) 
+	if ( !COOP_IsPlayer( self ) && !( contents & CONTENTS_NODROP ) && (self->s.weapon == WP_COMPRESSION_RIFLE || self->s.weapon == WP_SCAVENGER_RIFLE)) 
 	{
 		TossClientItems( self );
 	}
@@ -1105,7 +1105,7 @@ void G_FriendlyFireReaction( gentity_t *targ, gentity_t *attacker, qboolean inCo
 {//NOTE: you only get in here if a starfleet teammember shot another starfleet teammember
 	int	ffireEvent = 0;
 
-	if ( attacker != &g_entities[0] || targ == &g_entities[0] )
+	if ( !COOP_IsPlayerPtr( attacker ) || COOP_IsPlayerPtr( targ ) )
 	{//attacker isn't player, or target is the player ignore it
 		return;
 	}
@@ -1330,7 +1330,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 		attacker = &g_entities[ENTITYNUM_WORLD];
 	}
 
-	if ( attacker->s.number != 0 && damage >= 2 && targ->s.number != 0 && attacker->client && attacker->client->playerTeam == TEAM_STARFLEET )
+	if ( !COOP_IsPlayer( attacker ) && damage >= 2 && !COOP_IsPlayer( targ ) && attacker->client && attacker->client->playerTeam == TEAM_STARFLEET )
 	{//player-helpers do only half damage to enemies
 		damage = ceil((float)damage/2.0f);
 	}
@@ -1367,7 +1367,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 		VectorNormalize2( dir, newDir );
 	}
 
-	if ( targ->s.number != 0 )
+	if ( !COOP_IsPlayer( targ ) )
 	{//not the player
 		if ( (targ->flags&FL_GODMODE) || (targ->flags&FL_UNDYING) )
 		{//have god or undying on, so ignore no protection flag
@@ -1438,14 +1438,14 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 			return;
 		}
 
-		if ( attacker->s.number != 0 && targ->s.number != 0 &&//player not involved in any way in this exchange
+		if ( !COOP_IsPlayer( attacker ) && !COOP_IsPlayer( targ ) &&//player not involved in any way in this exchange
 			attacker->client && targ->client &&//two NPCs
 			attacker->client->playerTeam == targ->client->playerTeam ) //on the same team
 		{//NPCs on same team don't hurt each other
 			return;
 		}
 
-		if ( targ->s.number == 0 &&//player was hit
+		if ( COOP_IsPlayer( targ ) &&//player was hit
 			attacker->client && targ->client &&//by an NPC
 			attacker->client->playerTeam == TEAM_STARFLEET ) //on the same team
 		{
@@ -1567,7 +1567,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 				targ->health = targ->health - take;
 
 				//MCG - Falling should never kill player- only if a trigger_hurt does so.
-				if ( mod == MOD_FALLING && targ->s.number == 0 && targ->health < 1 )
+				if ( mod == MOD_FALLING && COOP_IsPlayer( targ ) && targ->health < 1 )
 				{
 					targ->health = 1;
 				}
@@ -1613,7 +1613,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 				}
 
 				//1) player doesn't take damage from teammates unless they're angry at him
-				if ( targ->s.number == 0 )
+				if ( COOP_IsPlayer( targ ) )
 				{//the player
 					if ( attacker->enemy != targ && attacker != targ )
 					{//an NPC shot the player by accident
@@ -1642,7 +1642,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 					targ->health = targ->health - take;
 				}
 
-				if ( (targ->flags&FL_UNDYING) && !(dflags&DAMAGE_NO_PROTECTION) && attacker->s.number != 0 )
+				if ( (targ->flags&FL_UNDYING) && !(dflags&DAMAGE_NO_PROTECTION) && !COOP_IsPlayer( attacker ) )
 				{//guy is marked undying and we're not the player or we're in combat
 					if ( targ->health < 1 )
 					{
@@ -1689,7 +1689,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 		else 
 		{
 			GEntity_PainFunc(targ, attacker, take);
-			if ( targ->s.number == 0 )
+			if ( COOP_IsPlayer( targ ) )
 			{//player run painscript
 				if ( VALIDSTRING( targ->behaviorSet[BSET_PAIN] ) )
 				{
