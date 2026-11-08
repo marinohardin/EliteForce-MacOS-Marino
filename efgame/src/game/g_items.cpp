@@ -275,8 +275,10 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 	// play the normal pickup sound
 	G_AddEvent( other, EV_ITEM_PICKUP, ent->s.modelindex );
 
+	COOP_OnPickup( ent, other );
+
 	// fire item targets
-	G_UseTargets (ent, other);
+	G_UseTargets (ent, COOP_StoryActivator( other ));
 
 	// wait of -1 will not respawn
 //	if ( ent->wait == -1 ) 

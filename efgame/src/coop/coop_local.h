@@ -35,5 +35,7 @@ qboolean	COOP_FindSpotNear( gentity_t *p1, vec3_t out );
 void		COOP_PlaceP2( gentity_t *ent, const vec3_t org );	// move without a lerp
 void		COOP_SpawnP2( void );
 void		COOP_ApplyHidden( gentity_t *ent, qboolean hidden );
+void		COOP_ReadCarry( void );						// coop_inventory.cpp
+void		COOP_ApplyCarry( gentity_t *ent );
 
 #endif // COOP_LOCAL_H
