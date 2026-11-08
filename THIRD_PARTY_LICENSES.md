@@ -19,6 +19,7 @@ Re-check with `ls` / `otool -L` whenever the toolchain changes.
 |---|---|---|---|
 | Engine (Quake III Arena → ioquake3 → lilium-voyager; Quake3e `renderervk`) plus the Android and macOS port code | `EFAndroid-SP/app/jni/efcode`, `EFAndroid-SP/app/jni/sp`, `EFAndroid-SP/app/jni/macos` | GPL-2.0-or-later | [LICENSE](LICENSE) |
 | Elite Force SP game/UI modules (`libefgame.dylib`, `libefui.dylib`) | `efgame/` | Raven Software Limited Use Software License Agreement (non-commercial, free distribution only, for use with the retail game). **Not open source.** | `efgame/STEF Game Source License.doc` |
+| cMod game modules by Noah Metzger (Chomenor): `pakcmod-release-*.pk3` (Holomatch cgame/ui/qagame QVMs), bundled unchanged with his permission | app: `Contents/Resources/cmod` (not in git; see `macos/cmod/README.txt`) | Raven Software Limited Use Software License Agreement (built from Raven's game source; same terms as `efgame/`). Loaded at runtime, not linked into the engine. **Not open source.** | `STEF Game Source License.doc`, next to the pk3 |
 
 ## 2. Libraries compiled into the engine executable (in-tree sources)
 

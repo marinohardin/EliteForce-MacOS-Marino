@@ -53,7 +53,9 @@ simplifying hosting servers compared to the original game.
   3D) and **Join links** from websites like [efservers.com](https://efservers.com). See
   [Finding a game: Browse…](#finding-a-game-browse).
   It speaks the original Elite Force 1.2 network protocol, with many fixes from
-  [cMod](https://github.com/Chomenor/ioef-cmod) by Noah Metzger.
+  [cMod](https://github.com/Chomenor/ioef-cmod) by Noah Metzger. It also includes **cMod's game
+  modules** by Noah Metzger, with his permission: a **widescreen HUD** and menus, and weapon fire
+  prediction on servers that offer it (see [cMod's game modules](#cmods-game-modules)).
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection.
 - **Dedicated server.** **Host a Server** runs a standalone server with a status window
@@ -179,6 +181,25 @@ a second server asks first, since players would see both. It also runs from Term
 (`dedicated 2` for the internet), with console commands typed into Terminal.
 
 <img width="724" height="843" alt="Dedicated Elite Force Server" src="https://github.com/user-attachments/assets/059ae1d4-4601-4f03-96a3-180fd2792056" />
+
+### cMod's game modules
+
+Holomatch includes **cMod's game modules** (cgame, ui and qagame) by **Noah Metzger
+(Chomenor)**, unchanged and with his kind permission (`Contents/Resources/cmod`). They are used
+in place of the game's stock ones (patch 1.2's `pak2.pk3`), never in place of a mod's own, and
+not on pure servers (there the server's files apply, as before):
+
+- **Widescreen HUD and menus**: the HUD stays sharp and in proportion on a wide screen, at the
+  edges or nearer the middle (launcher: Holomatch, **HUD**).
+- **Lag compensation** on a server you host (Config…, **cMod** tab): shots hit what the shooter
+  saw, so players with a high ping can aim normally. It's done by the server, so it works for
+  every player, whatever game they run. Players are never sent cMod's files.
+- **Weapon fire prediction** on servers that offer it (cMod servers and yours): your shots show
+  at once instead of after a round trip.
+- Many bug fixes in the game code.
+
+**Use cMod's game modules** in the launcher (Holomatch) and **Run cMod's game code** (Host a
+Server, cMod tab) turn them off; everything then works as before.
 
 ### Playing over the internet
 
@@ -313,7 +334,9 @@ release ([docs/PUBLISHING.md](docs/PUBLISHING.md)).
 The script copies `efsp` and the two game modules into `Contents/MacOS`, and SDL3 +
 sdl2-compat, the LGPL FFmpeg libraries, the Vulkan loader and MoltenVK into
 `Contents/Frameworks` (license texts go in `Contents/Resources/licenses`), rewrites their install names to `@rpath`, and fails if anything still
-points outside the bundle or the system. `APP_NAME`, `DISPLAY_NAME`, `BUNDLE_ID` and `BREW`
+points outside the bundle or the system. cMod's game modules go in `Contents/Resources/cmod`
+from a local copy of the pk3 (pk3s aren't in git): the newest `macos/cmod/pakcmod-release-*.pk3`,
+or `CMOD_PAK=<file>`; see `macos/cmod/README.txt`. Without one the app is built without them. `APP_NAME`, `DISPLAY_NAME`, `BUNDLE_ID` and `BREW`
 can be overridden.
 
 Build options (engine CMake): `-DEF_BINK=OFF` builds without FFmpeg (no cinematics);
@@ -381,6 +404,8 @@ know about:
   non-commercial purposes only**, with a copy of that license, and **only for use with the
   full retail version of Elite Force**. Selling it or using it commercially in any way is not
   allowed.
+- **cMod's game modules** (`Contents/Resources/cmod`, by Noah Metzger, included with his
+  permission) are built from Raven's game source too, so the same Raven license applies to them.
 - **No game assets are included.** Maps, models, textures, sounds, music and videos belong to
   their owners and come from your own retail copy.
 - **Star Trek** and related marks are trademarks of **Paramount** (CBS Studios). *Elite Force*
