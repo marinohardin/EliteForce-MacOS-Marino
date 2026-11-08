@@ -573,6 +573,15 @@ static void SP_ClearVoiceTimers(void){
 // too (retail stops drawing the 3D view during a skip).
 static int   s_spSoundsBlocked = 0;
 static int   s_spSkipDraw = 0;
+static int   s_spWasPaused = 0;     // SP_DrawFrame edge state: the last frame was paused / skipping
+static int   s_spWasSkipping = 0;
+// The gates are set per drawn frame, so the last frame's values outlive the level: quitting from the
+// pause menu left s_spSoundsBlocked at 1, and the next game's level-start frames (run before its first
+// drawn frame) dropped their sounds -- borg1's opening captain's log was lost and its dialog wait ended
+// at once. A new game, load or abort starts with every gate open (SP_UnloadGame).
+static void SP_ResetFrameGates(void){
+    s_spSoundsBlocked = 0; s_spSkipDraw = 0; s_spWasPaused = 0; s_spWasSkipping = 0;
+}
 // Retail cutscene skip: Use Item in a camera scene sets skippingCinematic 1 + timescale 100 and the game
 // clears both when the camera ends (g_active.cpp ClientThink_real); an in-game movie clears them too
 // (cl_cin.c). This ends a skip wherever the level ends without the game seeing the camera end.
@@ -663,6 +672,7 @@ extern "C" void SP_UnloadGame( void ){
     }
     g_lib = NULL; ge = NULL; g_vmMain = NULL; g_camPos = NULL; g_spActive = 0;
     SP_EndCutsceneSkip();   // a load / new game / abort ends any camera-scene skip (timescale back to 1)
+    SP_ResetFrameGates();   // ... and the pause/skip sound and draw gates
     // H3: g_linked[] holds raw gentity_t* into the module we just dlclose'd. Leaving them dangling is a
     // use-after-free waiting for one missing g_spActive gate. The next spawn resets g_numLinked anyway;
     // zero them now so nothing can walk a freed pointer in between.
@@ -2008,7 +2018,6 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     // ClientThink/RunFrame; just re-draw the frozen frame behind the menu. (lastReal is already updated
     // above, so unpausing won't time-jump.)
     { extern int SP_MenuPaused(void);
-      static int s_wasPaused = 0;
       if( SP_MenuPaused() ){
         // Hold the game's sounds and the music where they are (S_PauseGameSounds): they used to be
         // stopped with S_StopAllSounds on this edge, which lost the music and the current voice line for
@@ -2018,7 +2027,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         // dropped while paused (s_spSoundsBlocked).
         S_PauseGameSounds( qtrue );
         s_spSoundsBlocked = 1;
-        if( !s_wasPaused ){ s_wasPaused = 1;
+        if( !s_spWasPaused ){ s_spWasPaused = 1;
             // Grab the save-menu thumbnail ONCE here, on the gameplay->menu edge (not every gameplay
             // second). The capture is a full-screen GPU readback that stalls the Adreno pipeline ~100ms;
             // doing it per-second during play was the dominant stutter. You only save from this menu, so a
@@ -2048,7 +2057,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         S_ClearLoopingSounds(qtrue);
         return;
       }
-      if( s_wasPaused ){ s_wasPaused = 0; blog("EFSP: unpaused: game sounds resume\n"); }
+      if( s_spWasPaused ){ s_spWasPaused = 0; blog("EFSP: unpaused: game sounds resume\n"); }
       S_PauseGameSounds( qfalse );   // resume held sounds where they were (no-op when not held)
     }
 
@@ -2057,16 +2066,15 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     // and a load / quit ends it (SP_UnloadGame, CL_Disconnect). While skipping, timescale drives the sim
     // (below), the 3D view isn't drawn (a progress screen instead), and the game's sounds stop -- like
     // retail, which killed every sound but the music when a skip started.
-    static int s_wasSkipping = 0;
     int skipping = Cvar_VariableIntegerValue("skippingCinematic");
-    if( skipping && !s_wasSkipping ){
+    if( skipping && !s_spWasSkipping ){
         S_StopGameSounds();      // effects, voices, loops; the music plays on
         SP_ClearVoiceTimers();
         blog("EFSP: cutscene skip started (timescale %g)\n", Cvar_VariableValue("timescale"));
-    } else if( !skipping && s_wasSkipping ){
+    } else if( !skipping && s_spWasSkipping ){
         blog("EFSP: cutscene skip ended at levelTime %d\n", g_levelTime);
     }
-    s_wasSkipping = skipping;
+    s_spWasSkipping = skipping;
     s_spSoundsBlocked = skipping;
     g_spMovieQueued = 0;
 

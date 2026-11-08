@@ -870,3 +870,11 @@ runs on another Mac or another macOS version.
 - **Voice lines.** A line the script started right after a cutscene skip ended (same render frame)
   was dropped by the skip's sound block; the block is re-checked per tick now. In single player
   the mixer no longer steals CHAN_VOICE / CHAN_VOICE_ATTEN channels when all are busy.
+- **First voice line after quitting from the pause menu (2026-11-08).** The bridge's pause/skip
+  gates (`s_spSoundsBlocked`, the skip draw gate, the paused/skipping edge flags) are set per drawn
+  frame, so quitting from the in-game menu left sounds blocked into the next game. A New Game's
+  level-start frames run before its first drawn frame, and borg1 starts Janeway's first captain's
+  log there: it was dropped, its dialog wait ended at once, and the intro began at the second log
+  ("Ensign Munro is second in command..."). Seen after skipping the intro, because Esc only opens
+  the pause menu once the camera scene is over. `SP_UnloadGame` (new game, load, abort) now resets
+  the gates. 1.3.0 had the same bug.
