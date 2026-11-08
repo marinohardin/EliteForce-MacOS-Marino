@@ -7,7 +7,9 @@
 #include "coop_public.h"
 #include "coop_local.h"
 
-#define COOP_CAMERA_REJOIN_DIST	512		// after a camera, rejoin P1 if further away than this
+#define COOP_CAMERA_REJOIN_DIST	160		// after a camera, rejoin P1 if further away than this
+
+static qboolean COOP_ClearWayTo( gentity_t *ent, gentity_t *target );
 
 void COOP_OnCameraEnable( void )
 {
@@ -31,10 +33,26 @@ void COOP_OnCameraDisable( void )
 		return;
 	}
 	COOP_ApplyHidden( ent, qfalse );
-	// scripts often move P1 during a cutscene
-	if ( p1->inuse && DistanceSquared( p1->currentOrigin, ent->currentOrigin ) > COOP_CAMERA_REJOIN_DIST * COOP_CAMERA_REJOIN_DIST
-		&& COOP_FindSpotNear( p1, org ) )
+	// P2 stood still while the camera ran, often where it spawned at the level start, and scripts
+	// often move P1 during a cutscene: rejoin P1 unless P2 is already close with a clear way to it
+	// (a spot just behind P1 can be below a ledge P1 stood on; P2 then can't follow at all)
+	if ( p1->inuse && ( DistanceSquared( p1->currentOrigin, ent->currentOrigin ) > COOP_CAMERA_REJOIN_DIST * COOP_CAMERA_REJOIN_DIST
+		|| !COOP_ClearWayTo( ent, p1 ) ) && COOP_FindSpotNear( p1, org ) )
 	{
 		COOP_PlaceP2( ent, org );
 	}
+}
+
+/*
+COOP_ClearWayTo
+
+P2 (ent) could walk to target in a straight line: a player-sized box moved from one to the
+other hits nothing but the target.
+*/
+static qboolean COOP_ClearWayTo( gentity_t *ent, gentity_t *target )
+{
+	trace_t	tr;
+
+	gi.trace( &tr, ent->currentOrigin, ent->mins, ent->maxs, target->currentOrigin, ent->s.number, MASK_PLAYERSOLID );
+	return ( !tr.startsolid && !tr.allsolid && ( tr.fraction >= 1.0f || tr.entityNum == target->s.number ) ) ? qtrue : qfalse;
 }
