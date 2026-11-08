@@ -1041,3 +1041,16 @@ captured the launcher and the game window.
 
 Regression harness (in background mode): all five scenarios identical to a baseline recorded at
 2e80964 before the change.
+## Co-op M0: scaffolding and the player 2 puppet (2026-11-07, branch `1_4_0/coop` only)
+
+Experimental, never merged without the user's approval. Plan: `docs/coop-proposal.md`, `docs/coop-audit.md`.
+
+- **Build switch.** CMake option `EF_COOP` (default OFF) in `efgame/CMakeLists.txt` and in the engine's
+  CMakeLists (the engine side adds nothing yet). With it ON, `efgame/src/coop/*.cpp` is compiled and
+  `EF_COOP` is defined for libefgame. `EF_COOP=1 macos/make-app.sh` builds it in `efgame/buildmac-coop`.
+- **Run switch.** Latched cvar `sp_coop` (registered only in `EF_COOP` builds, read at InitGame).
+- **Helpers** (`efgame/src/game/coop_public.h`): without `EF_COOP` each one is the exact expression it
+  replaced (`COOP_IsPlayer(e)` is `((e)->s.number == 0)`), and each hook is nothing.
+- **Gate.** `macos/regress.sh check coop-base` (baseline recorded at dbfb6a3 with `EF_COOP` OFF) after
+  every batch, both for an OFF build and for `EF_COOP=1 REGRESS_ARGS="+set sp_coop 0"`.
+  `REGRESS_ARGS` (new, default empty) adds arguments to every harness run.

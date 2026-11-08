@@ -26,7 +26,10 @@ BREW="${BREW:-$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENGINE_BUILD="$ROOT/build-macos"
-GAME_BUILD="$ROOT/efgame/buildmac"
+# EF_COOP=1: build with single-player co-op (experimental; test apps only), in its own game build folder
+EF_COOP="${EF_COOP:-}"
+if [ -n "$EF_COOP" ]; then COOP_FLAG=ON; GAME_BUILD="${GAME_BUILD:-$ROOT/efgame/buildmac-coop}"; else COOP_FLAG=OFF; fi
+GAME_BUILD="${GAME_BUILD:-$ROOT/efgame/buildmac}"
 DIST="$ROOT/dist"
 # assembled under a name without spaces (the relink queue below splits on
 # them), then renamed to "$APP_NAME.app"
@@ -48,10 +51,10 @@ if [ -z "${NO_BUILD:-}" ]; then
 		MIN_MACOS="$MIN_MACOS_TARGET" "$ROOT/macos/build-ffmpeg.sh"
 	[ -f "$DEPS/lib/pkgconfig/sdl2.pc" ] && [ "$(otool -l "$DEPS/lib/libSDL3.0.dylib" | awk '/minos/{print $2; exit}')" = "$MIN_MACOS_TARGET" ] ||
 		MIN_MACOS="$MIN_MACOS_TARGET" "$ROOT/macos/build-deps.sh"
-	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET"
+	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_COOP=$COOP_FLAG
 	cmake --build "$GAME_BUILD" -j"$(sysctl -n hw.ncpu)"
 	cmake -S "$ROOT/EFAndroid-SP/app/jni/macos" -B "$ENGINE_BUILD" -DEF_FFMPEG_PREFIX="$FFMPEG" \
-		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_APP_VERSION="$VERSION"
+		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_APP_VERSION="$VERSION" -DEF_COOP=$COOP_FLAG
 	cmake --build "$ENGINE_BUILD" -j"$(sysctl -n hw.ncpu)"
 fi
 

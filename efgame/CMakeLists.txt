@@ -71,10 +71,22 @@ list(REMOVE_ITEM EFGAME_SRC ${SRC}/game/bg_lib.cpp)   # QVM freestanding libc â€
 list(REMOVE_ITEM EFGAME_SRC
   ${SRC}/icarus/Interface.cpp ${SRC}/icarus/Interpreter.cpp ${SRC}/icarus/Tokenizer.cpp)
 
+# Co-op (macOS test builds only, default OFF): the sources live in src/coop/, outside the globs
+# above, so an OFF build (and the Android build) never compiles them. With it OFF,
+# game/coop_public.h turns every co-op helper back into the expression it replaced.
+option(EF_COOP "Single-player co-op (experimental)" OFF)
+if(EF_COOP)
+  file(GLOB EFCOOP_SRC ${SRC}/coop/*.cpp)
+  list(APPEND EFGAME_SRC ${EFCOOP_SRC})
+endif()
+
 add_library(efgame SHARED ${EFGAME_SRC})
 target_include_directories(efgame PRIVATE ${EF_INCLUDES})
 target_compile_options(efgame PRIVATE ${EF_COPTS})
 target_compile_definitions(efgame PRIVATE NDEBUG)
+if(EF_COOP)
+  target_compile_definitions(efgame PRIVATE EF_COOP)
+endif()
 if(APPLE)
   # macOS ld64: exported-symbols list stands in for the GNU version script;
   # dynamic_lookup stands in for --unresolved-symbols=ignore-all.

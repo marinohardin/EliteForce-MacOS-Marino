@@ -8,6 +8,7 @@
 #include "g_navigator.h"
 #include "anims.h"
 #include "../speedrun/sound_skipping.hpp"
+#include "coop_public.h"
 
 extern CNavigator		navigator;
 
@@ -201,6 +202,7 @@ void InitGame(  const char *mapname, const char *spawntarget, int checkSum, cons
 	srand( randomSeed );
 
 	G_InitCvars();
+	COOP_Init();
 
 	G_InitMemory();
 
