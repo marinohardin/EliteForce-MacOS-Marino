@@ -19,6 +19,10 @@ menu does). It offers:
     a brightness preset (Standard, or cMod's Plain, Full Contrast, Extra Bright
     and Full Bright, from cMod by Noah Metzger; see "Brightness" below);
   - the Holomatch player name;
+  - cMod's game modules by Noah Metzger (Contents/Resources/cmod): use them
+    (cl_cmodModules), see qcommon/files.c, and their HUD… sheet: widescreen
+    HUD (cg_aspectCorrect, default 1), how far it moves toward the middle
+    (cg_aspectCorrectCenterHud 0-1) and weapon fire prediction (cg_predictWeapons);
   - where the game files are (sys_osx_data.m's lookup and chooser);
   - a notice in the header when a newer release is on GitHub (see "Updates").
 Play appends +set com_holomatch, the graphics cvars, the name and
@@ -51,6 +55,8 @@ Test hooks (environment variables):
                                 whether the launcher stayed, and quit
   VOYAGERSP_TEST_SERVER_RUNNING=show|another|cancel  answer Start Server's
                                 "already running" question
+  VOYAGERSP_TEST_LAUNCHER_HUD=<file.png>      render the HUD… sheet (cMod's HUD settings)
+                                and quit
   VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>    show it, choose About from the app
                                 menu, render the panel, close it and quit
   VOYAGERSP_TEST_UPDATE=<version>|none  the latest release, instead of asking
@@ -597,6 +603,33 @@ NSView *VSP_Group( NSString *caption, NSView *content )
    The launcher
    ------------------------------------------------------------------------ */
 
+// a target for controls whose action is a block (keeps the block alive as long as the control)
+@interface VSPBlockTarget : NSObject
++ (instancetype)target: (void ( ^ )( void ))block;
+- (void)fire: (id)sender;
+@end
+
+@implementation VSPBlockTarget
+{
+	void ( ^block )( void );
+}
++ (instancetype)target: (void ( ^ )( void ))b
+{
+	VSPBlockTarget *t = [[VSPBlockTarget alloc] init];
+	t->block = [b copy];
+	return t;
+}
+- (void)fire: (id)sender	{ block(); }
+@end
+
+static NSStackView *HStackOf( NSArray *views )
+{
+	NSStackView *s = [NSStackView stackViewWithViews: views];
+	[s setSpacing: 10];
+	[s setAlignment: NSLayoutAttributeFirstBaseline];
+	return s;
+}
+
 @implementation VSPLauncher
 {
 	launchMode_t mode;
@@ -616,6 +649,13 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSButton *retina, *vsync;
 	NSTextField *nameLabel, *name, *nameHint, *mastersSummary;
 	NSButton *loopbackFix;
+	NSButton *cmodModules;			// cl_cmodModules (cMod's game modules, by Noah Metzger)
+	NSTextField *cmodLabel;
+	NSButton *hudButton;
+	int hudAspect;					// cg_aspectCorrect: 1 widescreen HUD, 0 stretched
+	NSString *hudCenter;			// cg_aspectCorrectCenterHud: 0 (edges) to 1 (4:3 area), or cMod's "16:9*" form
+	BOOL predictWeapons;			// cg_predictWeapons
+	NSMutableArray *hudTargets;		// the HUD… sheet's VSPBlockTargets (controls don't retain their targets)
 	NSString *joinAddress, *joinPassword;	// from Browse…: connect there on Play
 	NSImageView *folderIcon, *statusIcon;
 	NSTextField *folderPath, *status;
@@ -654,6 +694,11 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	VSP_StartPublicAddressLookup();		// for the Loopback Host Fix
 
 	hm = ReadConfig( ConfigPath( YES ) );
+	[cmodModules setState: CfgInt( hm, @"cl_cmodmodules", 1 ) ? NSControlStateValueOn : NSControlStateValueOff];
+	hudAspect = CfgInt( hm, @"cg_aspectcorrect", 1 ) ? 1 : 0;
+	hudCenter = [hm[@"cg_aspectcorrectcenterhud"] length] ? hm[@"cg_aspectcorrectcenterhud"] : @"0";
+	predictWeapons = CfgInt( hm, @"cg_predictweapons", 1 ) != 0;
+	[self cmodChanged: nil];
 	[name setStringValue: hm[@"name"] && ![hm[@"name"] isEqualToString: @"UnnamedPlayer"] ? hm[@"name"] : DefaultPlayerName()];
 
 	[self refreshData];
@@ -862,13 +907,24 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		[loopbackFix setState: VSP_LoopbackFix() ? NSControlStateValueOn : NSControlStateValueOff];
 		[loopbackFix setToolTip: @"Most routers don't route this Mac back to its own public address, so a server "
 			@"hosted here wouldn't answer in your own internet lists. This lists it as this Mac (127.0.0.1) instead."];
+		// From cMod by Noah Metzger (Chomenor): his game modules, bundled with his permission
+		cmodLabel = VSP_Label( @"Game modules:", [NSFont systemFontOfSize: 13], nil );
+		cmodModules = [NSButton checkboxWithTitle: @"Use cMod's game modules, by Noah Metzger" target: self action: @selector(cmodChanged:)];
+		hudButton = [NSButton buttonWithTitle: @"HUD…" target: self action: @selector(editHud:)];
+		[hudButton setControlSize: NSControlSizeSmall];
+		[hudButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+		[hudButton setToolTip: @"cMod's widescreen HUD and weapon fire prediction"];
+		[cmodModules setToolTip: @"cMod's cgame and ui in place of the original ones (not on pure servers, and never "
+			@"in place of a mod's own): a widescreen HUD and menus, weapon fire prediction and many fixes."];
 		nameGrid = [NSGridView gridViewWithViews: @[ @[ nameLabel, name ], @[ [NSGridCell emptyContentView], nameHint ],
 			@[ VSP_Label( @"Internet games:", [NSFont systemFontOfSize: 13], nil ), row ],
 			@[ [NSGridCell emptyContentView], loopbackFix ],
 			@[ [NSGridCell emptyContentView], VSP_Label( @"Shows a server you host on this Mac in your own internet lists.",
-				[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ] ]];
+				[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ],
+			@[ cmodLabel, HStackOf( @[ cmodModules, hudButton ] ) ] ]];
 		[[nameGrid rowAtIndex: 2] setTopPadding: 8];
 		[[nameGrid rowAtIndex: 3] setTopPadding: 4];
+		[[nameGrid rowAtIndex: 5] setTopPadding: 8];
 	}
 	[nameGrid setRowSpacing: 4];
 	[nameGrid setColumnSpacing: 10];
@@ -1068,6 +1124,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		cards[i].selected = i == m;
 	[name setEnabled: client || host];
 	[nameLabel setTextColor: client || host ? [NSColor labelColor] : [NSColor tertiaryLabelColor]];
+	[cmodModules setEnabled: ( client || host ) && VSP_CmodAvailable()];
+	[self cmodChanged: nil];
+	[cmodLabel setTextColor: ( client || host ) && VSP_CmodAvailable() ? [NSColor labelColor] : [NSColor tertiaryLabelColor]];
 	[nameHint setStringValue: client ? @"Shown to other players in Holomatch." :
 		host ? @"Your name when you use Play on This Mac." : @"Used when you play Holomatch."];
 	[playButton setTitle: client ? @"Play Holomatch" : host ? @"Start Server" : @"Play"];
@@ -1384,6 +1443,128 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 - (NSString *)basepath	{ return basepath; }
 - (NSString *)dataFolder	{ return dataFolder; }
 
+// cMod's game modules (by Noah Metzger): whether to use them. Without them in the
+// app, nothing is passed (the engine has nothing to use anyway).
+- (NSArray<NSString *> *)cmodArgs
+{
+	if( !VSP_CmodAvailable() )
+		return @[];
+	return @[ @"+set", @"cl_cmodModules", [cmodModules state] == NSControlStateValueOn ? @"1" : @"0",
+		@"+set", @"cg_aspectCorrect", @( hudAspect ).stringValue,
+		@"+set", @"cg_aspectCorrectCenterHud", hudCenter,
+		@"+set", @"cg_predictWeapons", predictWeapons ? @"1" : @"0" ];
+}
+
+- (void)cmodChanged: (id)sender
+{
+	[hudButton setEnabled: [cmodModules isEnabled] && [cmodModules state] == NSControlStateValueOn];
+}
+
+// The HUD… sheet: cMod's HUD settings (from cMod by Noah Metzger). They only
+// apply to his cgame and ui; with the original ones the engine's own widescreen
+// layer (cl_flexibleDisplay) keeps the 4:3 HUD centered, as before.
+- (NSWindow *)hudSheet
+{
+	NSWindow *panel = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 480, 260 )
+		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO];
+	NSPopUpButton *layout = [[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: NO];
+	NSSlider *center = [NSSlider sliderWithValue: 0 minValue: 0 maxValue: 1 target: nil action: nil];
+	NSButton *predict = [NSButton checkboxWithTitle: @"Show my shots at once on servers that offer it" target: nil action: nil];
+	NSFont *f = [NSFont systemFontOfSize: 13], *small = [NSFont systemFontOfSize: 11];
+	NSTextField *hint = VSP_WrapLabel( @"From cMod's game modules by Noah Metzger. Weapon fire prediction needs a "
+		@"server running cMod's game code with it on (cMod servers, and Host a Server's default).", small,
+		[NSColor secondaryLabelColor] );
+	NSButton *ok = [NSButton buttonWithTitle: @"Done" target: nil action: nil];
+	NSButton *cancel = [NSButton buttonWithTitle: @"Cancel" target: nil action: nil];
+	NSGridView *grid;
+	NSStackView *buttons, *root, *sliderRow;
+	__weak NSWindow *weakPanel = panel;
+	__weak NSPopUpButton *weakLayout = layout;
+	__weak NSSlider *weakCenter = center;
+	__block BOOL centerMoved = NO;
+	VSPBlockTarget *t;
+
+	hudTargets = [NSMutableArray array];
+
+	[panel setTitle: @"HUD"];
+	VSP_ApplyTestAppearance( panel );
+	[layout addItemWithTitle: @"Widescreen: sharp, in proportion"];
+	[[layout lastItem] setTag: 1];
+	[layout addItemWithTitle: @"Stretched to the screen (original look)"];
+	[[layout lastItem] setTag: 0];
+	[layout selectItemWithTag: hudAspect];
+	[center setDoubleValue: [hudCenter floatValue] >= 0 && [hudCenter floatValue] <= 1 ? [hudCenter floatValue] : 0];
+	[center setNumberOfTickMarks: 5];
+	[[center widthAnchor] constraintEqualToConstant: 200].active = YES;
+	[predict setState: predictWeapons ? NSControlStateValueOn : NSControlStateValueOff];
+	[hint setPreferredMaxLayoutWidth: 300];
+	sliderRow = [NSStackView stackViewWithViews: @[ VSP_Label( @"Edges", small, [NSColor secondaryLabelColor] ), center,
+		VSP_Label( @"Middle", small, [NSColor secondaryLabelColor] ) ]];
+	[sliderRow setSpacing: 6];
+	void ( ^update )( void ) = ^{ [weakCenter setEnabled: [[weakLayout selectedItem] tag] == 1]; };
+	[hudTargets addObject: t = [VSPBlockTarget target: update]];
+	[layout setTarget: t];
+	[layout setAction: @selector(fire:)];
+	[hudTargets addObject: t = [VSPBlockTarget target: ^{ centerMoved = YES; }]];
+	[center setTarget: t];
+	[center setAction: @selector(fire:)];
+	update();
+	grid = [NSGridView gridViewWithViews: @[
+		@[ VSP_Label( @"HUD:", f, nil ), layout ],
+		@[ VSP_Label( @"Position:", f, nil ), sliderRow ],
+		@[ VSP_Label( @"Weapons:", f, nil ), predict ],
+		@[ [NSGridCell emptyContentView], hint ] ]];
+	[grid setRowSpacing: 10];
+	[grid setColumnSpacing: 10];
+	[[grid columnAtIndex: 0] setXPlacement: NSGridCellPlacementTrailing];
+	[grid setRowAlignment: NSGridRowAlignmentFirstBaseline];
+	[[grid cellForView: sliderRow] setYPlacement: NSGridCellPlacementCenter];
+	[ok setKeyEquivalent: @"\r"];
+	[cancel setKeyEquivalent: @"\033"];
+	[hudTargets addObject: t = [VSPBlockTarget target: ^{
+		self->hudAspect = (int)[[weakLayout selectedItem] tag];
+		if( centerMoved )
+			self->hudCenter = [NSString stringWithFormat: @"%g", round( [weakCenter doubleValue] * 100 ) / 100];
+		self->predictWeapons = [predict state] == NSControlStateValueOn;
+		[self->window endSheet: weakPanel returnCode: NSModalResponseOK];
+	}]];
+	[ok setTarget: t];
+	[ok setAction: @selector(fire:)];
+	[hudTargets addObject: t = [VSPBlockTarget target: ^{ [self->window endSheet: weakPanel returnCode: NSModalResponseCancel]; }]];
+	[cancel setTarget: t];
+	[cancel setAction: @selector(fire:)];
+	buttons = [NSStackView stackViewWithViews: @[ [NSView new], cancel, ok ]];
+	[[buttons views][0] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	root = [NSStackView stackViewWithViews: @[ grid, buttons ]];
+	[root setOrientation: NSUserInterfaceLayoutOrientationVertical];
+	[root setSpacing: 18];
+	[root setEdgeInsets: NSEdgeInsetsMake( 20, 20, 16, 20 )];
+	[[buttons widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -40].active = YES;
+	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[[panel contentView] addSubview: root];
+	[NSLayoutConstraint activateConstraints: @[
+		[[root leadingAnchor] constraintEqualToAnchor: [[panel contentView] leadingAnchor]],
+		[[root trailingAnchor] constraintEqualToAnchor: [[panel contentView] trailingAnchor]],
+		[[root topAnchor] constraintEqualToAnchor: [[panel contentView] topAnchor]],
+		[[root bottomAnchor] constraintEqualToAnchor: [[panel contentView] bottomAnchor]],
+		[[root widthAnchor] constraintEqualToConstant: 480],
+	]];
+	[panel setContentSize: [root fittingSize]];
+	return panel;
+}
+
+- (void)editHud: (id)sender
+{
+	NSWindow *panel = [self hudSheet];
+	[window beginSheet: panel completionHandler: ^( NSModalResponse r ) { [panel orderOut: nil]; }];
+}
+
+// VOYAGERSP_TEST_LAUNCHER_HUD
+- (BOOL)snapshotHud: (const char *)path
+{
+	return VSP_SnapshotWindow( [self hudSheet], path );
+}
+
 // What a Holomatch client started from here gets: the graphics and the name.
 - (NSArray<NSString *> *)clientArgs
 {
@@ -1395,6 +1576,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		@"+set", @"r_fbo", @"1", @"+set", @"r_ext_multisample", @( gfx.msaa ).stringValue,
 		@"+set", @"name", VSP_CleanName( [name stringValue] ) ]];
 	[a addObjectsFromArray: BrightnessArgs( gfx.brightness, 600 )];	// leaves room for the rest
+	[a addObjectsFromArray: [self cmodArgs]];
 	if( basepath )
 		[a addObjectsFromArray: @[ @"+set", @"fs_basepath", basepath ]];
 	if( VSP_WriteMastersConfig() )
@@ -1422,6 +1604,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	// (after the rest, which then can't be crowded out)
 	if( holomatch )
 		[args appendFormat: @"+set name \"%@\" ", VSP_CleanName( [name stringValue] )];
+	if( holomatch )
+		for( NSString *arg in [self cmodArgs] )
+			[args appendFormat: @"%@ ", arg];
 	if( basepath )
 		[args appendFormat: @"+set fs_basepath \"%@\" ", basepath];
 	// the Servers… list: sv_master1-16 in a cfg file (too long for this line)
@@ -2060,6 +2245,12 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 			}
 			[l selectMode: MODE_HOLOMATCH];
 			setenv( "VOYAGERSP_TEST_LAUNCHER_PLAY", "1", 1 );
+		}
+		if( getenv( "VOYAGERSP_TEST_LAUNCHER_HUD" ) )
+		{
+			[l snapshotHud: getenv( "VOYAGERSP_TEST_LAUNCHER_HUD" )];
+			SDL_Quit( );
+			exit( 0 );
 		}
 		if( getenv( "VOYAGERSP_TEST_SERVER_CONFIG_SNAPSHOT" ) )
 		{

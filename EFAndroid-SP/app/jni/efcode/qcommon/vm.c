@@ -1463,6 +1463,18 @@ vm_t *VM_Restart(vm_t *vm, qboolean unpure)
 
 /*
 ================
+VM_FromCmodPak
+
+Whether the VM came from one of cMod's game-module paks (by Noah Metzger),
+see "cMod game modules" in files.c.
+================
+*/
+qboolean VM_FromCmodPak( vm_t *vm ) {
+	return vm && !vm->dllHandle && FS_IsCmodVM( vm->searchPath );
+}
+
+/*
+================
 VM_Create
 
 If image ends in .qvm it will be interpreted, otherwise

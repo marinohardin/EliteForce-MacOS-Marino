@@ -65,7 +65,7 @@ void CL_GetGlconfig( glconfig_t *glconfig ) {
 	*glconfig = cls.glconfig;
 
 #ifdef USE_FLEXIBLE_DISPLAY
-	if ( cl_flexibleDisplay->integer ) {
+	if ( CL_FLEX_CGAME ) {
 		glconfig->vidWidth = 640;
 		glconfig->vidHeight = 480;
 	}
@@ -449,6 +449,7 @@ void CL_ConfigstringModified( void ) {
 	} else if ( index == CS_SERVERINFO ) {
 		CL_ServerInfoChanged();
 	}
+	CL_ParseModcfg();	// cMod's !modcfg (for the next cgame/ui load)
 
 }
 
@@ -606,6 +607,7 @@ void CL_ShutdownCGame( void ) {
 	VM_Call( cgvm, CG_SHUTDOWN );
 	VM_Free( cgvm );
 	cgvm = NULL;
+	cls.cgameNativeAspect = qfalse;
 }
 
 static int	FloatAsInt( float f ) {
@@ -801,7 +803,7 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 #endif
 	case CG_R_RENDERSCENE:
 #ifdef USE_FLEXIBLE_DISPLAY
-		if ( cl_flexibleDisplay->integer ) {
+		if ( CL_FLEX_CGAME ) {
 			refdef_t fd;
 			float x, y, width, height;
 
@@ -878,7 +880,7 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 	case CG_R_DRAWSTRETCHPIC:
 #ifdef USE_FLEXIBLE_DISPLAY
-		if ( cl_flexibleDisplay->integer ) {
+		if ( CL_FLEX_CGAME ) {
 			float x = VMF(1);
 			float y = VMF(2);
 			float width = VMF(3);
@@ -1130,6 +1132,11 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 #endif
 
 	default:
+#ifdef ELITEFORCE
+		if ( args[0] == CL_CMOD_TRAP_GETVALUE && Com_Holomatch() ) {
+			return CL_CmodGetValue( cgvm, VMA(1), args[2], VMA(3) );
+		}
+#endif
 	        assert(0);
 		Com_Error( ERR_DROP, "Bad cgame system trap: %ld", (long int) args[0] );
 	}
@@ -1173,6 +1180,8 @@ void CL_InitCGame( void ) {
 	if ( !cgvm ) {
 		Com_Error( ERR_DROP, "VM_Create on cgame failed" );
 	}
+	// cMod's cgame (by Noah Metzger) gets the real screen size and does its own widescreen HUD
+	cls.cgameNativeAspect = VM_FromCmodPak( cgvm );
 	clc.state = CA_LOADING;
 
 	// init for this gamestate

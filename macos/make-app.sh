@@ -13,6 +13,7 @@
 # Every non-system dylib (and its transitive deps) is copied into
 # Contents/Frameworks and relinked to @rpath, so the .app runs without Homebrew.
 # The game data is NOT bundled (see Sys_MacCheckGameData in efcode/sys/sys_osx.m).
+# cMod's game modules are, when a copy is at hand: see macos/cmod/README.txt (CMOD_PAK).
 set -eu
 
 APP_NAME="${APP_NAME:-Elite Force}"
@@ -102,6 +103,18 @@ cp "$ROOT/THIRD_PARTY_LICENSES.md" "$ROOT/LICENSE" "$RES/licenses/"
 cp "$ROOT/efgame/STEF Game Source License.doc" "$RES/licenses/"
 cp "$ROOT/macos/MoltenVK_icd.json" "$RES/vulkan/icd.d/MoltenVK_icd.json"
 cp "$ROOT/macos/Credits.html" "$RES/Credits.html"	# the About panel shows it
+# cMod's game modules by Noah Metzger (Chomenor), included with his permission (macos/cmod/README.txt):
+# CMOD_PAK=<file>, default the newest macos/cmod/pakcmod-release-*.pk3 (a local copy: pk3s aren't in git).
+# The engine checks its checksum against cMod's list of releases (qcommon/files.c).
+CMOD_PAK="${CMOD_PAK:-$(ls "$ROOT"/macos/cmod/pakcmod-release-*.pk3 2>/dev/null | sort | tail -1)}"
+if [ -n "$CMOD_PAK" ] && [ -f "$CMOD_PAK" ]; then
+	mkdir -p "$RES/cmod"
+	cp "$CMOD_PAK" "$RES/cmod/"
+	cp "$ROOT/macos/cmod/README.txt" "$ROOT/efgame/STEF Game Source License.doc" "$RES/cmod/"
+	echo "cMod game modules: $(basename "$CMOD_PAK")"
+else
+	echo "Note: no cMod pk3 (macos/cmod/pakcmod-release-*.pk3 or CMOD_PAK): building without cMod's game modules"
+fi
 "$ROOT/macos/icon/make-icns.sh" "$RES/AppIcon.icns"
 chmod u+w "$FW"/*
 

@@ -54,6 +54,10 @@ enum { VSP_GT_FFA = 0, VSP_GT_TOURNAMENT = 1, VSP_GT_TEAM = 3, VSP_GT_CTF = 4 };
 @property (nonatomic) BOOL openPort;		// internet: ask the router to forward the port (NAT-PMP / UPnP)
 @property (nonatomic) NSInteger port;
 @property (nonatomic) NSInteger tickRate;		// sv_fps: 20 (Standard, sv_fps left alone) or 40 (High)
+// cMod's qagame (by Noah Metzger) and its lag compensation: sv_cmodGame, g_unlagged 0-2,
+// g_smoothClients, g_unlaggedPredict
+@property (nonatomic) BOOL cmodGame, smoothClients, unlaggedPredict;
+@property (nonatomic) NSInteger unlagged;
 @property (nonatomic, copy) NSArray<NSString *> *rotation;			// map names, in order
 + (instancetype)load;
 - (void)save;
@@ -83,6 +87,7 @@ enum { VSP_GT_FFA = 0, VSP_GT_TOURNAMENT = 1, VSP_GT_TEAM = 3, VSP_GT_CTF = 4 };
 NSArray<VSPMapInfo *> *VSP_MapCatalog( NSString *dataFolder );
 // This Mac's address on the local network (IPv4), or nil.
 NSString *VSP_LANAddress( void );
+BOOL VSP_CmodAvailable( void );		// cMod's game modules are in the app bundle
 
 VSPMapInfo *VSP_FindMap( NSArray<VSPMapInfo *> *maps, NSString *name );
 

@@ -402,6 +402,7 @@ typedef enum {
 typedef intptr_t (QDECL *vmMainProc)(int callNum, int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7, int arg8, int arg9, int arg10, int arg11);
 
 void	VM_Init( void );
+qboolean VM_FromCmodPak( vm_t *vm );	// loaded from a cMod pak (cMod by Noah Metzger)
 vm_t	*VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *), 
 				   vmInterpret_t interpret );
 // module should be bare: "cgame", not "cgame.dll" or "vm/cgame.qvm"
@@ -693,6 +694,8 @@ qboolean FS_FileExists( const char *file );
 qboolean FS_CreatePath (char *OSPath);
 
 int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, int enableDll);
+qboolean FS_IsCmodVM( void *searchPath );	// the VM came from a cMod pak (by Noah Metzger)
+void FS_SetCmodModcfg( int nativeCgame, int nativeUI );	// the server's !modcfg wishes
 
 char   *FS_BuildOSPath( const char *base, const char *game, const char *qpath );
 qboolean FS_CompareZipChecksum(const char *zipfile);
