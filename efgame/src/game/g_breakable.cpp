@@ -1,4 +1,5 @@
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 
 extern team_t TranslateTeamName( const char *name );
@@ -285,7 +286,7 @@ void Touch_AssimilationTrigger( gentity_t *ent, gentity_t *other, trace_t *trace
 		return;
 	}
 
-	if ( other->s.number != 0 )
+	if ( !COOP_IsPlayer( other ) )
 	{
 		return;
 	}

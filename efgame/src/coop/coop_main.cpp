@@ -61,7 +61,7 @@ The M0 puppet controls (host console; reached through the game's ClientCommand):
 	coop_p2_fire [frames] [alt]      hold attack (alt: alt attack)
 	coop_p2_use                      press use once
 	coop_p2_weapon <n>               switch to weapon n (if P2 has it)
-	coop_p2_tele                     move P2 next to P1
+	coop_p2_tele [x y z]             move P2 next to P1 (or to x y z)
 	coop_p2_damage <n> [fall]        hurt P2 by n (test death and respawn; fall: as falling damage)
 */
 qboolean COOP_ConsoleCommand( const char *cmd )
@@ -126,7 +126,12 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 	else if ( !Q_stricmp( cmd, "coop_p2_tele" ) )
 	{
 		vec3_t org;
-		if ( COOP_FindSpotNear( &g_entities[0], org ) )
+		if ( gi.argc() > 3 )
+		{
+			VectorSet( org, atof( gi.argv( 1 ) ), atof( gi.argv( 2 ) ), atof( gi.argv( 3 ) ) );
+			COOP_PlaceP2( ent, org );
+		}
+		else if ( COOP_FindSpotNear( &g_entities[0], org ) )
 		{
 			COOP_PlaceP2( ent, org );
 		}

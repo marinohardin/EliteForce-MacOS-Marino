@@ -1,6 +1,7 @@
 // g_misc.c
 
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "g_nav.h"
 #include "g_items.h"
@@ -1308,7 +1309,7 @@ void touch_ammo_crystal_tigger( gentity_t *self, gentity_t *other, trace_t *trac
 		return;
 
 	// Only player can pick it up
-	if ( !other->s.number == 0 )
+	if ( !COOP_IsPlayer( other ) )
 	{
 		return;
 	}

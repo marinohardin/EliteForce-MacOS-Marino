@@ -887,3 +887,10 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 - **Movement (B4).** `bg_pmove.cpp` and `bg_panimate.cpp` (also built into the cgame prediction) use
   `COOP_IsPlayer` / `COOP_IsPlayerNum` for footstep alerts, landing, use and crouch rules, and
   `COOP_ViewClientNum()` (0 on the host) where the code means "the client whose view is drawn".
+- **Triggers and items (B5).** PLAYERONLY `trigger_multiple`/`trigger_once`/`trigger_push`, item and
+  ammo-crystal pickups, assimilation triggers and the stasis shooter accept either player.
+  `trigger_entdist` "player within N" measures to the nearest player. `trigger_visible` loops over the
+  players (the first one to look fires it, with P1 as activator) and stops after it frees itself.
+  Helpers `COOP_NearestPlayer`, `COOP_NumPlayers`, `COOP_PlayerByIndex` count P2 only when it is alive
+  and not hidden by a camera. Tested on dn1: P2 placed on a compression rifle with `coop_p2_tele x y z`
+  (new) picks it up (ammo back to 300, the item goes to its respawn state).
