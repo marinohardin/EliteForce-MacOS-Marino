@@ -25,6 +25,7 @@ void COOP_Init( void )
 	coop_p2Num = -1;
 	memset( &coop_p2, 0, sizeof( coop_p2 ) );
 	coop_p2.follow = qtrue;
+	COOP_ReadCarry();
 	if ( coop_enabled )
 	{
 		gi.Printf( "co-op: on (player 2 is a local puppet)\n" );

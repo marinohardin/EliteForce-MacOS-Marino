@@ -242,6 +242,10 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	PlayerStateToEntityState( &cl->ps, &ent->s );
 	gi.linkentity( ent );
 
+	if ( !respawn )
+	{
+		COOP_ApplyCarry( ent );
+	}
 	coop_p2.respawnTime = 0;
 	coop_p2.stuckFrames = 0;
 	if ( coop_p2.hidden || in_camera )

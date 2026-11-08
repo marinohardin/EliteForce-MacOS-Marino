@@ -1108,3 +1108,13 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   P2 (greetings play Munro's lines, which P2 shares). Tested on the voy1 save: P2 placed next to a crew
   member, facing it, presses use, and the NPC answers (a sound event that a run without the use does
   not have).
+- **Shared inventory and carry-over (B9).** `efgame/src/coop/coop_inventory.cpp`. After a pickup in
+  `Touch_Item`, weapons and holdables go to the other player too; ammo, health and armor stay with
+  whoever touched them first. Item targets and `trigger_multiple` targets fire with P1 as activator
+  (`COOP_StoryActivator`), so scripts still see "the player". A script `set weapon` on P1 gives P2 the
+  weapon with full ammo and switches it. `G_ChangeMap` stores P2's health, armor, weapon and ammo in
+  the cvar `coop_p2save` (like P1's `playersave`: the game library is reloaded for each map); the
+  next level's InitGame reads and clears it, and P2's first spawn applies it. Borg adaptation stays the
+  single counter on P1 (P2's hits already count there), and `player_locked` already freezes P2 (B1),
+  so neither needed a hook. Tested on dn1: P2 picks up the tricorder and both players get it; a
+  `coop_p2save` value carries into borg2 (health 55, armor 20, ammo 150).

@@ -259,7 +259,7 @@ void Touch_Multi( gentity_t *self, gentity_t *other, trace_t *trace )
 		}
 	}
 
-	multi_trigger( self, other );
+	multi_trigger( self, COOP_StoryActivator( other ) );
 }
 
 void trigger_cleared_fire (gentity_t *self)

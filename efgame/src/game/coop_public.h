@@ -38,6 +38,9 @@
 #define COOP_ConsoleCommand(c)		0
 #define COOP_RegisterCommands()		((void)0)
 #define COOP_FindPlayerWaypoints()	((void)0)
+#define COOP_OnPickup(i,p)			((void)0)
+#define COOP_OnScriptWeapon(e,w)	((void)0)
+#define COOP_CacheForNextLevel()	((void)0)
 
 #else // EF_COOP
 
@@ -76,6 +79,13 @@ qboolean	COOP_AnyPlayerInPVS( const vec3_t org );
 qboolean	COOP_AnyPlayerInPVSRev( const vec3_t org );
 // NAV_FindPlayerWaypoint: keep P2's waypoint current too (NPCs chasing P2 path to it)
 void		COOP_FindPlayerWaypoints( void );
+
+// Touch_Item after a pickup: weapons and holdables go to the other player too
+void		COOP_OnPickup( gentity_t *item, gentity_t *picker );
+// Q3_SetWeapon gave P1 a weapon: P2 gets it too
+void		COOP_OnScriptWeapon( gentity_t *ent, int wp );
+// G_ChangeMap: keep P2's health, armor and ammo for the next level
+void		COOP_CacheForNextLevel( void );
 
 // the shooter's third-person setting (game code reads the host cgame's cvar for it)
 int			COOP_ThirdPerson( const gentity_t *e );

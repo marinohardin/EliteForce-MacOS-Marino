@@ -6,6 +6,7 @@
 //	-- jweier
 
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "Q3_Interface.h"
 #include "Q3_Registers.h"
@@ -3483,6 +3484,7 @@ static void Q3_SetWeapon (int entID, const char *wp_name)
 		G_AddEvent( self, EV_ITEM_PICKUP, (item - bg_itemlist) );
 		//force it to change
 		CG_ChangeWeapon( wp );
+		COOP_OnScriptWeapon( self, wp );
 
 		if ( G_WeaponChangeEffect( self ) )
 		{

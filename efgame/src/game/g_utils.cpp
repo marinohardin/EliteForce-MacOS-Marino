@@ -1,6 +1,7 @@
 // g_utils.c -- misc utility functions for game module
 
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "g_nav.h"
 
@@ -951,6 +952,7 @@ void G_ChangeMap (const char *mapname, const char *spawntarget, qboolean hub)
 	// the engine; this port's bridge spawns the new map fresh + carries the player via these cvars.)
 	extern void Player_CacheForNextLevel(void);
 	Player_CacheForNextLevel();
+	COOP_CacheForNextLevel();
 
 	if ( spawntarget == NULL ) {
 		spawntarget = "";	//prevent it from becoming "(null)"
