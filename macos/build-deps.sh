@@ -12,14 +12,9 @@
 set -eu
 
 MIN_MACOS="${MIN_MACOS:-12.0}"
-SDL3_VERSION="3.4.18"
-SDL3_SHA256="9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3"
-SDL2COMPAT_VERSION="2.32.74"
-SDL2COMPAT_SHA256="ec68abde77e2e459c8abc4f9587b8976b5d2a657b2bfda2fb3a079b0f8924588"
-VULKAN_VERSION="1.4.363.0"
-VULKAN_SHA256="941eff558fc74f248745fb7df367640cf89a8457f216dae498a74ae14b6ba6f7"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/deps/versions.sh"	# shared pins (SDL3, sdl2-compat, Vulkan loader)
 OUT="$ROOT/build-deps"
 PREFIX="$OUT/install"
 BREW="${BREW:-$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
