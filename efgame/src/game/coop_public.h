@@ -19,6 +19,7 @@
 #define COOP_IsPlayerPtr(e)			((e) == &g_entities[0])
 #define COOP_StoryActivator(e)		(e)
 #define COOP_ThirdPerson(e)			cg_thirdPerson.integer
+#define COOP_ViewClientNum()		0
 
 #define COOP_Init()					((void)0)
 #define COOP_RunFrame()				((void)0)
@@ -54,6 +55,9 @@ inline bool COOP_IsPlayerPtr( const gentity_t *e ) { return e == &g_entities[0] 
 
 // story scripts expect "the player" as activator: P2 becomes P1
 inline gentity_t *COOP_StoryActivator( gentity_t *e ) { return ( e && COOP_IsP2( e ) ) ? &g_entities[0] : e; }
+
+// the client whose view this machine draws (P1 on the host; the guest in M1)
+inline int COOP_ViewClientNum( void ) { return 0; }
 
 // the shooter's third-person setting (game code reads the host cgame's cvar for it)
 int			COOP_ThirdPerson( const gentity_t *e );
