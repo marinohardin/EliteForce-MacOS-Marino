@@ -395,6 +395,11 @@ void COOP_RunFrame( void )
 		}
 		return;
 	}
+	// the cgame sets the eye point only while it draws P2; weapons fire from it
+	VectorCopy( ent->client->ps.origin, ent->client->renderInfo.eyePoint );
+	ent->client->renderInfo.eyePoint[2] += ent->client->ps.viewheight;
+	VectorCopy( ent->client->ps.viewangles, ent->client->renderInfo.eyeAngles );
+
 	COOP_BuildCmd( ent, &cmd );
 	ClientThink( ent->s.number, &cmd );
 }
@@ -465,4 +470,11 @@ void COOP_P2DeadThink( gentity_t *ent, usercmd_t *ucmd )
 	}
 	COOP_SetupP2( ent, org, p1->client->ps.viewangles[YAW], qtrue );
 	gi.Printf( "co-op: player 2 respawned at %s\n", vtos( ent->currentOrigin ) );
+}
+
+// P1 uses the host's cg_thirdPerson; P2 has no view of its own in M0, so it shoots first-person
+int COOP_ThirdPerson( const gentity_t *e )
+{
+	extern vmCvar_t cg_thirdPerson;
+	return COOP_IsP2( e ) ? 0 : cg_thirdPerson.integer;
 }

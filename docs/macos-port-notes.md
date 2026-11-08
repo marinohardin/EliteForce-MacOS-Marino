@@ -1073,3 +1073,7 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   (all `F_GENTITY` fields of the entity, NPC and client save tables; `activator` becomes P1), look
   targets, alert-event owners and P2's timers. Tested: a save written in co-op loads in an `EF_COOP` OFF
   build with no warnings and without the P2 entity.
+- **Weapons (B2).** Weapon and missile code that tested `s.number == 0` for "the player" uses
+  `COOP_IsPlayer`, so P2's shots get the player muzzle, spread, damage and impact rules. P2 is always
+  first person (`COOP_ThirdPerson`), and the co-op module keeps P2's eye point and view angles current
+  (only the cgame updates P1's). Tested: P2 fires on borg2, ammo drops 2 per shot, no warnings.

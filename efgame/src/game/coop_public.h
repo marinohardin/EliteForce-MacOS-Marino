@@ -17,6 +17,7 @@
 #define COOP_IsPlayer(e)			((e)->s.number == 0)
 #define COOP_IsPlayerNum(n)			((n) == 0)
 #define COOP_StoryActivator(e)		(e)
+#define COOP_ThirdPerson(e)			cg_thirdPerson.integer
 
 #define COOP_Init()					((void)0)
 #define COOP_RunFrame()				((void)0)
@@ -49,6 +50,9 @@ inline bool COOP_IsPlayerNum( int n ) { return n == 0 || ( coop_p2Num >= 0 && n 
 
 // story scripts expect "the player" as activator: P2 becomes P1
 inline gentity_t *COOP_StoryActivator( gentity_t *e ) { return ( e && COOP_IsP2( e ) ) ? &g_entities[0] : e; }
+
+// the shooter's third-person setting (game code reads the host cgame's cvar for it)
+int			COOP_ThirdPerson( const gentity_t *e );
 
 // level start (InitGame)
 void		COOP_Init( void );
