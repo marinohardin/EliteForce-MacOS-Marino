@@ -16,6 +16,9 @@ project(efsp_macos C CXX OBJC)
 set(EF_APP_VERSION "1.3.0" CACHE STRING "App version shown in the console and to server browsers")
 option(EF_BINK "Bink cinematics via Homebrew FFmpeg (OFF = stub, no movies)" ON)
 option(EF_VM_JIT "aarch64 QVM JIT (needs MAP_JIT work on macOS)" OFF)
+# single-player co-op (experimental). The engine side adds nothing yet; the game side is
+# efgame's option of the same name (make-app.sh passes both).
+option(EF_COOP "Single-player co-op (experimental)" OFF)
 
 set(JNI ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(EF  ${JNI}/efcode)
