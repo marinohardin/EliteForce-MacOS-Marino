@@ -37,7 +37,7 @@ Test hooks (environment variables):
                                 quit (or go on with ..._PLAY)
   VOYAGERSP_TEST_LAUNCHER_APPEARANCE=dark|light
   VOYAGERSP_TEST_LAUNCHER_MODE=sp|hm|host     preselect the mode
-  (Host a Server's hooks are listed in sys_osx_server.m)
+  (Host a Server's hooks are listed in sys_osx_server.m, Co-op…'s in sys_osx_coop.m)
   VOYAGERSP_TEST_LAUNCHER_PRESET=performance|balanced|best
   VOYAGERSP_TEST_LAUNCHER_BRIGHTNESS=standard|plain|contrast|bright|fullbright
   VOYAGERSP_TEST_LAUNCHER_PLAY=1              press Play without showing it
@@ -93,6 +93,7 @@ Test hooks (environment variables):
 #endif
 
 #include "sys_osx_launcher.h"
+#include "sys_osx_coop.h"
 
 #define KEY_LAUNCHERMODE	@"LauncherMode"
 #define KEY_UPDATECHECK		@"CheckForUpdates"		// NO: never ask GitHub on its own
@@ -788,7 +789,7 @@ static NSStackView *HStackOf( NSArray *views )
 	[config setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
 	[config setToolTip: @"Maps, game type, bots and the server's name, password and network"];
 	cards[MODE_SP] = [[VSPModeCard alloc] initWithSymbol: @"person.fill" title: @"Single Player"
-		detail: @"The Voyager campaign, your saves and the Virtual Voyager." accessory: nil];
+		detail: @"The Voyager campaign, your saves and the Virtual Voyager." accessory: VSP_CoopButton( self )];
 	browse = [NSButton buttonWithTitle: @"Browse…" target: self action: @selector(browseServers:)];
 	[browse setControlSize: NSControlSizeSmall];
 	[browse setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
@@ -1437,6 +1438,9 @@ static NSStackView *HStackOf( NSArray *views )
 }
 
 - (BOOL)hasData	{ return haveData; }
+#ifdef EF_COOP
+- (BOOL)canPlay	{ return haveData && !missingPatch; }
+#endif
 
 - (launchMode_t)mode	{ return mode; }
 - (VSPServerSettings *)server	{ return server; }
@@ -1614,6 +1618,7 @@ static NSStackView *HStackOf( NSArray *views )
 		[args appendFormat: @"+exec %@ ", VSP_MASTERS_CFG];
 	if( holomatch && [VSP_LoopbackArgs() count] )
 		[args appendFormat: @"+set cl_loopbackHostIP %@ ", VSP_PublicAddress()];
+	VSP_CoopAppendArgs( args, holomatch );	// Co-op…'s Host: +set sp_coop 1
 	// Browse…: straight into the chosen server
 	if( holomatch && joinAddress )
 	{

@@ -3535,6 +3535,13 @@ void Com_Frame( void ) {
 	}
 #endif
 
+#ifdef EF_COOP
+	{
+		// single-player co-op: a host answers co-op checks (sys/sys_osx_coop.m)
+		extern void Sys_CoopFrame( void );
+		Sys_CoopFrame();
+	}
+#endif
 
 	NET_FlushPacketQueue();
 
