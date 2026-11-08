@@ -894,3 +894,8 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   Helpers `COOP_NearestPlayer`, `COOP_NumPlayers`, `COOP_PlayerByIndex` count P2 only when it is alive
   and not hidden by a camera. Tested on dn1: P2 placed on a compression rifle with `coop_p2_tele x y z`
   (new) picks it up (ammo back to 300, the item goes to its respawn state).
+- **Enemy choice (B6).** Where the AI took "the player" as its enemy (alert events, stealth checks,
+  `NPC_PickEnemy` players-first, `NPC_FindPlayer`, `NPC_CheckPlayerDistance`, `AI_DistributeAttack`,
+  the Vohrsoth boss, stasis fliers) it now takes the nearest player. Pointer compares use
+  `COOP_IsPlayerPtr`. Tested on borg2 (1500 frames): NPCs 88, 197 and 203 switch to P2, P2 dies and
+  comes back next to P1; voy3 runs clean.

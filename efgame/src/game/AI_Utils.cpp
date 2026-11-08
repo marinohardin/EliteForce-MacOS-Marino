@@ -4,6 +4,7 @@
 // AI code, and who's code resides in files with the AI_ prefix.
 
 #include "b_local.h"
+#include "coop_public.h"
 #include "g_nav.h"
 
 #define	MAX_RADIUS_ENTS		128
@@ -208,14 +209,15 @@ gentity_t *AI_DistributeAttack( gentity_t *attacker, gentity_t *enemy, team_t te
 	int	numSurrounding = AI_GetGroupSize( enemy->currentOrigin, 48, team, attacker );
 
 	//First, see if we should look for the player
-	if ( enemy != &g_entities[0] )
+	if ( !COOP_IsPlayerPtr( enemy ) )
 	{
-		int	aroundPlayer = AI_GetGroupSize( g_entities[0].currentOrigin, 48, team, attacker );
+		gentity_t	*coopPlayer = COOP_NearestPlayer( NPC->currentOrigin );
+		int	aroundPlayer = AI_GetGroupSize( coopPlayer->currentOrigin, 48, team, attacker );
 
 		//See if we're above our threshold
 		if ( aroundPlayer < threshold )
 		{
-			return &g_entities[0];
+			return coopPlayer;
 		}
 	}
 

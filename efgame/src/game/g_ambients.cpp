@@ -3,6 +3,7 @@
 #include "g_local.h"
 #include "g_functions.h"
 #include "b_local.h"
+#include "coop_public.h"
 
 extern void G_StartObjectMoving( gentity_t *object, vec3_t dir, float speed, trType_t trType );
 extern void G_RunObject( gentity_t *ent );
@@ -527,12 +528,13 @@ void flier_find_enemy (gentity_t *self, qboolean alwaysAcquire )
 	{	// we only bother with the player - we make not so much sense for the pals
 		//g_entities[0]
 		trace_t	tr;
+		gentity_t	*coopPlayer = COOP_NearestPlayer( self->currentOrigin );
 
-		gi.trace( &tr, self->currentOrigin, vec3_origin, vec3_origin, g_entities[0].currentOrigin, self->s.number, MASK_SHOT );
+		gi.trace( &tr, self->currentOrigin, vec3_origin, vec3_origin, coopPlayer->currentOrigin, self->s.number, MASK_SHOT );
 
-		if ( tr.fraction == 1.0f || tr.entityNum == g_entities[0].s.number )
+		if ( tr.fraction == 1.0f || tr.entityNum == coopPlayer->s.number )
 		{
-			G_SetEnemy(self, &g_entities[0]);
+			G_SetEnemy(self, coopPlayer);
 		}
 		else
 		{
@@ -616,7 +618,7 @@ void flier_fire_children (gentity_t *attacker)
 	{
 		if( curCheck->owner == attacker )
 		{
-			VectorCopy( g_entities[0].currentOrigin, curCheck->pos1 );
+			VectorCopy( COOP_NearestPlayer( attacker->currentOrigin )->currentOrigin, curCheck->pos1 );
 			curCheck->attackDebounceTime = level.time + ( curChild * 200 );
 			curCheck->e_clThinkFunc = clThinkF_CG_StasisFlierAttackThink;
 			//curCheck->enemy = &g_entities[0]; // always target the player - this might be bad, though.  Who knows.
