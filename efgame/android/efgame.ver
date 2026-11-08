@@ -4,5 +4,6 @@ EFGAME_1.0 {
     _Z6vmMainiiiiiiiii;               /* vmMain(int x9)  -- cgame */
     _Z8dllEntryPFiizE;                /* dllEntry(int(*)(int,...)) -- cgame */
     _Z15CG_GetCameraPosPf;            /* CG_GetCameraPos(float*) -- SP snapshot viewpoint */
+    G_RegressDump;                    /* extern "C" G_RegressDump(emit) -- regress.c state dump */
   local: *;
 };
