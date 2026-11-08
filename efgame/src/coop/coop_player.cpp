@@ -1,0 +1,468 @@
+// coop_player.cpp -- single-player co-op: the player 2 entity.
+//
+// P2 is a client entity built like an NPC (its own client struct, driven through ClientThink)
+// but with no NPC struct, no ICARUS sequencer and no script name: scripts find the player by
+// the name "Munro", which only P1 has. In M0 it is a local puppet: it follows P1, or the
+// coop_p2_* console commands move it.
+
+#include "g_local.h"
+#include "g_functions.h"
+#include "anims.h"
+#include "boltons.h"
+#include "coop_public.h"
+#include "coop_local.h"
+
+extern vec3_t	playerMins;
+extern vec3_t	playerMaxs;
+extern bool		in_camera;
+extern qboolean	player_locked;
+extern void		NPC_SetAnim( gentity_t *ent, int type, int anim, int priority );
+extern void		PM_SetLegsAnimTimer( gentity_t *ent, int *legsAnimTimer, int time );
+extern void		PM_SetTorsoAnimTimer( gentity_t *ent, int *torsoAnimTimer, int time );
+
+const char		coop_p2Classname[] = "coop_p2";
+coopP2State_t	coop_p2;
+
+// P2's client. Not in level.clients and never written to a save.
+static gclient_t	coop_p2Client;
+
+#define COOP_P2_HEALTH			100
+#define COOP_RESPAWN_DELAY		4000	// ms from death to respawn next to P1
+#define COOP_FOLLOW_NEAR		112		// follow: stop this close to P1 (2D)
+#define COOP_FOLLOW_TELEPORT	1024	// follow: further than this, jump to P1
+#define COOP_STUCK_FRAMES		60		// follow: 3 s without progress, jump to P1
+
+gentity_t *COOP_P2( void )
+{
+	if ( coop_p2Num < 0 )
+	{
+		return NULL;
+	}
+	gentity_t *ent = &g_entities[coop_p2Num];
+	if ( !ent->inuse || ent->classname != coop_p2Classname || ent->client != &coop_p2Client )
+	{
+		// freed, or the slot was reused by something else
+		coop_p2Num = -1;
+		return NULL;
+	}
+	return ent;
+}
+
+/*
+COOP_FindSpotNear
+
+A clear standing spot next to P1 that P1 could walk to in a straight line (so never through a
+wall), with floor under it. Behind P1 first, then the sides, then in front, then further out.
+*/
+static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out );
+
+qboolean COOP_FindSpotNear( gentity_t *p1, vec3_t out )
+{
+	// P2's own body must not block the spots around P1
+	gentity_t	*p2 = COOP_P2();
+	int			contents = p2 ? p2->contents : 0;
+	qboolean	found;
+
+	if ( p2 )
+	{
+		p2->contents = 0;
+	}
+	found = COOP_FindSpotNear2( p1, out );
+	if ( p2 )
+	{
+		p2->contents = contents;
+	}
+	return found;
+}
+
+static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out )
+{
+	static const float offsets[][2] = {
+		{ -64, 0 }, { 0, 64 }, { 0, -64 }, { -64, 64 }, { -64, -64 }, { 64, 0 }, { 64, 64 }, { 64, -64 },
+		{ -128, 0 }, { 0, 128 }, { 0, -128 }, { 128, 0 }, { -96, 96 }, { -96, -96 }, { 96, 96 }, { 96, -96 },
+	};
+	vec3_t	yawOnly, forward, right, start, spot, below;
+	trace_t	tr;
+	int		ignore = p1->s.number;
+
+	VectorSet( yawOnly, 0, p1->client ? p1->client->ps.viewangles[YAW] : p1->currentAngles[YAW], 0 );
+	AngleVectors( yawOnly, forward, right, NULL );
+	VectorCopy( p1->currentOrigin, start );
+
+	for ( unsigned i = 0; i < sizeof( offsets ) / sizeof( offsets[0] ); i++ )
+	{
+		VectorMA( start, offsets[i][0], forward, spot );
+		VectorMA( spot, offsets[i][1], right, spot );
+
+		gi.trace( &tr, start, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID );
+		if ( tr.startsolid || tr.allsolid || tr.fraction < 1.0f )
+		{
+			continue;
+		}
+		VectorCopy( spot, below );
+		below[2] -= 96;
+		gi.trace( &tr, spot, playerMins, playerMaxs, below, ignore, MASK_PLAYERSOLID );
+		if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f )
+		{
+			continue;	// no floor (ledge, pit)
+		}
+		VectorCopy( tr.endpos, out );
+		return qtrue;
+	}
+	return qfalse;
+}
+
+void COOP_PlaceP2( gentity_t *ent, const vec3_t org )
+{
+	vec3_t	o;
+
+	VectorCopy( org, o );
+	G_SetOrigin( ent, o );
+	VectorCopy( o, ent->client->ps.origin );
+	VectorClear( ent->client->ps.velocity );
+	ent->client->ps.eFlags ^= EF_TELEPORT_BIT;	// no lerp from the old spot
+	VectorCopy( o, coop_p2.lastOrigin );
+	coop_p2.stuckFrames = 0;
+	gi.linkentity( ent );
+}
+
+void COOP_ApplyHidden( gentity_t *ent, qboolean hidden )
+{
+	coop_p2.hidden = hidden;
+	if ( hidden )
+	{
+		ent->svFlags |= SVF_NOCLIENT;
+		ent->contents = 0;
+		ent->takedamage = qfalse;
+		ent->flags |= FL_NOTARGET;
+		VectorClear( ent->client->ps.velocity );
+	}
+	else
+	{
+		ent->svFlags &= ~SVF_NOCLIENT;
+		ent->contents = ( ent->health > 0 ) ? CONTENTS_BODY : CONTENTS_CORPSE;
+		ent->takedamage = ( ent->health > 0 ) ? qtrue : qfalse;
+		ent->flags &= ~FL_NOTARGET;
+	}
+	gi.linkentity( ent );
+}
+
+/*
+COOP_SetupP2
+
+Fresh client state for P2 at org, facing yaw. Looks like P1 (same models). Weapons are shared
+(P1's plus whatever P2 had); a respawn keeps P2's ammo, a first spawn copies P1's.
+*/
+static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean respawn )
+{
+	gentity_t	*p1 = &g_entities[0];
+	gclient_t	*cl = &coop_p2Client;
+	int			weapons = p1->client->ps.stats[STAT_WEAPONS];
+	int			weapon = p1->client->ps.weapon;
+	int			ammo[MAX_AMMO];
+	int			teleportBit = ( cl->ps.eFlags & EF_TELEPORT_BIT ) ^ EF_TELEPORT_BIT;
+	vec3_t		angles;
+
+	if ( respawn )
+	{
+		weapons |= cl->ps.stats[STAT_WEAPONS];
+		weapon = cl->ps.weapon ? cl->ps.weapon : weapon;
+		memcpy( ammo, cl->ps.ammo, sizeof( ammo ) );
+	}
+	else
+	{
+		memcpy( ammo, p1->client->ps.ammo, sizeof( ammo ) );
+	}
+
+	memset( cl, 0, sizeof( *cl ) );
+	cl->clientInfo = p1->client->clientInfo;
+	cl->renderInfo = p1->client->renderInfo;
+	cl->renderInfo.lookTarget = ENTITYNUM_NONE;
+	cl->pers.connected = CON_CONNECTED;
+	cl->pers.localClient = qtrue;			// never dropped for inactivity
+	cl->pers.maxHealth = COOP_P2_HEALTH;
+	cl->pers.enterTime = level.time;
+	Q_strncpyz( cl->pers.netname, "Player 2", sizeof( cl->pers.netname ) );
+	cl->playerTeam = TEAM_STARFLEET;
+	cl->crouchheight = CROUCH_MAXS_2;
+	cl->standheight = DEFAULT_MAXS_2;
+
+	cl->ps.clientNum = ent->s.number;
+	cl->ps.stats[STAT_MAX_HEALTH] = COOP_P2_HEALTH;
+	cl->ps.stats[STAT_HEALTH] = COOP_P2_HEALTH;
+	cl->ps.stats[STAT_WEAPONS] = weapons;
+	memcpy( cl->ps.ammo, ammo, sizeof( cl->ps.ammo ) );
+	cl->ps.weapon = ( weapons & ( 1 << weapon ) ) ? weapon : WP_NONE;
+	cl->ps.weaponstate = WEAPON_READY;
+	cl->ps.friction = 6;
+	cl->ps.gravity = g_gravity->value;
+	cl->ps.pm_flags |= PMF_RESPAWNED;
+	cl->ps.commandTime = level.time - 100;
+	cl->ps.torsoAnim = BOTH_STAND2;
+	cl->ps.legsAnim = BOTH_STAND2;
+	cl->ps.groundEntityNum = ENTITYNUM_NONE;
+	cl->ps.eFlags = teleportBit;
+	cl->respawnTime = level.time;
+	cl->inactivityTime = level.time + 60 * 1000;
+	cl->lastCmdTime = level.time;
+
+	ent->client = cl;
+	ent->classname = (char *)coop_p2Classname;
+	ent->NPC_type = "munro";		// never NULL: some checks compare it by string
+	ent->s.eType = ET_PLAYER;
+	ent->s.groundEntityNum = ENTITYNUM_NONE;
+	ent->health = ent->max_health = COOP_P2_HEALTH;
+	ent->takedamage = qtrue;
+	ent->contents = CONTENTS_BODY;
+	ent->clipmask = MASK_PLAYERSOLID;
+	ent->svFlags &= ~SVF_NOCLIENT;
+	ent->flags &= ~FL_NOTARGET;
+	ent->e_DieFunc = dieF_player_die;	// player_die hands P2 to COOP_P2Die
+	ent->e_PainFunc = painF_NULL;
+	ent->e_TouchFunc = touchF_NULL;
+	ent->e_UseFunc = useF_NULL;
+	ent->e_ThinkFunc = thinkF_NULL;
+	ent->nextthink = 0;
+	ent->enemy = NULL;
+	ent->waterlevel = 0;
+	ent->watertype = 0;
+	VectorCopy( playerMins, ent->mins );
+	VectorCopy( playerMaxs, ent->maxs );
+
+	COOP_PlaceP2( ent, org );
+	cl->ps.eFlags = teleportBit;
+	VectorSet( angles, 0, yaw, 0 );
+	SetClientViewAngle( ent, angles );
+
+	G_InitBoltOnData( ent );
+	PlayerStateToEntityState( &cl->ps, &ent->s );
+	gi.linkentity( ent );
+
+	coop_p2.respawnTime = 0;
+	coop_p2.stuckFrames = 0;
+	if ( coop_p2.hidden || in_camera )
+	{
+		COOP_ApplyHidden( ent, qtrue );
+	}
+}
+
+void COOP_SpawnP2( void )
+{
+	gentity_t	*p1 = &g_entities[0];
+	gentity_t	*ent;
+	vec3_t		org;
+	usercmd_t	cmd;
+
+	if ( !p1->inuse || !p1->client || p1->health <= 0 || !p1->client->clientInfo.infoValid )
+	{
+		return;
+	}
+	if ( level.time < coop_p2.nextSpawnTry )
+	{
+		return;
+	}
+	if ( !COOP_FindSpotNear( p1, org ) )
+	{
+		coop_p2.nextSpawnTry = level.time + 500;
+		return;
+	}
+	ent = G_Spawn();
+	if ( !ent )
+	{
+		coop_p2.nextSpawnTry = level.time + 2000;
+		return;
+	}
+	memset( &coop_p2Client, 0, sizeof( coop_p2Client ) );
+	coop_p2Num = ent->s.number;
+	COOP_SetupP2( ent, org, p1->client->ps.viewangles[YAW], qfalse );
+
+	memset( &cmd, 0, sizeof( cmd ) );
+	cmd.serverTime = level.time;
+	ClientThink( ent->s.number, &cmd );
+	gi.Printf( "co-op: player 2 spawned as entity %d at %s\n", ent->s.number, vtos( ent->currentOrigin ) );
+}
+
+/*
+COOP_BuildCmd
+
+P2's input for this frame: a running console command, else follow P1.
+*/
+static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
+{
+	gentity_t	*p1 = &g_entities[0];
+	gclient_t	*cl = ent->client;
+	vec3_t		view, dir;
+
+	memset( cmd, 0, sizeof( *cmd ) );
+	cmd->serverTime = level.time;
+	cmd->weapon = coop_p2.weapon > 0 ? coop_p2.weapon : cl->ps.weapon;
+	coop_p2.weapon = 0;
+	VectorCopy( cl->ps.viewangles, view );
+
+	if ( coop_p2.moveFrames > 0 )
+	{
+		coop_p2.moveFrames--;
+		cmd->forwardmove = coop_p2.forwardmove;
+		cmd->rightmove = coop_p2.rightmove;
+		cmd->upmove = coop_p2.upmove;
+		coop_p2.stuckFrames = 0;
+	}
+	else if ( coop_p2.follow && p1->inuse && p1->client && cl->ps.pm_type < PM_DEAD )
+	{
+		VectorSubtract( p1->currentOrigin, ent->currentOrigin, dir );
+		float dz = dir[2];
+		dir[2] = 0;
+		float dist = VectorLength( dir );
+
+		if ( dist > COOP_FOLLOW_TELEPORT || dz > 256 || dz < -512 )
+		{
+			vec3_t org;
+			if ( COOP_FindSpotNear( p1, org ) )
+			{
+				COOP_PlaceP2( ent, org );
+			}
+		}
+		else if ( dist > COOP_FOLLOW_NEAR )
+		{
+			if ( !coop_p2.haveAngles )
+			{
+				view[YAW] = vectoyaw( dir );
+				view[PITCH] = 0;
+			}
+			cmd->forwardmove = 127;
+			if ( DistanceSquared( ent->currentOrigin, coop_p2.lastOrigin ) < 4.0f )
+			{
+				coop_p2.stuckFrames++;
+				if ( coop_p2.stuckFrames % 10 == 5 )
+				{
+					cmd->upmove = 127;	// try to hop over it
+				}
+				if ( coop_p2.stuckFrames > COOP_STUCK_FRAMES )
+				{
+					vec3_t org;
+					if ( COOP_FindSpotNear( p1, org ) )
+					{
+						COOP_PlaceP2( ent, org );
+					}
+					coop_p2.stuckFrames = 0;
+				}
+			}
+			else
+			{
+				coop_p2.stuckFrames = 0;
+			}
+		}
+		else
+		{
+			coop_p2.stuckFrames = 0;
+		}
+	}
+	VectorCopy( ent->currentOrigin, coop_p2.lastOrigin );
+
+	if ( coop_p2.haveAngles )
+	{
+		VectorCopy( coop_p2.viewAngles, view );
+	}
+	if ( coop_p2.buttonFrames > 0 )
+	{
+		coop_p2.buttonFrames--;
+		cmd->buttons = coop_p2.buttons;
+	}
+	for ( int i = 0; i < 3; i++ )
+	{
+		cmd->angles[i] = ANGLE2SHORT( view[i] ) - cl->ps.delta_angles[i];
+	}
+}
+
+void COOP_RunFrame( void )
+{
+	gentity_t	*ent;
+	usercmd_t	cmd;
+
+	if ( !coop_enabled )
+	{
+		return;
+	}
+	coop_p2.levelFrames++;
+
+	ent = COOP_P2();
+	if ( !ent )
+	{
+		// wait a few frames after a level starts, so the cgame has registered P1's models
+		if ( coop_p2.levelFrames > 10 )
+		{
+			COOP_SpawnP2();
+		}
+		return;
+	}
+	COOP_BuildCmd( ent, &cmd );
+	ClientThink( ent->s.number, &cmd );
+}
+
+void COOP_EndFrame( void )
+{
+	gentity_t *ent;
+
+	if ( !coop_enabled || ( ent = COOP_P2() ) == NULL )
+	{
+		return;
+	}
+	ClientEndFrame( ent );
+}
+
+qboolean COOP_P2ThinkGate( gentity_t *ent, usercmd_t *ucmd )
+{
+	if ( in_camera )
+	{
+		return qtrue;	// frozen like P1 while a camera runs
+	}
+	if ( player_locked && ent->client->ps.pm_type < PM_DEAD )
+	{
+		ucmd->forwardmove = 0;
+		ucmd->rightmove = 0;
+		ucmd->upmove = 0;
+		ucmd->buttons = 0;
+	}
+	return qfalse;
+}
+
+void COOP_P2Die( gentity_t *ent, gentity_t *attacker )
+{
+	gclient_t *cl = ent->client;
+
+	if ( cl->ps.pm_type == PM_DEAD )
+	{
+		return;
+	}
+	ent->enemy = attacker;
+	ent->takedamage = qfalse;
+	ent->contents = CONTENTS_CORPSE;
+	cl->renderInfo.lookTarget = ENTITYNUM_NONE;
+	G_AddEvent( ent, Q_irand( EV_DEATH1, EV_DEATH3 ), ent->health );
+	NPC_SetAnim( ent, SETANIM_BOTH, BOTH_DEATH1, SETANIM_FLAG_OVERRIDE | SETANIM_FLAG_HOLD );
+	PM_SetLegsAnimTimer( ent, &cl->ps.legsAnimTimer, -1 );
+	PM_SetTorsoAnimTimer( ent, &cl->ps.torsoAnimTimer, -1 );
+	cl->ps.pm_type = PM_DEAD;
+	cl->ps.stats[STAT_HEALTH] = ent->health;
+	cl->respawnTime = level.time + COOP_RESPAWN_DELAY;
+	coop_p2.respawnTime = level.time + COOP_RESPAWN_DELAY;
+	gi.linkentity( ent );
+	gi.Printf( "co-op: player 2 died\n" );
+}
+
+void COOP_P2DeadThink( gentity_t *ent, usercmd_t *ucmd )
+{
+	gentity_t	*p1 = &g_entities[0];
+	vec3_t		org;
+
+	if ( level.time < coop_p2.respawnTime || !p1->inuse || p1->health <= 0 )
+	{
+		return;
+	}
+	if ( !COOP_FindSpotNear( p1, org ) )
+	{
+		return;
+	}
+	COOP_SetupP2( ent, org, p1->client->ps.viewangles[YAW], qtrue );
+	gi.Printf( "co-op: player 2 respawned at %s\n", vtos( ent->currentOrigin ) );
+}

@@ -859,6 +859,8 @@ void G_RunFrame( int levelTime ) {
 		eventClearTime = level.time + ALERT_CLEAR_TIME;
 	}
 
+	COOP_RunFrame();
+
 	//Run the frame for all entities
 	for ( i = 0, ent = &g_entities[0]; i < globals.num_entities ; i++, ent++)
 	{
@@ -944,6 +946,10 @@ void G_RunFrame( int levelTime ) {
 
 			continue;	// players are ucmd driven
 		}
+		if ( COOP_IsP2( ent ) )
+		{
+			continue;	// so is player 2 (COOP_RunFrame)
+		}
 
 		G_RunThink( ent );	// be aware that ent may be free after returning from here, at least one func frees them
 		ClearNPCGlobals();			//	but these 2 funcs are ok
@@ -955,6 +961,7 @@ void G_RunFrame( int levelTime ) {
 	if ( ent->inuse ) {
 		ClientEndFrame( ent );
 	}
+	COOP_EndFrame();
 
 	//DEBUG STUFF
 	NAV_ShowDebugInfo();

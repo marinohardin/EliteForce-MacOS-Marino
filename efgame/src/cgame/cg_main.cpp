@@ -6,6 +6,7 @@
 #include "../game/characters.h"
 #include "../game/speakers.h"
 #include "../speedrun/PlayerOverbouncePrediction.hpp"
+#include "../game/coop_public.h"
 
 //NOTENOTE: Be sure to change the mirrored code in g_shared.h
 typedef	std::map< std::string, unsigned char >	namePrecache_m;
@@ -1592,6 +1593,7 @@ void CG_Init( int serverCommandSequence ) {
 	cgi_AddCommand ("setviewpos");
 	cgi_AddCommand ("setobjective");
 	cgi_AddCommand ("viewobjective");
+	COOP_RegisterCommands();
 
 	// Not until it's done will it be seen
 	interface_graphics[IG_HEALTH_START].timer =	cg.time + 3000;

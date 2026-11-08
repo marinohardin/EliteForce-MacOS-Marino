@@ -19,6 +19,16 @@
 #define COOP_StoryActivator(e)		(e)
 
 #define COOP_Init()					((void)0)
+#define COOP_RunFrame()				((void)0)
+#define COOP_EndFrame()				((void)0)
+#define COOP_P2ThinkGate(e,u)		0
+#define COOP_P2DeadThink(e,u)		((void)0)
+#define COOP_P2Die(e,a)				((void)0)
+#define COOP_PreSave()				((void)0)
+#define COOP_OnCameraEnable()		((void)0)
+#define COOP_OnCameraDisable()		((void)0)
+#define COOP_ConsoleCommand(c)		0
+#define COOP_RegisterCommands()		((void)0)
 
 #else // EF_COOP
 
@@ -40,7 +50,27 @@ inline bool COOP_IsPlayerNum( int n ) { return n == 0 || ( coop_p2Num >= 0 && n 
 // story scripts expect "the player" as activator: P2 becomes P1
 inline gentity_t *COOP_StoryActivator( gentity_t *e ) { return ( e && COOP_IsP2( e ) ) ? &g_entities[0] : e; }
 
+// level start (InitGame)
 void		COOP_Init( void );
+// top of G_RunFrame: spawn P2 next to P1 if it is missing, then run its ClientThink
+void		COOP_RunFrame( void );
+// after P1's ClientEndFrame
+void		COOP_EndFrame( void );
+// ClientThink_real for P2: freeze it in cameras and while the player is locked. qtrue = stop here
+qboolean	COOP_P2ThinkGate( gentity_t *ent, usercmd_t *ucmd );
+// ClientThink_real for a dead P2 (instead of the player respawn path, which reloads the game)
+void		COOP_P2DeadThink( gentity_t *ent, usercmd_t *ucmd );
+// player_die for P2: no game over, respawn next to P1 after a delay
+void		COOP_P2Die( gentity_t *ent, gentity_t *attacker );
+// WriteLevel: clear every saved pointer to P2 (P2 itself is never written)
+void		COOP_PreSave( void );
+// CGCam_Enable / CGCam_Disable: P2 hidden and non-solid while a camera runs
+void		COOP_OnCameraEnable( void );
+void		COOP_OnCameraDisable( void );
+// the coop_p2* console commands: the cgame registers them (CG_Init), the engine hands them to
+// the game's ClientCommand, which calls this. qtrue = handled
+void		COOP_RegisterCommands( void );
+qboolean	COOP_ConsoleCommand( const char *cmd );
 
 #endif // EF_COOP
 
