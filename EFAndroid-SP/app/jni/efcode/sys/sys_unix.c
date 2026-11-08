@@ -24,8 +24,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../qcommon/qcommon.h"
 #include "sys_local.h"
 
-#ifdef __ANDROID__
+#if defined( __ANDROID__ ) || ( defined( __linux__ ) && !defined( DEDICATED ) )
+#ifdef USE_LOCAL_HEADERS
+#include "SDL.h"
+#else
 #include <SDL.h>
+#endif
+#define SYS_SDL_DIALOG 1
 #endif
 
 #include <signal.h>
@@ -836,11 +841,18 @@ Sys_Dialog
 Display a *nix dialog box
 ==============
 */
-dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *title )
+#ifdef SYS_SDL_DIALOG
+/*
+==============
+Sys_SDLDialog
+
+SDL's message box: Android has no zenity/kdialog/xmessage, and on Linux it
+also works where those don't (Steam Deck Gaming Mode, a bare Wayland or
+gamescope session). qfalse if it couldn't be shown.
+==============
+*/
+static qboolean Sys_SDLDialog( dialogType_t type, const char *message, const char *title, dialogResult_t *result )
 {
-#ifdef __ANDROID__
-	// Android has no zenity/kdialog/xmessage — use SDL's native message box
-	// (renders an Android dialog; also avoids the NULL DESKTOP_SESSION below).
 	{
 		Uint32 flags;
 		switch( type )
@@ -873,20 +885,38 @@ dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *t
 			data.numbuttons = 2;
 			data.buttons = buttons;
 
-			if( SDL_ShowMessageBox( &data, &buttonId ) < 0 || buttonId < 0 )
+			if( SDL_ShowMessageBox( &data, &buttonId ) < 0 )
 			{
 				Com_Printf( S_COLOR_YELLOW "WARNING: failed to show dialog: %s\n", SDL_GetError() );
-				return ( type == DT_YES_NO ) ? DR_NO : DR_CANCEL;
+				// the SAFE answer if it can't be shown
+				*result = ( type == DT_YES_NO ) ? DR_NO : DR_CANCEL;
+				return qfalse;
 			}
 			if( buttonId == 1 )
-				return ( type == DT_YES_NO ) ? DR_YES : DR_OK;
-			return ( type == DT_YES_NO ) ? DR_NO : DR_CANCEL;
+				*result = ( type == DT_YES_NO ) ? DR_YES : DR_OK;
+			else
+				*result = ( type == DT_YES_NO ) ? DR_NO : DR_CANCEL;
+			return qtrue;
 		}
 
+		*result = DR_OK;
 		if( SDL_ShowSimpleMessageBox( flags, title, message, NULL ) < 0 )
+		{
 			Com_Printf( S_COLOR_YELLOW "WARNING: failed to show dialog: %s\n", SDL_GetError() );
-		return DR_OK;
+			return qfalse;
+		}
+		return qtrue;
 	}
+}
+#endif
+
+dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *title )
+{
+#ifdef __ANDROID__
+	dialogResult_t result;
+
+	Sys_SDLDialog( type, message, title, &result );
+	return result;
 #else
 	typedef enum
 	{
@@ -903,6 +933,23 @@ dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *t
 	dialogCommandBuilder_t  commands[ NUM_DIALOG_PROGRAMS ] = { NULL };
 	dialogCommandType_t     preferredCommandType = NONE;
 	int                     i;
+
+	// a dedicated server has no UI: say it on stderr and take the default
+	// (No for a question). VOYAGERSP_TEST_NODIALOG=1 does the same for test runs.
+	if( sys_headless || ( getenv( "VOYAGERSP_TEST_NODIALOG" ) && *getenv( "VOYAGERSP_TEST_NODIALOG" ) ) )
+	{
+		fprintf( stderr, "%s: %s\n", title, message );
+		return type == DT_YES_NO ? DR_NO : type == DT_OK_CANCEL ? DR_CANCEL : DR_OK;
+	}
+
+#ifdef SYS_SDL_DIALOG
+	{
+		dialogResult_t result;
+
+		if( Sys_SDLDialog( type, message, title, &result ) )
+			return result;
+	}
+#endif
 
 	commands[ ZENITY ] = &Sys_ZenityCommand;
 	commands[ KDIALOG ] = &Sys_KdialogCommand;

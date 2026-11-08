@@ -53,11 +53,14 @@ END
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-#ifndef __MINGW32__
-IDI_ICON1               ICON    DISCARDABLE     "../lilium.ico"
-#else
-IDI_ICON1               ICON    DISCARDABLE     "misc/lilium.ico"
+// The app icon, made from macos/icon/AppIcon-1024.png by the Windows packaging
+// (windows/icon.ico at the top of the repository); the build may pass its own
+// path as EF_WIN_ICON. Relative paths are looked up from this file's folder
+// (windres: also its -I include directories).
+#ifndef EF_WIN_ICON
+#define EF_WIN_ICON "../../../../../windows/icon.ico"
 #endif
+IDI_ICON1               ICON    DISCARDABLE     EF_WIN_ICON
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -67,7 +70,7 @@ IDI_ICON1               ICON    DISCARDABLE     "misc/lilium.ico"
 
 STRINGTABLE DISCARDABLE 
 BEGIN
-    IDS_STRING1             "Quake3"
+    IDS_STRING1             "Elite Force"
 END
 
 /////////////////////////////////////////////////////////////////////////////

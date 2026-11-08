@@ -315,6 +315,21 @@ void CON_Init( void )
 	CONSOLE_SCREEN_BUFFER_INFO info;
 	int i;
 
+	// The game is a GUI program: started with +set dedicated from Explorer or a
+	// shortcut it has no console, so open one. Started from a console (or with
+	// redirected handles, a parent reading pipes) it keeps what it has.
+	if( sys_headless && !GetConsoleWindow( ) )
+	{
+		HANDLE out = GetStdHandle( STD_OUTPUT_HANDLE );
+
+		if( ( out == NULL || out == INVALID_HANDLE_VALUE ) && AllocConsole( ) )
+		{
+			freopen( "CONIN$", "r", stdin );
+			freopen( "CONOUT$", "w", stdout );
+			freopen( "CONOUT$", "w", stderr );
+		}
+	}
+
 	// handle Ctrl-C or other console termination
 	SetConsoleCtrlHandler( CON_CtrlHandler, TRUE );
 
