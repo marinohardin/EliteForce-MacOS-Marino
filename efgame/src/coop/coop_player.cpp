@@ -338,7 +338,12 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 				view[PITCH] = 0;
 			}
 			cmd->forwardmove = 127;
-			if ( DistanceSquared( ent->currentOrigin, coop_p2.lastOrigin ) < 4.0f )
+			// stuck = not getting closer to P1: blocked, or sliding sideways along a wall or ledge
+			// (moving at all is not enough; P2 can slide along a wall for as long as P1 stays away)
+			vec3_t moved;
+			VectorSubtract( ent->currentOrigin, coop_p2.lastOrigin, moved );
+			moved[2] = 0;
+			if ( DotProduct( moved, dir ) < dist )	// less than 1 unit toward P1 this frame
 			{
 				coop_p2.stuckFrames++;
 				if ( coop_p2.stuckFrames % 10 == 5 )
