@@ -12,7 +12,7 @@ It is compiled with ARC (see the macOS CMakeLists.txt).
     the arena info in scripts/arenas.txt and the .arena files there, and
     the levelshots/ .jpg and .tga files, stored or deflated, inflated
     with the engine's own zlib).
-  - The Config… sheet (Maps, Game, Server tabs).
+  - The Config… sheet (Maps, Game, Server, cMod tabs).
   - The master servers and the launcher's Servers… sheet: the list in the
     app's defaults (key MasterServers), passed to the game as
     baseEF/vsp_masters.cfg (+exec) and to a server in vsp_server.cfg.
@@ -48,9 +48,18 @@ Retail rules (from the Holomatch ui.qvm's Create Server menu):
   the game with bots up to that many players (per team in team games),
   with skill g_spSkill 1-5. Tick Rate: High sets sv_fps 40, Standard leaves it alone.
 
+cMod tab (cMod's game modules, by Noah Metzger, bundled in Contents/Resources/cmod):
+  sv_cmodGame 1 runs cMod's qagame in place of the stock one (the engine picks it
+  by checksum, see qcommon/files.c), which brings lag compensation:
+  g_unlagged 0 off, 1 instant-hit weapons, 2 all weapons (default here 1; cMod's
+  own default is 0); g_smoothClients 1 smooths other players' movement;
+  g_unlaggedPredict 1 lets players with cMod's cgame see their own shots at once.
+  All of it is server-side: players with any client can join and get the lag
+  compensation. The server never sends the cMod pk3 to anyone.
+
 Test hooks (environment variables, see also sys_osx_launcher.m):
   VOYAGERSP_TEST_SERVER_CONFIG_SNAPSHOT=<file.png>  render the Config… sheet
-  VOYAGERSP_TEST_SERVER_CONFIG_TAB=maps|game|server  its tab
+  VOYAGERSP_TEST_SERVER_CONFIG_TAB=maps|game|server|cmod  its tab
   VOYAGERSP_TEST_SERVER_TICKRATE=20|40    pick this Tick Rate in that sheet and press OK
   VOYAGERSP_TEST_SERVER_START=1           press Start Server (Host mode)
                                          without showing the launcher; the
@@ -107,6 +116,18 @@ With VOYAGERSP_TEST_SERVER_START the server's output is echoed to stdout as
 #define LAN_PORT_LAST		27963
 
 static BOOL LANDiscoverable( NSInteger port )	{ return port >= LAN_PORT_FIRST && port <= LAN_PORT_LAST; }
+
+// cMod's game modules (by Noah Metzger) ship in Contents/Resources/cmod; the engine
+// checks each pk3's checksum against cMod's release list (qcommon/files.c).
+BOOL VSP_CmodAvailable( void )
+{
+	NSString *dir = [[[NSBundle mainBundle] resourcePath] stringByAppendingPathComponent: @"cmod"];
+
+	for( NSString *f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: dir error: NULL] )
+		if( [[[f pathExtension] lowercaseString] isEqualToString: @"pk3"] )
+			return YES;
+	return NO;
+}
 
 static BOOL TestEnvSet( const char *name )
 {
@@ -167,6 +188,11 @@ static NSArray *Modifiers( void )
 	_openPort = YES;
 	_port = DEFAULT_PORT;
 	_tickRate = 20;
+	// From cMod by Noah Metzger (Chomenor): his game code and lag compensation
+	_cmodGame = YES;
+	_unlagged = 1;
+	_smoothClients = YES;
+	_unlaggedPredict = YES;
 	_rotation = @[ @"hm_voy1", @"hm_borg1", @"hm_kln1", @"hm_dn1", @"hm_for1", @"hm_cam" ];
 	return self;
 }
@@ -182,7 +208,8 @@ static NSArray *Modifiers( void )
 {
 	return @[ @"hostname", @"password", @"gametype", @"assimilation", @"disintegration", @"actionHero",
 		@"specialties", @"elimination", @"fraglimit", @"capturelimit", @"timelimit", @"maxPlayers", @"bots",
-		@"botSkill", @"friendlyFire", @"internet", @"openPort", @"allowDownload", @"pure", @"port", @"tickRate", @"rotation" ];
+		@"botSkill", @"friendlyFire", @"internet", @"openPort", @"allowDownload", @"pure", @"port", @"tickRate",
+		@"cmodGame", @"unlagged", @"smoothClients", @"unlaggedPredict", @"rotation" ];
 }
 
 - (NSDictionary *)dictionary
@@ -214,6 +241,7 @@ static NSArray *Modifiers( void )
 		s.port = DEFAULT_PORT;
 	if( s.tickRate != 40 )
 		s.tickRate = 20;
+	s.unlagged = MIN( MAX( s.unlagged, 0 ), 2 );
 	if( ![s.hostname length] )
 		s.hostname = DefaultHostname();
 	[s applyModifierRulesFavoring: nil];
@@ -1137,7 +1165,9 @@ static NSView *Boxed( NSView *v )
 	NSTextField *mapsCaption, *rotCaption;
 	NSButton *addButton, *removeButton, *upButton, *downButton;
 
-	NSPopUpButton *gametype, *skill, *tickRate;
+	NSPopUpButton *gametype, *skill, *tickRate, *unlagged;
+	NSButton *cmodGame, *smoothClients, *unlaggedPredict;
+	NSTextField *cmodHint;
 	NSTextField *gametypeHint;
 	NSMutableDictionary<NSString *, NSButton *> *modButtons;
 	VSPNumberField *frag, *capture, *timeLimit, *maxPlayers, *bots, *port;
@@ -1188,6 +1218,10 @@ static NSView *Boxed( NSView *v )
 	[item setLabel: @"Server"];
 	[item setView: [self serverTab]];
 	[tabs addTabViewItem: item];
+	item = [[NSTabViewItem alloc] initWithIdentifier: @"cmod"];
+	[item setLabel: @"cMod"];
+	[item setView: [self cmodTab]];
+	[tabs addTabViewItem: item];
 
 	defaults = [NSButton buttonWithTitle: @"Restore Defaults" target: self action: @selector(restoreDefaults:)];
 	cancel = [NSButton buttonWithTitle: @"Cancel" target: self action: @selector(cancel:)];
@@ -1201,10 +1235,10 @@ static NSView *Boxed( NSView *v )
 	[footer setSpacing: 10];
 
 	// tabs as a segmented control over a group box, like the launcher's look
-	tabPicker = [NSSegmentedControl segmentedControlWithLabels: @[ @"Maps", @"Game", @"Server" ]
+	tabPicker = [NSSegmentedControl segmentedControlWithLabels: @[ @"Maps", @"Game", @"Server", @"cMod" ]
 		trackingMode: NSSegmentSwitchTrackingSelectOne target: self action: @selector(tabPicked:)];
 	[tabPicker setSegmentDistribution: NSSegmentDistributionFillEqually];
-	[[tabPicker widthAnchor] constraintEqualToConstant: 300].active = YES;
+	[[tabPicker widthAnchor] constraintEqualToConstant: 400].active = YES;
 	[tabPicker setSelectedSegment: 0];
 	box = Boxed( tabs );
 
@@ -1688,6 +1722,13 @@ static NSView *Boxed( NSView *v )
 	else if( b == downloads )	edit.allowDownload = on;
 	else if( b == pure )		edit.pure = on;
 	else if( b == openPort )	edit.openPort = on;
+	else if( b == cmodGame || b == smoothClients || b == unlaggedPredict )
+	{
+		if( b == cmodGame )				edit.cmodGame = on;
+		else if( b == smoothClients )	edit.smoothClients = on;
+		else							edit.unlaggedPredict = on;
+		[self showCmodTab];
+	}
 	else if( b == lanButton || b == internetButton )
 	{
 		edit.internet = b == internetButton;
@@ -1821,6 +1862,79 @@ static NSView *Boxed( NSView *v )
 	[networkHint setTextColor: LANDiscoverable( edit.port ) ? [NSColor secondaryLabelColor] : [NSColor systemOrangeColor]];
 }
 
+// --- cMod ---
+
+- (void)unlaggedChanged: (id)sender
+{
+	edit.unlagged = [[unlagged selectedItem] tag];
+	[self showCmodTab];
+}
+
+- (NSView *)cmodTab
+{
+	NSView *v = [[NSView alloc] init];
+	NSGridView *grid;
+
+	cmodGame = [NSButton checkboxWithTitle: @"Run cMod's game code" target: self action: @selector(checkChanged:)];
+	[cmodGame setToolTip: @"cMod's server game module (qagame) by Noah Metzger, in place of the original one (sv_cmodGame)."];
+	cmodHint = Hint( @"", 420 );
+	unlagged = [[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: NO];
+	[unlagged addItemWithTitle: @"Off"];
+	[[unlagged lastItem] setTag: 0];
+	[unlagged addItemWithTitle: @"Instant-hit weapons"];
+	[[unlagged lastItem] setTag: 1];
+	[unlagged addItemWithTitle: @"All weapons"];
+	[[unlagged lastItem] setTag: 2];
+	[unlagged setTarget: self];
+	[unlagged setAction: @selector(unlaggedChanged:)];
+	[unlagged setToolTip: @"g_unlagged: the server checks each shot against where the shooter saw the other players."];
+	smoothClients = [NSButton checkboxWithTitle: @"Smooth other players' movement" target: self action: @selector(checkChanged:)];
+	[smoothClients setToolTip: @"g_smoothClients"];
+	unlaggedPredict = [NSButton checkboxWithTitle: @"Let cMod players see their own shots at once" target: self action: @selector(checkChanged:)];
+	[unlaggedPredict setToolTip: @"g_unlaggedPredict: players with cMod's cgame (this app's Holomatch, cMod) predict "
+		@"their weapon fire."];
+
+	grid = FormGrid( @[
+		@[ VSP_Label( @"Game code:", Body(), nil ), cmodGame ],
+		@[ [NSGridCell emptyContentView], cmodHint ],
+		@[ VSP_Label( @"Lag compensation:", Body(), nil ), unlagged ],
+		@[ [NSGridCell emptyContentView], Hint( @"Shots hit what the shooter saw on screen, so players with a high ping can "
+			@"aim normally. Works for every player, whatever game they run. Instant-hit weapons is the common choice; "
+			@"All weapons also covers projectiles.", 420 ) ],
+		@[ [NSGridCell emptyContentView], smoothClients ],
+		@[ [NSGridCell emptyContentView], unlaggedPredict ],
+		@[ [NSGridCell emptyContentView], Hint( @"cMod is by Noah Metzger (Chomenor). Players never download it from "
+			@"your server.", 420 ) ],
+	], 128 );
+	[[grid rowAtIndex: 2] setTopPadding: 10];
+	[[grid rowAtIndex: 6] setTopPadding: 10];
+	[grid setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[v addSubview: grid];
+	[NSLayoutConstraint activateConstraints: @[
+		[[grid leadingAnchor] constraintEqualToAnchor: [v leadingAnchor] constant: 16],
+		[[grid trailingAnchor] constraintLessThanOrEqualToAnchor: [v trailingAnchor] constant: -16],
+		[[grid topAnchor] constraintEqualToAnchor: [v topAnchor] constant: 18],
+	]];
+	return v;
+}
+
+- (void)showCmodTab
+{
+	BOOL have = VSP_CmodAvailable(), on = have && edit.cmodGame;
+
+	[cmodGame setState: edit.cmodGame ? NSControlStateValueOn : NSControlStateValueOff];
+	[cmodGame setEnabled: have];
+	[cmodHint setStringValue: have ? @"cMod's version of the Holomatch game: the original rules and modes, many bug "
+		@"fixes, and lag compensation." : @"cMod's game modules aren't in this copy of the app."];
+	[cmodHint setTextColor: have ? [NSColor secondaryLabelColor] : [NSColor systemOrangeColor]];
+	[unlagged selectItemWithTag: edit.unlagged];
+	[unlagged setEnabled: on];
+	[smoothClients setState: edit.smoothClients ? NSControlStateValueOn : NSControlStateValueOff];
+	[smoothClients setEnabled: on];
+	[unlaggedPredict setState: edit.unlaggedPredict ? NSControlStateValueOn : NSControlStateValueOff];
+	[unlaggedPredict setEnabled: on && edit.unlagged > 0];
+}
+
 - (void)showAll
 {
 	[search setStringValue: @""];
@@ -1835,6 +1949,7 @@ static NSView *Boxed( NSView *v )
 	[pure setState: edit.pure ? NSControlStateValueOn : NSControlStateValueOff];
 	[tickRate selectItemWithTag: edit.tickRate];
 	[self showServerTab];
+	[self showCmodTab];
 }
 
 // --- the sheet ---
@@ -2013,6 +2128,13 @@ static BOOL WriteServerConfig( VSPServerSettings *s, NSArray<VSPMapInfo *> *maps
 	if( s.tickRate == 40 )
 		[cfg appendString: @"set sv_fps 40\n"];
 	[cfg appendString: @"\n"];
+	// From cMod by Noah Metzger (Chomenor): his qagame and its lag compensation (the cMod tab).
+	// The g_ cvars only matter to his qagame; the original one ignores them.
+	[cfg appendString: @"// cMod's game code (by Noah Metzger) and its lag compensation\n"];
+	[cfg appendFormat: @"set sv_cmodGame %d\n", s.cmodGame];
+	[cfg appendFormat: @"set g_unlagged %ld\n", (long)s.unlagged];
+	[cfg appendFormat: @"set g_smoothClients %d\n", s.smoothClients];
+	[cfg appendFormat: @"set g_unlaggedPredict %d\n\n", s.unlaggedPredict];
 	[cfg appendFormat: @"set g_gametype %ld\n", (long)s.gametype];
 	[cfg appendFormat: @"set g_pModAssimilation %d\n", s.assimilation];
 	[cfg appendFormat: @"set g_pModDisintegration %d\n", s.disintegration];

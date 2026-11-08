@@ -237,6 +237,7 @@ typedef struct {
 	int				numfiles;					// number of files in pk3
 	int				referenced;					// referenced file flags
 	qboolean		isDownload;					// loaded from <game>/downloads/
+	qboolean		cmodBundled;				// a cMod pak from the app bundle (fs_cmodPaks)
 	int				hashSize;					// hash table size (power of 2)
 	fileInPack_t*	*hashTable;					// hash table
 	fileInPack_t*	buildBuffer;				// buffer with the filenames etc.
@@ -272,6 +273,12 @@ static	cvar_t		*fs_basegame;
 static	cvar_t		*fs_cdpath;
 static	cvar_t		*fs_gamedirvar;
 static	searchpath_t	*fs_searchpaths;
+static	searchpath_t	*fs_cmodPaks;		// the app bundle's cMod paks, never in fs_searchpaths
+static	cvar_t		*sv_cmodGame;
+static	cvar_t		*cl_cmodModules;
+
+static pack_t *FS_LoadZipFile( const char *zipfile, const char *basename );
+static void FS_FreePak( pack_t *thepak );
 static	int			fs_readCount;			// total bytes read
 static	int			fs_loadCount;			// total files read
 static	int			fs_loadStack;			// total files in memory
@@ -360,6 +367,11 @@ FS_PakIsPure
 */
 qboolean FS_PakIsPure( pack_t *pack ) {
 	int i;
+
+	// the app's own cMod paks aren't on any list; FS_FindVM decides when they're used
+	if ( pack->cmodBundled ) {
+		return qtrue;
+	}
 
 	if ( fs_numServerPaks ) {
 		for ( i = 0 ; i < fs_numServerPaks ; i++ ) {
@@ -1524,11 +1536,195 @@ static qboolean FS_IsCorePak( const pack_t *pack ) {
 }
 
 /*
+===========================================================================
+cMod game modules
+
+From cMod by Noah Metzger (Chomenor): his released pakcmod pk3s carry his
+cgame, ui and qagame QVMs (widescreen HUD, lag compensation, weapon fire
+prediction, many fixes). Like his engine, we recognize them by checksum
+(file names don't matter) and use their modules in place of the stock ones:
+- qagame (a server, Host a Server or the game's own Create Server): when the
+  normal pick is the stock one, and sv_cmodGame is on (default);
+- cgame and ui: see FS_CmodClientVM (part of the client work).
+The paks come from the app bundle (Contents/Resources/cmod, see
+FS_LoadCmodPaks), kept off the search path so a server never lists them,
+references them or offers them for download; one copied into a game folder
+works too and is then an ordinary pk3 otherwise. When several are there the
+newest release wins.
+===========================================================================
+*/
+
+// cMod's release paks, oldest first (his CMOD_PAKS list in fslocal.h)
+static const int fs_cmodPakChecksums[] = {
+	401438010,		// pakcmod-release-2021-09-18.pk3
+	-749739206,		// pakcmod-release-2021-09-25.pk3
+	-1518584883,	// pakcmod-release-2021-10-15.pk3
+	34943118,		// pakcmod-release-2021-11-11.pk3
+	1803491023,		// pakcmod-release-2021-12-03.pk3
+	1289620810,		// pakcmod-release-2021-12-28.pk3
+	278974329,		// pakcmod-release-2022-04-03.pk3
+	46565630,		// pakcmod-release-2022-04-26.pk3
+	-1112900480,	// pakcmod-release-2022-07-25.pk3
+	-782642155,		// pakcmod-release-2022-11-16.pk3
+	1339915926,		// pakcmod-release-2023-02-07.pk3
+	-1411557209,	// pakcmod-release-2023-09-17.pk3
+	-992215600,		// pakcmod-release-2023-09-18.pk3
+	-1629845218,	// pakcmod-release-2025-12-16.pk3
+};
+
+// paks whose modules are the stock ones (or compatible): cMod's may replace them
+static const int fs_cmodStockVMPaks[] = {
+	-334095706,		// pak2.pk3 (patch 1.2)
+	-982121719,		// pak92.pk3
+	1445632735,		// pakext2b.pk3
+	2099203013,		// pakcmod-stable-2021-07-16.pk3
+	732565402,		// pakcmod-dev-2021-07-16.pk3
+};
+
+/*
+=================
+FS_CmodPakRank
+
+1 + the pak's place in cMod's release list (later = newer), 0 if it isn't one.
+=================
+*/
+static int FS_CmodPakRank( const pack_t *pack ) {
+	int i;
+
+	for ( i = 0; i < ARRAY_LEN( fs_cmodPakChecksums ); i++ ) {
+		if ( pack->checksum == fs_cmodPakChecksums[i] ) {
+			return i + 1;
+		}
+	}
+	return 0;
+}
+
+/*
+=================
+FS_IsStockVMPak
+=================
+*/
+static qboolean FS_IsStockVMPak( const pack_t *pack ) {
+	int i;
+
+	if ( FS_CmodPakRank( pack ) ) {
+		return qtrue;
+	}
+	for ( i = 0; i < ARRAY_LEN( fs_cmodStockVMPaks ); i++ ) {
+		if ( pack->checksum == fs_cmodStockVMPaks[i] ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+/*
+=================
+FS_LoadCmodPaks
+
+The cMod paks shipped in the app bundle: <app>/Contents/Resources/cmod/*.pk3
+(fs_apppath is Contents/MacOS). Only paks on cMod's list are kept.
+=================
+*/
+static void FS_LoadCmodPaks( void ) {
+#ifdef __APPLE__
+	char dir[MAX_OSPATH];
+	char **files;
+	int numFiles, i;
+
+	if ( !Com_Holomatch() || !fs_apppath || !fs_apppath->string[0] ) {
+		return;
+	}
+	Com_sprintf( dir, sizeof( dir ), "%s%c..%cResources%ccmod", fs_apppath->string, PATH_SEP, PATH_SEP, PATH_SEP );
+	files = Sys_ListFiles( dir, ".pk3", NULL, &numFiles, qfalse );
+	for ( i = 0; i < numFiles; i++ ) {
+		char path[MAX_OSPATH];
+		pack_t *pak;
+		searchpath_t *search;
+
+		Com_sprintf( path, sizeof( path ), "%s%c%s", dir, PATH_SEP, files[i] );
+		pak = FS_LoadZipFile( path, files[i] );
+		if ( !pak ) {
+			continue;
+		}
+		if ( !FS_CmodPakRank( pak ) ) {
+			Com_Printf( "WARNING: %s is not a known cMod release (checksum %i), not used\n", path, pak->checksum );
+			FS_FreePak( pak );
+			continue;
+		}
+		pak->cmodBundled = qtrue;
+		Q_strncpyz( pak->pakPathname, dir, sizeof( pak->pakPathname ) );
+		Q_strncpyz( pak->pakGamename, com_basegame->string, sizeof( pak->pakGamename ) );
+		search = Z_Malloc( sizeof( searchpath_t ) );
+		search->pack = pak;
+		search->next = fs_cmodPaks;
+		fs_cmodPaks = search;
+	}
+	Sys_FreeFileList( files );
+#endif
+}
+
+/*
+=================
+FS_CmodVMSource
+
+The newest cMod pak that has this QVM, bundled or in the search path.
+=================
+*/
+static searchpath_t *FS_CmodVMSource( const char *qvmName ) {
+	searchpath_t *lists[2] = { fs_cmodPaks, fs_searchpaths };
+	searchpath_t *search, *best = NULL;
+	int bestRank = 0, i;
+
+	for ( i = 0; i < 2; i++ ) {
+		for ( search = lists[i]; search; search = search->next ) {
+			int rank = search->pack ? FS_CmodPakRank( search->pack ) : 0;
+
+			if ( rank > bestRank && FS_FOpenFileReadDir( qvmName, search, NULL, qfalse, qfalse ) > 0 ) {
+				best = search;
+				bestRank = rank;
+			}
+		}
+	}
+	return best;
+}
+
+/*
+=================
+FS_CmodWanted
+
+Whether cMod's module may replace this one at all (the settings).
+=================
+*/
+static qboolean FS_CmodWanted( const char *name ) {
+	if ( !Com_Holomatch() ) {
+		return qfalse;
+	}
+	if ( !Q_stricmp( name, "qagame" ) ) {
+		return sv_cmodGame && sv_cmodGame->integer;
+	}
+	return qfalse;
+}
+
+/*
+=================
+FS_IsCmodVM
+
+Whether a VM was loaded from a cMod pak (vm->searchPath).
+=================
+*/
+qboolean FS_IsCmodVM( void *searchPath ) {
+	const searchpath_t *search = searchPath;
+
+	return search && search->pack && FS_CmodPakRank( search->pack ) ? qtrue : qfalse;
+}
+
+/*
 =================
 FS_VMSearchOrder
 
 The search paths in the order FS_FindVM tries them, into list (Z_Malloc'd,
-the caller frees it); returns how many.
+the caller frees it), starting with "first" if it isn't NULL; returns how many.
 
 Normally the search path order, with one change: when we're not on a pure
 server, the base game's other pk3s (any baseEF pk3 that isn't pak0-pak3)
@@ -1540,21 +1736,24 @@ and loose vm/ files keep their place. Same rule as cMod by Noah Metzger
 On a pure server the server's order applies, as before.
 =================
 */
-static int FS_VMSearchOrder( searchpath_t ***list ) {
+static int FS_VMSearchOrder( searchpath_t ***list, searchpath_t *first ) {
 	searchpath_t *search;
 	int count = 0, n = 0, pass;
 
 	for ( search = fs_searchpaths; search; search = search->next ) {
 		count++;
 	}
-	*list = Z_Malloc( ( count + 1 ) * sizeof( **list ) );
+	*list = Z_Malloc( ( count + 2 ) * sizeof( **list ) );
 
+	if ( first ) {
+		(*list)[n++] = first;
+	}
 	for ( pass = 0; pass < 2; pass++ ) {
 		for ( search = fs_searchpaths; search; search = search->next ) {
 			qboolean later = !fs_numServerPaks && search->pack && !FS_IsCorePak( search->pack )
 				&& !Q_stricmp( search->pack->pakGamename, com_basegame->string );
 
-			if ( later == ( pass == 1 ) ) {
+			if ( later == ( pass == 1 ) && search != first ) {
 				(*list)[n++] = search;
 			}
 		}
@@ -1615,7 +1814,7 @@ its VM didn't load), it goes on with the next one.
 
 int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, int enableDll)
 {
-	searchpath_t **list, *lastSearch;
+	searchpath_t **list, *lastSearch, *cmod;
 	char dllName[MAX_OSPATH], qvmName[MAX_OSPATH];
 	int count, i, retval = -1;
 
@@ -1628,7 +1827,30 @@ int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, i
 
 	Com_sprintf(qvmName, sizeof(qvmName), "vm/%s.qvm", name);
 
-	count = FS_VMSearchOrder( &list );
+	// cMod's module in place of the stock one (see "cMod game modules" above)
+	cmod = NULL;
+	if ( FS_CmodWanted( name ) ) {
+		searchpath_t *normal = NULL;
+
+		count = FS_VMSearchOrder( &list, NULL );
+		for ( i = 0; i < count && !normal; i++ ) {
+			if ( list[i]->pack && FS_FOpenFileReadDir( qvmName, list[i], NULL, qfalse, qfalse ) > 0 ) {
+				normal = list[i];
+			} else if ( list[i]->dir && !fs_numServerPaks && FS_VMInSearchPath( list[i], found, foundlen, dllName, qvmName, enableDll ) >= 0 ) {
+				break;	// a loose file (a developer's own build): leave it
+			}
+		}
+		Z_Free( list );
+		if ( normal && FS_IsStockVMPak( normal->pack ) ) {
+			cmod = FS_CmodVMSource( qvmName );
+			if ( cmod && !*startSearch ) {
+				Com_Printf( "Using cMod's %s (by Noah Metzger) from %s in place of %s\n", name,
+					cmod->pack->pakFilename, normal->pack->pakFilename );
+			}
+		}
+	}
+
+	count = FS_VMSearchOrder( &list, cmod );
 
 	lastSearch = *startSearch;
 	i = 0;
@@ -1644,7 +1866,7 @@ int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, i
 	{
 		searchpath_t *search = list[i];
 
-		if ( search->pack && lastSearch && lastSearch->pack )
+		if ( search->pack && lastSearch && lastSearch->pack && lastSearch != cmod )
 		{
 			// make sure we only try loading one VM file per game dir
 			// i.e. if VM from pak7.pk3 fails we won't try one from pak6.pk3
@@ -3509,6 +3731,13 @@ void FS_Shutdown( qboolean closemfp ) {
 		Z_Free(p);
 	}
 
+	for ( p = fs_cmodPaks; p; p = next ) {
+		next = p->next;
+		FS_FreePak( p->pack );
+		Z_Free( p );
+	}
+	fs_cmodPaks = NULL;
+
 	// any FS_ calls will now be an error until reinitialized
 	fs_searchpaths = NULL;
 
@@ -3704,6 +3933,13 @@ static void FS_Startup( const char *gameName )
 	if (fs_apppath->string[0])
 		FS_AddGameDirectory(fs_apppath->string, gameName);
 #endif
+	// cMod's game modules (see "cMod game modules"), Holomatch only
+	if ( Com_Holomatch() ) {
+		sv_cmodGame = Cvar_Get( "sv_cmodGame", "1", CVAR_ARCHIVE );
+		Cvar_SetDescription( sv_cmodGame, "Run cMod's qagame (by Noah Metzger) in place of the stock one, "
+			"when a cMod pak is installed. Takes effect at the next map." );
+	}
+	FS_LoadCmodPaks();
 
 	// NOTE: same filtering below for mods and basegame
 	if (fs_homepath->string[0] && Q_stricmp(fs_homepath->string,fs_basepath->string)) {
