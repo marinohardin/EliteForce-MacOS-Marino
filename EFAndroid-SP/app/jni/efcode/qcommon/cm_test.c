@@ -411,6 +411,37 @@ void	CM_AdjustAreaPortalState( int area1, int area2, qboolean open ) {
 
 /*
 ====================
+CM_PortalStateSize / CM_PortalState / CM_SetPortalState
+
+Single player saves: the raw areaportal reference counts, numAreas*numAreas ints. This is the
+SP save's 'PRTS' chunk (cm.areaPortals as-is, the same layout PC saves use), so PC saves
+restore their open doors too.
+====================
+*/
+int CM_PortalStateSize( void ) {
+	return cm.numAreas * cm.numAreas * (int)sizeof( *cm.areaPortals );
+}
+
+const int *CM_PortalState( void ) {
+	return cm.areaPortals;
+}
+
+qboolean CM_SetPortalState( const int *counts, int size ) {
+	int i, n = cm.numAreas * cm.numAreas;
+
+	if ( !counts || n <= 0 || size != CM_PortalStateSize() ) {
+		return qfalse;
+	}
+	for ( i = 0; i < n; i++ ) {
+		// a negative count would make the next close ERR_DROP; treat it as closed
+		cm.areaPortals[i] = counts[i] > 0 ? counts[i] : 0;
+	}
+	CM_FloodAreaConnections ();
+	return qtrue;
+}
+
+/*
+====================
 CM_AreasConnected
 
 ====================

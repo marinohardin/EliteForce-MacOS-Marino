@@ -51,6 +51,9 @@ int S_StopAllSoundsCount( void );	// times S_StopAllSounds has run (lets SP drop
 void S_PauseGameSounds( qboolean pause );
 // stop every sound effect and loop but leave the music and the raw streams playing (SP cutscene skip)
 void S_StopGameSounds( void );
+// single player lip sync: levels[ent] for every entity talking on CHAN_VOICE / CHAN_VOICE_ATTEN:
+// -1 quiet, 5..8 mouth shapes (head skin offsets), 0 not talking. qfalse when the backend can't.
+qboolean S_VoiceLipSync( int *levels, int numEntities );
 void S_ResetStaleSounds( void );	// on map load: unload sounds another mod/pk3 now replaces
 
 // all continuous looping sounds must be added before calling S_Update
