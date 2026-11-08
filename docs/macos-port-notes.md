@@ -1054,3 +1054,22 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 - **Gate.** `macos/regress.sh check coop-base` (baseline recorded at dbfb6a3 with `EF_COOP` OFF) after
   every batch, both for an OFF build and for `EF_COOP=1 REGRESS_ARGS="+set sp_coop 0"`.
   `REGRESS_ARGS` (new, default empty) adds arguments to every harness run.
+- **Player 2 puppet (B1).** `efgame/src/coop/coop_player.cpp`. With `sp_coop 1`, P2 spawns a few frames
+  after every level start (new game, load, map change) at a clear spot next to P1 (traces from P1, with
+  floor under it). It is a client entity with its own client struct (a static in the co-op module, never
+  in `level.clients`), no NPC struct, no ICARUS and no script name, so scripts keep finding only P1
+  ("Munro"). It looks like P1 (copied model info) and shares P1's weapons. Input: follow P1 (run toward
+  P1, hop when stuck, jump to P1 when stuck 3 s or more than 1024 units away), or the console commands
+  `coop_p2`, `coop_p2_follow`, `coop_p2_move`, `coop_p2_turn`, `coop_p2_fire`, `coop_p2_use`,
+  `coop_p2_weapon`, `coop_p2_tele`, `coop_p2_damage`. They are registered by the cgame (only with co-op
+  on) and reach the game through `ClientCommand`, because in SP the game's `ConsoleCommand` is only
+  reached while the HM server runs.
+- **Death.** `player_die` hands P2 to `COOP_P2Die` (no game over, no targets); a dead P2 never takes the
+  player respawn path (`load *respawn`), and comes back next to P1 after 4 s.
+- **Cameras.** `CGCam_Enable`/`CGCam_Disable` hide P2 (`SVF_NOCLIENT`, not solid, no damage, no target)
+  and show it again, back next to P1 if a script moved P1 away. P2 does not move while a camera runs and
+  obeys `player_locked`.
+- **Saves.** `WriteGEntities` skips P2; `COOP_PreSave` first clears every saved entity pointer to P2
+  (all `F_GENTITY` fields of the entity, NPC and client save tables; `activator` becomes P1), look
+  targets, alert-event owners and P2's timers. Tested: a save written in co-op loads in an `EF_COOP` OFF
+  build with no warnings and without the P2 entity.

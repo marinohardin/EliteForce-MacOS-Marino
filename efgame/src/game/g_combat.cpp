@@ -1,6 +1,7 @@
 // g_combat.c
 
 #include "g_local.h"
+#include "coop_public.h"
 #include "b_local.h"
 #include "g_functions.h"
 #include "anims.h"
@@ -476,6 +477,11 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 	int			contents;
 	qboolean	deathScript = qfalse;
 
+	if ( COOP_IsP2( self ) )
+	{
+		COOP_P2Die( self, attacker );	// no game over, no targets
+		return;
+	}
 	if ( self->client->ps.pm_type == PM_DEAD )
 		return;
 

@@ -2,6 +2,7 @@
 
 #include "cg_local.h"
 #include "../game/g_roff.h"
+#include "../game/coop_public.h"
 
 bool		in_camera = false;
 camera_t	client_camera={0};
@@ -97,6 +98,7 @@ void CGCam_Enable( void )
 		VectorClear( g_entities[0].client->ps.velocity );
 		g_entities[0].contents = 0;
 	}
+	COOP_OnCameraEnable();
 }
 /*
 -------------------------
@@ -123,6 +125,7 @@ void CGCam_Disable( void )
 	{
 		g_entities[0].contents = MASK_PLAYERSOLID;
 	}
+	COOP_OnCameraDisable();
 
 	gi.SendServerCommand( NULL, "cts");
 

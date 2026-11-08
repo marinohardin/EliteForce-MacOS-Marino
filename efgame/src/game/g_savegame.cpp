@@ -4,6 +4,7 @@
 #include "g_local.h"
 #include "fields.h"
 #include "objectives.h"
+#include "coop_public.h"
 #include "../cgame/cg_camera.h"
 
 
@@ -653,6 +654,10 @@ void WriteGEntities(qboolean qbAutosave)
 	{
 		gentity_t* ent = &g_entities[i];
 
+		if ( COOP_IsP2( ent ) )
+		{
+			continue;	// player 2 is never saved
+		}
 		if ( ent->inuse ) 
 		{
 			iCount++;
@@ -665,6 +670,10 @@ void WriteGEntities(qboolean qbAutosave)
 	{
 		gentity_t* ent = &g_entities[i];
 
+		if ( COOP_IsP2( ent ) )
+		{
+			continue;
+		}
 		if ( ent->inuse)
 		{
 			gi.AppendToSaveGame('EDNM', (void *)&i, sizeof(i));
@@ -930,6 +939,8 @@ extern int	BMS_MID;	//from g_mover
 
 void WriteLevel(qboolean qbAutosave)
 {
+	COOP_PreSave();
+
 	if (!qbAutosave) //-always save the client
 	{
 		// write out one client - us!
