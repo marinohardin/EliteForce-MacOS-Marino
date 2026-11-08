@@ -1106,6 +1106,40 @@ int SV_FrameMsec()
 
 /*
 ==================
+SV_RegressFrame
+
+The regression harness (qcommon/regress.c, macos/regress.sh): log the network-visible state of
+every entity and client after a game frame. Does nothing unless +set regress_log.
+==================
+*/
+static void SV_RegressFrame( void ) {
+	char	buf[4096];
+	int		i;
+
+	if ( !Regress_Active() ) {
+		return;
+	}
+	Regress_BeginFrame( sv_mapname->string, sv.time );
+	for ( i = 0; i < sv.num_entities; i++ ) {
+		sharedEntity_t *ent = SV_GentityNum( i );
+		if ( !ent->r.linked && !( i < sv_maxclients->integer && svs.clients[i].state >= CS_CONNECTED ) ) {
+			continue;
+		}
+		MSG_RegressFields( &ent->s, NULL, buf, sizeof( buf ) );
+		Regress_State( 0, i, buf );
+	}
+	for ( i = 0; i < sv_maxclients->integer; i++ ) {
+		if ( svs.clients[i].state < CS_CONNECTED ) {
+			continue;
+		}
+		MSG_RegressFields( NULL, SV_GameClientNum( i ), buf, sizeof( buf ) );
+		Regress_State( 1, i, buf );
+	}
+	Regress_EndFrame();
+}
+
+/*
+==================
 SV_Frame
 
 Player movement occurs as a result of packet events, which
@@ -1154,6 +1188,7 @@ void SV_Frame( int msec ) {
 
 	sv.timeResidual += msec;
 
+	Regress_SeedRand( sv.time );	// regression harness: the botlib's rand() (no-op when off)
 	if (!com_dedicated->integer) SV_BotFrame (sv.time + sv.timeResidual);
 
 	// if time is about to hit the 32nd bit, kick all clients
@@ -1203,7 +1238,11 @@ void SV_Frame( int msec ) {
 		// EF1 SP: when the SP bridge owns the simulation, do NOT tick the parallel HM qagame —
 		// it runs doors/movers on the same CM and corrupts the shared area-portal ref counts
 		// (CM_AdjustAreaPortalState negative reference count crash), and wastes CPU (lag).
-		if ( !SP_IsActive() ) VM_Call (gvm, GAME_RUN_FRAME, sv.time);
+		if ( !SP_IsActive() ) {
+			Regress_SeedRand( sv.time );
+			VM_Call (gvm, GAME_RUN_FRAME, sv.time);
+			SV_RegressFrame();
+		}
 	}
 
 	if ( com_speeds->integer ) {
@@ -1237,6 +1276,12 @@ int SV_RateMsec(client_t *client)
 	int rate, rateMsec;
 	int messageSize;
 	
+	// regression harness (qcommon/regress.c): no wall-clock pacing, so a connecting client's
+	// gamestate fragments arrive on the same frame every run
+	if ( Regress_Active() ) {
+		return 0;
+	}
+
 	messageSize = client->netchan.lastSentSize;
 	rate = client->rate;
 

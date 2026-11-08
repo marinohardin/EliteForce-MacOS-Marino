@@ -95,6 +95,13 @@ extern "C" {
     void  Cvar_Register( vmCvar_t *vmCvar, const char *varName, const char *defaultValue, int flags );
     void  Cvar_Update( vmCvar_t *vmCvar );
     void  Cmd_ArgsBuffer( char *buffer, int bufferLength );
+    // qcommon/regress.c: the regression harness (macos/regress.sh), all no-ops unless +set regress_log
+    qboolean Regress_Active( void );
+    int   Regress_Seed( void );
+    void  Regress_SeedRand( int gameTime );
+    void  Regress_BeginFrame( const char *map, int gameTime );
+    void  Regress_State( int kind, int num, const char *fields );
+    void  Regress_EndFrame( void );
 }
 
 // ---- game module ----
@@ -113,6 +120,10 @@ static vmMain_t g_vmMain = NULL;
 // directly because vmMain's int arguments can't carry a 64-bit pointer. NULL if the module lacks it.
 typedef int (*camPos_t)( float *pos );
 static camPos_t g_camPos = NULL;
+// The game's state dump for the regression harness (g_regress.cpp G_RegressDump), called after every
+// game frame when the harness is on (SP_GameRunFrame). NULL if the module lacks it.
+typedef void (*regressDump_t)( void (*emit)( int kind, int num, const char *fields ) );
+static regressDump_t g_regressDump = NULL;
 static intptr_t SP_VmMain( int cmd, int a0=0, int a1=0, int a2=0, int a3=0, int a4=0, int a5=0, int a6=0, int a7=0 ){
     return g_vmMain( cmd, a0, a1, a2, a3, a4, a5, a6, a7 );
 }
@@ -589,6 +600,19 @@ static void SP_UpdateVoiceOverride(void){
     }
 }
 
+// One game frame at g_levelTime. With the regression harness on (qcommon/regress.c), rand() is
+// reseeded first and the game's state is logged after; otherwise this is just the voice update +
+// ge->RunFrame it always was.
+static void SP_GameRunFrame(void){
+    Regress_SeedRand( g_levelTime );
+    SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+    if( Regress_Active() && g_regressDump ){
+        Regress_BeginFrame( g_curMap, g_levelTime );
+        g_regressDump( Regress_State );
+        Regress_EndFrame();
+    }
+}
+
 // Fully UNLOAD libefgame so the next dlopen returns an OS-zeroed module. Retail reloads the game+cgame DLL
 // on every map (FreeLibrary+LoadLibrary), which is what produced "fresh per-map state" — code never bulk-
 // memsets cg/cgs/level. This port previously REUSED the .so, so every global the authors assumed the loader
@@ -649,6 +673,7 @@ extern "C" qboolean SP_LoadGame( const char *solib ){
     if(dllEntry) dllEntry(SP_CgameSyscall);
     g_vmMain = (vmMain_t)dlsym(g_lib, "_Z6vmMainiiiiiiiii");
     g_camPos = (camPos_t)dlsym(g_lib, "_Z15CG_GetCameraPosPf");   // optional (snapshot loop-sound culling)
+    g_regressDump = (regressDump_t)dlsym(g_lib, "G_RegressDump");  // optional (the regression harness)
     blog("SP_LoadGame: ge=%p apiversion=%d gentitySize=%d\n", (void*)ge, ge->apiversion, ge->gentitySize);
     return (ge->apiversion==GAME_API_VERSION) ? qtrue : qfalse;
 }
@@ -716,7 +741,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     // — needed for the renderer world load (Route b) AND the cgame levelshot / mission-info text.
     snprintf(g_configstrings[CS_SERVERINFO], sizeof(g_configstrings[0]), "\\mapname\\%s\\sv_maxclients\\1", mapname);
     if(!ge){ bwarn("no game loaded\n"); return qfalse; }
-    ge->Init( mapname, "", checksum, entstring, g_levelTime, Sys_Milliseconds(), Sys_Milliseconds(),
+    ge->Init( mapname, "", checksum, entstring, g_levelTime, Regress_Active() ? Regress_Seed() : Sys_Milliseconds(), Sys_Milliseconds(),
               (SavedGameJustLoaded_e)0, qfalse );
     blog("SP_SpawnServer: ge->Init done. num_entities=%d linked=%d\n", ge->num_entities, g_numLinked);
     SP_RunFrames( SP_SETTLE_FRAMES );   // retail SV_SpawnServer settle frames, before SP_StartClient connects the player
@@ -738,7 +763,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
 // NPC_Begin here (with its beam-in event), movers and spawn scripts start, and the player isn't in the level
 // yet. Same order as retail: RunFrame at the current time, then advance by 100.
 extern "C" void SP_RunFrames( int n ){
-    for(int i=0;i<n;i++){ SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime); g_levelTime += 100; }
+    for(int i=0;i<n;i++){ SP_GameRunFrame(); g_levelTime += 100; }
     blog("SP_RunFrames: settled %d frames, levelTime now %d, num_entities=%d\n", n, g_levelTime, ge->num_entities);
 }
 
@@ -770,8 +795,9 @@ static void SP_SettleClient( int ticks ){
         g_levelTime += SP_SV_FRAMEMSEC;
         g_cmdNum++;
         g_lastcmd.serverTime = g_levelTime;
+        Regress_SeedRand( g_levelTime );
         ge->ClientThink(0, &g_lastcmd);
-        SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+        SP_GameRunFrame();
     }
     if(p0->client) g_weaponSelect = ((playerState_t*)p0->client)->weapon;
     blog("SP_SettleClient: %d ticks, levelTime now %d\n", ticks, g_levelTime);
@@ -1378,7 +1404,7 @@ extern "C" qboolean SP_FinishTransition(void){
         g_levelTime = 1000;
     }
     ge->Init(g_transMap, g_transSpawn, checksum, entstring, g_levelTime,
-             Sys_Milliseconds(), Sys_Milliseconds(), sg, g_transHub ? qtrue : qfalse);
+             Regress_Active() ? Regress_Seed() : Sys_Milliseconds(), Sys_Milliseconds(), sg, g_transHub ? qtrue : qfalse);
     // Fresh spawn (eAUTO: forward transition or autosave load): retail SV_SpawnServer's settle frames, before the
     // player connects. Not for an eFULL user load: ReadLevel below replaces every entity with the saved, already
     // settled ones, so frames run on the fresh spawn would only start scripts that the load then throws away.
@@ -1454,7 +1480,7 @@ extern "C" qboolean SP_FinishTransition(void){
     // Fresh spawn: let the player land and the spawn scripts/events play out before the first snapshot (the load
     // screen stays up, see SP_SettleClient). An eFULL load shows the saved moment as it was, with one frame.
     if( sg == eAUTO ) SP_SettleClient( SP_SETTLE_CLIENT_TICKS );
-    else { SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime); }
+    else { SP_GameRunFrame(); }
     BuildSnapshot();
     BuildGameState();                   // rebuild AFTER ClientBegin so CS_PLAYERS+0 (player model) is in the
                                         // gamestate the cgame reads at CG_INIT (no live CG_CONFIGSTRING path)
@@ -1819,8 +1845,9 @@ extern "C" void SP_ClientFrames(int n){
         g_levelTime += 50;
         g_lastcmd.serverTime = g_levelTime;
         g_cmdNum++;
+        Regress_SeedRand( g_levelTime );
         ge->ClientThink(0, &g_lastcmd);
-        SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+        SP_GameRunFrame();
         BuildSnapshot();
         // Trail cg.time by one tick (clamped to snap #1) so priming frames present a valid snap/nextSnap
         // pair, matching SP_DrawFrame. With only one snap so far the clamp pins cg.time to base (nextSnap
@@ -1915,6 +1942,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     if(lastReal == 0) lastReal = now;
     int delta = now - lastReal; lastReal = now;
     if(delta < 1) delta = 1; if(delta > 100) delta = 100;   // clamp hitches (no >100ms sim jumps)
+    if( Regress_Active() ) delta = SP_SV_FRAMEMSEC;          // regression harness: one game frame per drawn frame
 
     // PAUSE when the in-game menu (ESC), the console or an in-game movie is up: retail SP pauses the
     // server; our loopback has no server, so freeze the sim here -- do NOT advance g_levelTime or run
@@ -2023,8 +2051,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         g_levelTime   += SP_SV_FRAMEMSEC;
         g_cmdNum++;
         g_lastcmd.serverTime = g_levelTime;
+        Regress_SeedRand( g_levelTime );
         ge->ClientThink(0, &g_lastcmd);
-        SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+        SP_GameRunFrame();
         BuildSnapshot();
         if( skipping ){
             if( !Cvar_VariableIntegerValue("skippingCinematic") || g_spMovieQueued ){

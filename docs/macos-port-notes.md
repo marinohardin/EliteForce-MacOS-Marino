@@ -767,3 +767,77 @@ Our own fixes (not from cMod), from the SP player report.
   frame in borg2 and 0.6 ms in hm_voy1 at 1080p (uncapped, `com_speeds`; noisy).
 - **Not tested**: the in-game options menus showing Light Flares On (they read `r_flares`, so
   by reading the code), Holomatch's own UI, other SP camera scenes, 21:9 screens, and feel.
+
+## Regression harness: `macos/regress.sh` (2026-11-07)
+
+Our own tool (not from cMod). It checks that a change leaves single player and Holomatch game logic
+exactly as they were. It runs fixed scenarios and logs the game state every frame. Then it compares that
+log with a baseline recorded from another build.
+
+**Usage** (also at the top of the script):
+
+    macos/regress.sh record [NAME]   # run all scenarios with the current build -> baseline NAME
+    macos/regress.sh check [NAME]    # run them again and compare (default: the newest baseline)
+    macos/regress.sh list
+
+`NAME` defaults to `git describe --always --dirty`, so each commit or build gets its own baseline.
+Baselines live in `~/Library/Caches/VoyagerSP-regress/` (`REGRESS_DIR`), never in the repo. The usual
+workflow: build the base commit and `record`, then build your change and `check`. The script assembles its
+own "EF Test Regression" app (`org.voyagersp.testregress`) from `build-macos` and `efgame/buildmac`
+and deletes it afterwards. To use your own test app, pass `APP=<path.app>`. `SCENARIOS="sp-save hm-listen"`
+runs a subset. Each run gets a fresh scratch HOME with symlinks to pak0-pak3. Nothing touches the real
+game folder, its configs or its saves. `check` prints `identical` per scenario, or the first
+frame that differs with each changed entity and field (`health: 60 -> 55`). It exits 1 if anything
+differed or a run didn't finish.
+
+**Scenarios.** `sp-borg1`: new game on borg1, 2000 frames (the intro cutscene, ICARUS, NPCs).
+`sp-save`: a voy1 save, 600 frames of scripted play. By default it uses your newest voy1 save. `record`
+copies it into the baseline, and `check` loads that copy. `sp-transition`: borg1, `maptransition borg2`
+at frame 40, to frame 400. `hm-listen`: a Holomatch listen server on hm_voy1 with 3 bots and the
+local client connecting and playing, 1200 frames. `hm-dedicated`: a dedicated server, 3 bots, port
+27980, 1200 frames.
+
+**Engine hooks** (`qcommon/regress.c`). They are off unless the command line sets `+set regress_log <file>`
+(CVAR_INIT). When it's off, every hook returns at once. When it's on:
+- **Time step.** Each engine frame is exactly one 50 ms game frame (`Com_ModifyMsec`;
+  `SP_DrawFrame`'s delta). `Com_Frame` doesn't wait for the clock, and the server doesn't pace a
+  client's packets on the wall clock (`SV_RateMsec`).
+- **Seeds.** InitGame's seed is `regress_seed` (`sv_game.c`, `SP_SpawnServer`, `SP_FinishTransition`).
+  libc `rand()` is reseeded from the seed plus the game time before every game frame and ClientThink.
+  That covers the SP game, the botlib and engine draws in between.
+- **Input.** `CL_CreateCmd` replaces the local player's usercmd with a pattern based on the frame
+  number: walk, strafe, turn, jump, crouch, fire.
+- **Fingerprint.** Single player: the bridge's `SP_GameRunFrame` (it now wraps every `ge->RunFrame`)
+  calls the game's `G_RegressDump` (`efgame/src/game/g_regress.cpp`, found with dlsym). For each
+  in-use entity it records the class, origin, angles, health, flags, think, mover, animation, event,
+  enemy, the ICARUS task IDs and the NPC behaviour state. For each client it records the player state.
+  Holomatch: `SV_RegressFrame` logs every linked entity's `entityState_t` and every client's
+  `playerState_t`, with all networked fields from msg.c's tables (`MSG_RegressFields`) except ping.
+  A line is written only when an entity changed. Times that just follow the clock are logged
+  relative to it.
+- **No dialogs.** The runner starts the game with `VOYAGERSP_TEST_NODIALOG=1`. With it, `Sys_Dialog`
+  (`sys_osx.m`) prints to stderr instead of showing an alert, as a dedicated server already did. A fatal
+  error ends the run with exit code 3, and `check` reports it as FAILED. The runner checks every
+  scratch HOME's pak symlinks before it launches. On exit or interrupt, it waits for its game process to
+  quit before it deletes the scratch folder.
+- `regress_frames` sets the number of frames before it quits. `regress_cmdframe`/`regress_cmd` run a
+  command at a given frame (the transition).
+
+**Runtime**: about 55 s for all five scenarios (borg1 21 s, save 8 s, transition 8 s, listen 13 s,
+dedicated 2 s), plus about 5 s to assemble the app. Baselines are about 1.6 MB gzipped.
+
+**Limits.** It doesn't check rendering, sound, music, the UI and menus, real input handling, network
+timing or the cgame. It also misses game state the fingerprint leaves out: QVM-private Holomatch
+data, and SP fields that aren't listed. It covers only what the scenarios reach. The SP and listen
+runs open a window: don't touch it, since Esc or the console would pause SP. A game change that adds
+rand() calls or moves them shifts everything after that point. That is a real difference, but a large
+one. The sp-save baseline needs a voy1 save (`REGRESS_SAVE=<file.sav>` picks one).
+
+Tested: `record` and then `check` on the same build gave identical results in all five scenarios,
+with the same hashes on three separate builds. A 1% gravity tweak in `PM_SlideMove` (efgame) was
+caught in all three SP scenarios, for example in sp-save at frame 10, player `org` z
+572.375 -> 572.36499 and `vel` 185 -> 184. Both Holomatch runs stayed identical, which is correct:
+Holomatch runs the retail QVM. Changing `SURFACE_CLIP_EPSILON` from 0.125 to 0.126 (engine) was caught
+in all five, at frame 0 or 2. Before `SV_RateMsec` stopped pacing in harness mode, hm-listen varied by
+one frame in when the client spawned. A missing pak0 now exits with code 3 and no alert. Not verified:
+runs on another Mac or another macOS version.

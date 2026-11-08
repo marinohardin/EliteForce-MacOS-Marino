@@ -110,8 +110,10 @@ dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *t
 	NSAlert *alert;
 
 	// a dedicated server has no UI: say it on stderr and take the default
-	// (No for a question)
-	if( sys_headless )
+	// (No for a question). VOYAGERSP_TEST_NODIALOG=1 does the same for test runs
+	// (macos/regress.sh), so an error ends the run with a log line and exit code
+	// instead of waiting on a modal alert.
+	if( sys_headless || getenv( "VOYAGERSP_TEST_NODIALOG" ) )
 	{
 		fprintf( stderr, "%s: %s\n", title, message );
 		return type == DT_YES_NO ? DR_NO : type == DT_OK_CANCEL ? DR_CANCEL : DR_OK;

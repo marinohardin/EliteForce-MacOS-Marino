@@ -616,6 +616,14 @@ usercmd_t CL_CreateCmd( void ) {
 	// store out the final values
 	CL_FinishMove( &cmd );
 
+	// regression harness (qcommon/regress.c): scripted input in place of the keyboard and mouse
+	if ( Regress_Active() ) {
+		int angles[3], buttons;
+		Regress_Usercmd( angles, &cmd.forwardmove, &cmd.rightmove, &cmd.upmove, &buttons );
+		cmd.angles[0] = angles[0]; cmd.angles[1] = angles[1]; cmd.angles[2] = angles[2];
+		cmd.buttons = buttons;
+	}
+
 	// draw debug graphs of turning for mouse testing
 	if ( cl_debugMove->integer ) {
 		if ( cl_debugMove->integer == 1 ) {

@@ -965,7 +965,8 @@ static void SV_InitGameVM( qboolean restart ) {
 	
 	// use the current msec count for a random seed
 	// init for this gamestate
-	VM_Call (gvm, GAME_INIT, sv.time, Com_Milliseconds(), restart);
+	// the regression harness (qcommon/regress.c) fixes the game's random seed
+	VM_Call (gvm, GAME_INIT, sv.time, Regress_Active() ? Regress_Seed() : Com_Milliseconds(), restart);
 }
 
 
