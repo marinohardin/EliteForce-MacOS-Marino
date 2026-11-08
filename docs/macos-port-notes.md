@@ -841,3 +841,44 @@ Holomatch runs the retail QVM. Changing `SURFACE_CLIP_EPSILON` from 0.125 to 0.1
 in all five, at frame 0 or 2. Before `SV_RateMsec` stopped pacing in harness mode, hm-listen varied by
 one frame in when the client spawned. A missing pak0 now exits with code 3 and no alert. Not verified:
 runs on another Mac or another macOS version.
+
+## Holomatch: cMod's game modules, widescreen HUD and lag compensation (2026-11-07)
+
+All of this is from cMod by Noah Metzger (Chomenor). He gave permission to ship his released
+game modules (`pakcmod-release-*.pk3`, built under the STEF Game Source License). The app bundles
+one in `Resources/cmod/` with its license and a README (`macos/make-app.sh`, `CMOD_PAK`). The pk3
+is not in git (`*.pk3` is ignored); put the release in `macos/cmod/` before building the app.
+
+- **VM order.** In Holomatch the game's own paks (pak0-pak3, by checksum) are searched first for
+  cgame/ui/qagame, so add-ons like tfgpak or `vm.pk3` no longer replace the stock modules by name
+  order. A mod folder's own modules still win, and pure servers still pick the server's paks.
+- **Recognition by hash.** cMod's releases are known by checksum (the list cMod's engine uses,
+  2021-09-18 to 2025-12-16). The bundled pk3 is loaded privately: it is never in the search path,
+  never referenced, offered for download or listed in `sv_paks`, so stock clients are not pushed it.
+- **Servers** (`sv_cmodGame`, default 1): dedicated servers and Host a Server run cMod's qagame.
+  Config... > cMod sets Run cMod's game code, Lag compensation (`g_unlagged`: Off, Instant-hit
+  weapons (default), All weapons), Smooth other players' movement (`g_smoothClients` 1) and Let
+  cMod players see their own shots at once (`g_unlaggedPredict` 1). Test hook tab name: `cmod`.
+- **Clients** (`cl_cmodModules`, default 1; launcher "Use cMod's game modules, by Noah Metzger"):
+  on non-pure servers the client runs cMod's cgame and ui. On pure servers the server's modules
+  run, as before. A mod's own cgame/ui is replaced only when the server's `!modcfg` configstring
+  asks for cMod's (`nativeCgame`/`nativeUI` 2).
+- **Widescreen.** Our 640x480 flexible-display layer is off for cMod's modules only; they draw
+  with the real screen size. `cg_aspectCorrect` defaults to 1 in Holomatch (as in cMod's engine).
+  The Holomatch video-mode list (HMVideo) is off for cMod's ui. Launcher HUD... sheet: Widescreen
+  (`cg_aspectCorrect`), HUD position Edges to Middle (`cg_aspectCorrectCenterHud`, written only
+  when moved) and weapon prediction (`cg_predictWeapons`). Stock modules look exactly as before.
+- **GetValue.** cMod's modules ask the engine which options it has through a call whose number
+  is in the cvar `//trap_GetValue` (700). `CL_CmodGetValue` answers only cMod's modules and only
+  for what this engine has: our version string, the brightness settings the renderer already
+  ported from cMod, `r_swapInterval`, anisotropy, multisample (`r_ext_multisample`), JPEG
+  screenshots, OpenAL, and "skip" keys for settings this engine lacks (`r_glDriver`, color/depth/
+  stencil bits, `r_lowEndVideo`, `s_khz`, `k_language`, A3D). Renderer choice, framebuffer, raw
+  mouse and windowed-only `r_mode` stay unanswered.
+
+Regression harness: Holomatch scenarios set `sv_cmodGame 0` and `cl_cmodModules 0`, so the
+stock path stays recorded and comparable; `REGRESS_CMOD=1` keeps cMod's modules on. With cMod's
+qagame the listen and dedicated scenarios differ from frame 0, as expected (different game code).
+
+Known, unchanged: a pure server references tfgpak for cgame/ui by name order, so a client can
+download tfgpak and run its cgame. Pure servers stay as they were.
