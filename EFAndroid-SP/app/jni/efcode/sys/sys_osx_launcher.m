@@ -19,6 +19,8 @@ menu does). It offers:
     a brightness preset (Standard, or cMod's Plain, Full Contrast, Extra Bright
     and Full Bright, from cMod by Noah Metzger; see "Brightness" below);
   - the Holomatch player name;
+  - cMod's game modules by Noah Metzger (Contents/Resources/cmod): use them
+    (cl_cmodModules), see qcommon/files.c;
   - where the game files are (sys_osx_data.m's lookup and chooser);
   - a notice in the header when a newer release is on GitHub (see "Updates").
 Play appends +set com_holomatch, the graphics cvars, the name and
@@ -616,6 +618,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSButton *retina, *vsync;
 	NSTextField *nameLabel, *name, *nameHint, *mastersSummary;
 	NSButton *loopbackFix;
+	NSButton *cmodModules;			// cl_cmodModules (cMod's game modules, by Noah Metzger)
+	NSTextField *cmodLabel;
 	NSString *joinAddress, *joinPassword;	// from Browse…: connect there on Play
 	NSImageView *folderIcon, *statusIcon;
 	NSTextField *folderPath, *status;
@@ -654,6 +658,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	VSP_StartPublicAddressLookup();		// for the Loopback Host Fix
 
 	hm = ReadConfig( ConfigPath( YES ) );
+	[cmodModules setState: CfgInt( hm, @"cl_cmodmodules", 1 ) ? NSControlStateValueOn : NSControlStateValueOff];
 	[name setStringValue: hm[@"name"] && ![hm[@"name"] isEqualToString: @"UnnamedPlayer"] ? hm[@"name"] : DefaultPlayerName()];
 
 	[self refreshData];
@@ -862,13 +867,20 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		[loopbackFix setState: VSP_LoopbackFix() ? NSControlStateValueOn : NSControlStateValueOff];
 		[loopbackFix setToolTip: @"Most routers don't route this Mac back to its own public address, so a server "
 			@"hosted here wouldn't answer in your own internet lists. This lists it as this Mac (127.0.0.1) instead."];
+		// From cMod by Noah Metzger (Chomenor): his game modules, bundled with his permission
+		cmodLabel = VSP_Label( @"Game modules:", [NSFont systemFontOfSize: 13], nil );
+		cmodModules = [NSButton checkboxWithTitle: @"Use cMod's game modules, by Noah Metzger" target: nil action: nil];
+		[cmodModules setToolTip: @"cMod's cgame and ui in place of the original ones (not on pure servers, and never "
+			@"in place of a mod's own): a widescreen HUD and menus, weapon fire prediction and many fixes."];
 		nameGrid = [NSGridView gridViewWithViews: @[ @[ nameLabel, name ], @[ [NSGridCell emptyContentView], nameHint ],
 			@[ VSP_Label( @"Internet games:", [NSFont systemFontOfSize: 13], nil ), row ],
 			@[ [NSGridCell emptyContentView], loopbackFix ],
 			@[ [NSGridCell emptyContentView], VSP_Label( @"Shows a server you host on this Mac in your own internet lists.",
-				[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ] ]];
+				[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ],
+			@[ cmodLabel, cmodModules ] ]];
 		[[nameGrid rowAtIndex: 2] setTopPadding: 8];
 		[[nameGrid rowAtIndex: 3] setTopPadding: 4];
+		[[nameGrid rowAtIndex: 5] setTopPadding: 8];
 	}
 	[nameGrid setRowSpacing: 4];
 	[nameGrid setColumnSpacing: 10];
@@ -1068,6 +1080,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		cards[i].selected = i == m;
 	[name setEnabled: client || host];
 	[nameLabel setTextColor: client || host ? [NSColor labelColor] : [NSColor tertiaryLabelColor]];
+	[cmodModules setEnabled: ( client || host ) && VSP_CmodAvailable()];
+	[cmodLabel setTextColor: ( client || host ) && VSP_CmodAvailable() ? [NSColor labelColor] : [NSColor tertiaryLabelColor]];
 	[nameHint setStringValue: client ? @"Shown to other players in Holomatch." :
 		host ? @"Your name when you use Play on This Mac." : @"Used when you play Holomatch."];
 	[playButton setTitle: client ? @"Play Holomatch" : host ? @"Start Server" : @"Play"];
@@ -1384,6 +1398,15 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 - (NSString *)basepath	{ return basepath; }
 - (NSString *)dataFolder	{ return dataFolder; }
 
+// cMod's game modules (by Noah Metzger): whether to use them. Without them in the
+// app, nothing is passed (the engine has nothing to use anyway).
+- (NSArray<NSString *> *)cmodArgs
+{
+	if( !VSP_CmodAvailable() )
+		return @[];
+	return @[ @"+set", @"cl_cmodModules", [cmodModules state] == NSControlStateValueOn ? @"1" : @"0" ];
+}
+
 // What a Holomatch client started from here gets: the graphics and the name.
 - (NSArray<NSString *> *)clientArgs
 {
@@ -1395,6 +1418,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		@"+set", @"r_fbo", @"1", @"+set", @"r_ext_multisample", @( gfx.msaa ).stringValue,
 		@"+set", @"name", VSP_CleanName( [name stringValue] ) ]];
 	[a addObjectsFromArray: BrightnessArgs( gfx.brightness, 600 )];	// leaves room for the rest
+	[a addObjectsFromArray: [self cmodArgs]];
 	if( basepath )
 		[a addObjectsFromArray: @[ @"+set", @"fs_basepath", basepath ]];
 	if( VSP_WriteMastersConfig() )
@@ -1422,6 +1446,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	// (after the rest, which then can't be crowded out)
 	if( holomatch )
 		[args appendFormat: @"+set name \"%@\" ", VSP_CleanName( [name stringValue] )];
+	if( holomatch )
+		for( NSString *arg in [self cmodArgs] )
+			[args appendFormat: @"%@ ", arg];
 	if( basepath )
 		[args appendFormat: @"+set fs_basepath \"%@\" ", basepath];
 	// the Servers… list: sv_master1-16 in a cfg file (too long for this line)

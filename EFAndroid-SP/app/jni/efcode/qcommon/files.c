@@ -276,6 +276,7 @@ static	searchpath_t	*fs_searchpaths;
 static	searchpath_t	*fs_cmodPaks;		// the app bundle's cMod paks, never in fs_searchpaths
 static	cvar_t		*sv_cmodGame;
 static	cvar_t		*cl_cmodModules;
+static	int			fs_cmodNativeCgame, fs_cmodNativeUI;	// the server's !modcfg nativeCgame / nativeUI
 
 static pack_t *FS_LoadZipFile( const char *zipfile, const char *basename );
 static void FS_FreePak( pack_t *thepak );
@@ -1545,7 +1546,12 @@ prediction, many fixes). Like his engine, we recognize them by checksum
 (file names don't matter) and use their modules in place of the stock ones:
 - qagame (a server, Host a Server or the game's own Create Server): when the
   normal pick is the stock one, and sv_cmodGame is on (default);
-- cgame and ui: see FS_CmodClientVM (part of the client work).
+- cgame and ui (the client): when not on a pure server, cl_cmodModules is on
+  (default), and the normal pick is the stock one, or the server asks for
+  cMod's (its "!modcfg" configstring says nativeCgame / nativeUI 2). A mod's
+  own cgame or ui is otherwise never replaced. (nativeX 1, "if the server's
+  module isn't trusted", does nothing here, as in cMod without its VM
+  permission checks.) Pure servers get the server's modules, as before.
 The paks come from the app bundle (Contents/Resources/cmod, see
 FS_LoadCmodPaks), kept off the search path so a server never lists them,
 references them or offers them for download; one copied into a game folder
@@ -1696,14 +1702,42 @@ FS_CmodWanted
 Whether cMod's module may replace this one at all (the settings).
 =================
 */
-static qboolean FS_CmodWanted( const char *name ) {
+static qboolean FS_CmodWanted( const char *name, qboolean *serverAsks ) {
+	int native;
+
+	*serverAsks = qfalse;
 	if ( !Com_Holomatch() ) {
 		return qfalse;
 	}
 	if ( !Q_stricmp( name, "qagame" ) ) {
 		return sv_cmodGame && sv_cmodGame->integer;
 	}
-	return qfalse;
+	if ( !Q_stricmp( name, "cgame" ) ) {
+		native = fs_cmodNativeCgame;
+	} else if ( !Q_stricmp( name, "ui" ) ) {
+		native = fs_cmodNativeUI;
+	} else {
+		return qfalse;
+	}
+	if ( !cl_cmodModules || !cl_cmodModules->integer || fs_numServerPaks ) {
+		return qfalse;
+	}
+	*serverAsks = native == 2;
+	return qtrue;
+}
+
+/*
+=================
+FS_SetCmodModcfg
+
+From cMod by Noah Metzger (Chomenor): the server's wishes from its "!modcfg"
+configstring (nativeCgame / nativeUI: 2 = always use cMod's module), for the
+next cgame/ui load. Called with 0, 0 when we're not connected.
+=================
+*/
+void FS_SetCmodModcfg( int nativeCgame, int nativeUI ) {
+	fs_cmodNativeCgame = nativeCgame;
+	fs_cmodNativeUI = nativeUI;
 }
 
 /*
@@ -1815,6 +1849,7 @@ its VM didn't load), it goes on with the next one.
 int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, int enableDll)
 {
 	searchpath_t **list, *lastSearch, *cmod;
+	qboolean serverAsks;
 	char dllName[MAX_OSPATH], qvmName[MAX_OSPATH];
 	int count, i, retval = -1;
 
@@ -1829,7 +1864,7 @@ int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, i
 
 	// cMod's module in place of the stock one (see "cMod game modules" above)
 	cmod = NULL;
-	if ( FS_CmodWanted( name ) ) {
+	if ( FS_CmodWanted( name, &serverAsks ) ) {
 		searchpath_t *normal = NULL;
 
 		count = FS_VMSearchOrder( &list, NULL );
@@ -1841,11 +1876,12 @@ int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, i
 			}
 		}
 		Z_Free( list );
-		if ( normal && FS_IsStockVMPak( normal->pack ) ) {
+		if ( serverAsks || ( normal && FS_IsStockVMPak( normal->pack ) ) ) {
 			cmod = FS_CmodVMSource( qvmName );
 			if ( cmod && !*startSearch ) {
-				Com_Printf( "Using cMod's %s (by Noah Metzger) from %s in place of %s\n", name,
-					cmod->pack->pakFilename, normal->pack->pakFilename );
+				Com_Printf( "Using cMod's %s (by Noah Metzger) from %s in place of %s%s\n", name,
+					cmod->pack->pakFilename, normal ? normal->pack->pakFilename : "the server's",
+					serverAsks ? " (the server asks for it)" : "" );
 			}
 		}
 	}
@@ -3938,6 +3974,9 @@ static void FS_Startup( const char *gameName )
 		sv_cmodGame = Cvar_Get( "sv_cmodGame", "1", CVAR_ARCHIVE );
 		Cvar_SetDescription( sv_cmodGame, "Run cMod's qagame (by Noah Metzger) in place of the stock one, "
 			"when a cMod pak is installed. Takes effect at the next map." );
+		cl_cmodModules = Cvar_Get( "cl_cmodModules", "1", CVAR_ARCHIVE );
+		Cvar_SetDescription( cl_cmodModules, "Use cMod's cgame and ui (by Noah Metzger) in place of the stock ones, "
+			"when a cMod pak is installed and the server isn't pure. Takes effect at the next map or vid_restart." );
 	}
 	FS_LoadCmodPaks();
 

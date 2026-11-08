@@ -449,6 +449,7 @@ void CL_ConfigstringModified( void ) {
 	} else if ( index == CS_SERVERINFO ) {
 		CL_ServerInfoChanged();
 	}
+	CL_ParseModcfg();	// cMod's !modcfg (for the next cgame/ui load)
 
 }
 

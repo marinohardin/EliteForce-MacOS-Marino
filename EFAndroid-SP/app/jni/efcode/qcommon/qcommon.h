@@ -694,6 +694,7 @@ qboolean FS_CreatePath (char *OSPath);
 
 int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, int enableDll);
 qboolean FS_IsCmodVM( void *searchPath );	// the VM came from a cMod pak (by Noah Metzger)
+void FS_SetCmodModcfg( int nativeCgame, int nativeUI );	// the server's !modcfg wishes
 
 char   *FS_BuildOSPath( const char *base, const char *game, const char *qpath );
 qboolean FS_CompareZipChecksum(const char *zipfile);

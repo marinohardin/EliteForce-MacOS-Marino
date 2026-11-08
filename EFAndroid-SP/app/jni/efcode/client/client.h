@@ -562,6 +562,7 @@ void CL_Voip_f( void );
 #endif
 
 void CL_SystemInfoChanged( void );
+void CL_ParseModcfg( void );
 void CL_ServerInfoChanged( void );
 void CL_ParseServerMessage( msg_t *msg );
 

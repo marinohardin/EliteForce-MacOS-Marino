@@ -1526,6 +1526,7 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	// Remove pure paks
 	FS_PureServerSetLoadedPaks("", "");
 	FS_PureServerSetReferencedPaks( "", "" );
+	FS_SetCmodModcfg( 0, 0 );	// no server, no !modcfg wishes
 	
 	CL_ClearState ();
 
