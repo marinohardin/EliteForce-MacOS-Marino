@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../qcommon/q_shared.h"
 #include "../qcommon/qcommon.h"
 #include "sys_local.h"
+#include "sys_platform.h"
 
 #import <Carbon/Carbon.h>
 #import <Cocoa/Cocoa.h>
@@ -40,7 +41,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #ifndef MACOS_HOMEPATH_NAME
 // ~/Library/Application Support/<this> holds macOS saves/config (see sys_osx.m)
-#define MACOS_HOMEPATH_NAME "EliteForce-MacOS"
+#define MACOS_HOMEPATH_NAME EF_HOMEPATH_NAME	// sys_platform.h: "EliteForce-MacOS"
 #endif
 // homepath folder name of earlier builds, renamed on first start
 #define MACOS_LEGACY_HOMEPATH_NAME "VoyagerSP-MacOS"
@@ -539,4 +540,59 @@ qboolean Sys_MacPrepareHomepath( int argc, char **argv )
 		fprintf( stderr, "%s\n", homepathMigrationMsg );
 	}
 	return qtrue;
+}
+
+/*
+=================
+Platform hooks (sys_platform.h)
+
+main() calls these; on macOS they are the Sys_Mac* functions above and in
+sys_osx_data.m / sys_osx_launcher.m.
+=================
+*/
+extern qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size );	// sys_osx_launcher.m
+extern const char *Sys_MacResolveGameData( int argc, char **argv );	// sys_osx_data.m
+extern void Sys_MacDataPostInit( void );
+extern void Sys_MacFrame( void );
+extern void Sys_MacQuitToLauncher( void );
+
+void Sys_PlatformPreInit( int argc, char **argv, char *commandLine, int size )
+{
+	Sys_DisablePressAndHold( );
+	// Inside the .app: use the bundled Vulkan loader + MoltenVK ICD.
+	Sys_MacSetupBundleEnv( );
+	// Own homepath (saves/config), migrated once from the Lilium Voyager one.
+	if ( Sys_MacPrepareHomepath( argc, argv ) )
+		Q_strcat( commandLine, size, "+set com_homepath " MACOS_HOMEPATH_NAME " " );
+}
+
+qboolean Sys_PlatformLauncher( int argc, char **argv, char *commandLine, int size )
+{
+	return Sys_MacLauncher( argc, argv, commandLine, size );
+}
+
+const char *Sys_PlatformResolveGameData( int argc, char **argv, qboolean headless )
+{
+	return headless ? Sys_MacHeadlessGameData( argc, argv ) : Sys_MacResolveGameData( argc, argv );
+}
+
+void Sys_PlatformPostInit( void )
+{
+	Sys_MacPrintStartupInfo( );
+	Sys_MacDataPostInit( );
+}
+
+void Sys_PlatformQuitSignals( void )
+{
+	Sys_MacQuitSignals( );
+}
+
+void Sys_PlatformFrame( void )
+{
+	Sys_MacFrame( );
+}
+
+void Sys_PlatformQuitToLauncher( void )
+{
+	Sys_MacQuitToLauncher( );
 }

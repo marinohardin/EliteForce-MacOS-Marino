@@ -21,7 +21,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include <signal.h>
+#ifdef _WIN32
+#include <process.h>	// _exit
+#else
 #include <unistd.h>
+#endif
 #include <stdlib.h>
 #include <limits.h>
 #include <sys/types.h>
@@ -48,6 +52,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "sys_local.h"
 #include "sys_loadlib.h"
+#include "sys_platform.h"
 
 #include "../qcommon/q_shared.h"
 #include "../qcommon/qcommon.h"
@@ -96,6 +101,18 @@ Sys_DefaultInstallPath
 */
 char *Sys_DefaultInstallPath(void)
 {
+#if defined( __linux__ ) && !defined( __ANDROID__ ) && !defined( DEDICATED )
+	// An AppImage runs from a read-only mount: keep the game data in the
+	// homepath instead (like the macOS app's Application Support folder).
+	// Called from FS_Startup, once com_homepath is set.
+	const char *appImage = getenv( "APPIMAGE" );
+
+	if ( appImage && *appImage ) {
+		char *home = Sys_DefaultHomePath( );
+		if ( home && *home )
+			return home;
+	}
+#endif
 	if (*installPath)
 		return installPath;
 	else
@@ -776,13 +793,6 @@ char *Sys_ParseProtocolUri( const char *uri )
 }
 #endif
 
-#ifdef __APPLE__
-#ifndef MACOS_HOMEPATH_NAME
-// ~/Library/Application Support/<this> holds macOS saves/config (see sys_osx.m)
-#define MACOS_HOMEPATH_NAME "EliteForce-MacOS"
-#endif
-#endif
-
 #ifndef DEFAULT_BASEDIR
 #	ifdef __ANDROID__
 		/* base data path == the app's own OBB dir (no storage permission needed);
@@ -902,56 +912,50 @@ int main( int argc, char **argv )
 	// This is passed if we are launched by double-clicking
 	if ( argc >= 2 && Q_strncmp ( argv[1], "-psn", 4 ) == 0 )
 		argc = 1;
-
 	{
-		extern void Sys_DisablePressAndHold( void );
-		extern qboolean Sys_MacSetupBundleEnv( void );
-		extern qboolean Sys_MacPrepareHomepath( int argc, char **argv );
 		extern void Sys_MacTestBackgroundInit( void );
 		extern qboolean Sys_MacTestBackground( void );
 
 		// VOYAGERSP_TEST_BACKGROUND: SDL's hints for the quiet test mode (sys_osx.m),
-		// in the environment and as overrides
+		// in the environment and as overrides. Before Sys_PlatformPreInit, as before.
 		Sys_MacTestBackgroundInit( );
 		if ( Sys_MacTestBackground( ) ) {
 			SDL_SetHintWithPriority( "SDL_MAC_BACKGROUND_APP", "1", SDL_HINT_OVERRIDE );
 			SDL_SetHintWithPriority( "SDL_WINDOW_ACTIVATE_WHEN_SHOWN", "0", SDL_HINT_OVERRIDE );
 			SDL_SetHintWithPriority( "SDL_WINDOW_ACTIVATE_WHEN_RAISED", "0", SDL_HINT_OVERRIDE );
 		}
-		Sys_DisablePressAndHold( );
-		// Inside the .app: use the bundled Vulkan loader + MoltenVK ICD.
-		Sys_MacSetupBundleEnv( );
-		// Own homepath (saves/config), migrated once from the Lilium Voyager one.
-		if ( Sys_MacPrepareHomepath( argc, argv ) )
-			Q_strcat( commandLine, sizeof( commandLine ), "+set com_homepath " MACOS_HOMEPATH_NAME " " );
-		// Inside the .app: the launcher picks the mode, graphics and game folder
-		// (sys_osx_launcher.m). When the command line already names the mode
-		// (a relaunch from the File menu), find the game data, or ask for it
-		// (sys_osx_data.m). A dedicated server shows no UI at all: it finds
-		// the data the same way or exits with an error.
-		if ( sys_headless ) {
-			extern const char *Sys_MacHeadlessGameData( int argc, char **argv );
-			const char *basepath = Sys_MacHeadlessGameData( argc, argv );
-			if ( basepath )
-				Q_strcat( commandLine, sizeof( commandLine ), va( "+set fs_basepath \"%s\" ", basepath ) );
-		} else {
-			extern qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size );
-			extern const char *Sys_MacResolveGameData( int argc, char **argv );
-			if ( !Sys_MacLauncher( argc, argv, commandLine, sizeof( commandLine ) ) ) {
-				const char *basepath = Sys_MacResolveGameData( argc, argv );
-				if ( basepath )
-					Q_strcat( commandLine, sizeof( commandLine ), va( "+set fs_basepath \"%s\" ", basepath ) );
-			}
-		}
 	}
 #endif
+
+	// Platform hooks (sys_platform.h). macOS: the bundled Vulkan loader +
+	// MoltenVK ICD, the app's own homepath (migrated once from the Lilium
+	// Voyager one), then the launcher picks the mode, graphics and game folder
+	// (sys_osx_launcher.m). When the command line already names the mode (a
+	// relaunch from the File menu), or there is no launcher (Windows/Linux for
+	// now), find the game data, or ask for it. A dedicated server shows no UI at
+	// all: it finds the data the same way or exits with an error.
+	{
+		const char *basepath = NULL;
+
+		Sys_PlatformPreInit( argc, argv, commandLine, sizeof( commandLine ) );
+		if ( sys_headless )
+			basepath = Sys_PlatformResolveGameData( argc, argv, qtrue );
+		else if ( !Sys_PlatformLauncher( argc, argv, commandLine, sizeof( commandLine ) ) )
+			basepath = Sys_PlatformResolveGameData( argc, argv, qfalse );
+		if ( basepath )
+			Q_strcat( commandLine, sizeof( commandLine ), va( "+set fs_basepath \"%s\" ", basepath ) );
+	}
 
 	if ( sys_headless ) {
 		// the parent (a terminal, or an app reading pipes) sees each line as
 		// it is printed (con_tty.c prints to stdout); a closed pipe is an
 		// error to notice, not a signal that kills the server
+#ifdef _WIN32
+		setvbuf( stdout, NULL, _IONBF, 0 );	// the CRT has no line buffering
+#else
 		setvbuf( stdout, NULL, _IOLBF, 0 );
 		signal( SIGPIPE, SIG_IGN );
+#endif
 	}
 
 	Sys_ParseArgs( argc, argv );
@@ -1004,14 +1008,7 @@ int main( int argc, char **argv )
 
 	CON_Init( );
 	Com_Init( commandLine );
-#ifdef __APPLE__
-	{
-		extern void Sys_MacPrintStartupInfo( void );
-		extern void Sys_MacDataPostInit( void );
-		Sys_MacPrintStartupInfo( );
-		Sys_MacDataPostInit( );
-	}
-#endif
+	Sys_PlatformPostInit( );
 	NET_Init( );
 
 	signal( SIGILL, Sys_SigHandler );
@@ -1019,12 +1016,7 @@ int main( int argc, char **argv )
 	signal( SIGSEGV, Sys_SigHandler );
 	signal( SIGTERM, Sys_SigHandler );
 	signal( SIGINT, Sys_SigHandler );
-#ifdef __APPLE__
-	{
-		extern void Sys_MacQuitSignals( void );
-		Sys_MacQuitSignals( );	// SIGTERM/SIGINT through dispatch sources instead
-	}
-#endif
+	Sys_PlatformQuitSignals( );	// macOS: SIGTERM/SIGINT through dispatch sources instead
 
 #ifdef __EMSCRIPTEN__
 	emscripten_set_main_loop( Com_Frame, 0, 1 );
@@ -1037,13 +1029,8 @@ int main( int argc, char **argv )
 			Com_Printf( "Received signal %d, quitting\n", (int)sys_quitSignal );
 			Com_Quit_f( );
 		}
-#ifdef __APPLE__
 		if ( !sys_headless )
-		{
-			extern void Sys_MacFrame( void );
-			Sys_MacFrame( );	// adds the File menu once SDL made the menu bar
-		}
-#endif
+			Sys_PlatformFrame( );	// macOS: adds the File menu once SDL made the menu bar
 	}
 #endif
 

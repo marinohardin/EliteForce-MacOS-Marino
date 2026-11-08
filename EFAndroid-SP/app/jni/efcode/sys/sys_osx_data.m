@@ -90,7 +90,8 @@ void SNDDMA_PauseOutput( qboolean pause );	// sdl_snd.c
 #endif
 
 #ifndef MACOS_HOMEPATH_NAME
-#define MACOS_HOMEPATH_NAME "EliteForce-MacOS"
+#include "sys_platform.h"
+#define MACOS_HOMEPATH_NAME EF_HOMEPATH_NAME	// "EliteForce-MacOS"
 #endif
 
 #define KEY_GAMEFOLDER	@"GameFolder"

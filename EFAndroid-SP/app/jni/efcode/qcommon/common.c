@@ -411,12 +411,13 @@ do the appropriate things.
 void Com_Quit_f( void ) {
 	// don't try to shutdown if we are in a recursive error
 	char *p = Cmd_Args( );
-#if defined( __APPLE__ ) && !defined( DEDICATED )
+#if defined( EF_DESKTOP ) && !defined( DEDICATED )
 	// the game's own Quit (a plain "quit") goes back to the launcher; Cmd+Q and
 	// closing the window come here as "quit Closed window" and quit for good
+	// (sys_platform.h; a no-op where there is no launcher)
 	if ( !Q_stricmp( Cmd_Argv( 0 ), "quit" ) && Cmd_Argc( ) == 1 ) {
-		extern void Sys_MacQuitToLauncher( void );
-		Sys_MacQuitToLauncher( );
+		extern void Sys_PlatformQuitToLauncher( void );
+		Sys_PlatformQuitToLauncher( );
 	}
 #endif
 	if ( !com_errorEntered ) {
