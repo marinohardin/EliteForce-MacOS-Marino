@@ -1,4 +1,5 @@
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "g_infostrings.h"
 #include "g_items.h"
@@ -229,7 +230,7 @@ void Touch_Item (gentity_t *ent, gentity_t *other, trace_t *trace) {
 	// Only player can pick it up
 	if (!(ent->spawnflags &  ITMSF_TEAM) && !(ent->spawnflags &  ITMSF_MONSTER))
 	{
-		if (!other->s.number == 0)	// Not the player?
+		if (!COOP_IsPlayer( other ))	// Not the player?
 		{
 			return;
 		}

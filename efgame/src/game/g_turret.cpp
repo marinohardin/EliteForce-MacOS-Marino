@@ -1,4 +1,5 @@
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "b_local.h"
 
@@ -1150,7 +1151,7 @@ void stasis_shooter_active( gentity_t *self )
 			continue;
 		}
 
-		if ( radiusEnts[i]->s.number == 0 )
+		if ( COOP_IsPlayer( radiusEnts[i] ) )
 		{//the player
 			//Must be visible
 			CalcEntitySpot( radiusEnts[i], SPOT_HEAD, end );

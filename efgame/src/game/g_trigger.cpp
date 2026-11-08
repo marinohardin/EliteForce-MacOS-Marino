@@ -1,4 +1,5 @@
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 
 #define ENTDIST_PLAYER	1
@@ -144,7 +145,7 @@ void Touch_Multi( gentity_t *self, gentity_t *other, trace_t *trace )
 
 	if ( self->spawnflags & 1 )
 	{
-		if ( other->s.number != 0 )
+		if ( !COOP_IsPlayer( other ) )
 		{
 			return;
 		}
@@ -222,7 +223,7 @@ void Touch_Multi( gentity_t *self, gentity_t *other, trace_t *trace )
 
 		//FIXME: do we care about the sniper rifle or not?
 
-		if( other->s.number == 0 && ( other->client->ps.weapon > MAX_PLAYER_WEAPONS || other->client->ps.weapon <= WP_NONE ) )
+		if( COOP_IsPlayer( other ) && ( other->client->ps.weapon > MAX_PLAYER_WEAPONS || other->client->ps.weapon <= WP_NONE ) )
 		{//don't care about non-player weapons if this is the player
 			return;
 		}
@@ -547,7 +548,7 @@ void trigger_push_touch (gentity_t *self, gentity_t *other, trace_t *trace ) {
 	
 	if ( self->spawnflags & 1 )
 	{//PLAYERONLY
-		if ( other->s.number != 0 )
+		if ( !COOP_IsPlayer( other ) )
 		{
 			return;
 		}
@@ -1109,7 +1110,7 @@ void trigger_entdist_use( gentity_t *self, gentity_t *other, gentity_t *activato
 
 	if (self->spawnflags & ENTDIST_PLAYER)	// Look for player???
 	{
-		found = &g_entities[0];
+		found = COOP_NearestPlayer( owner->currentOrigin );
 
 		if (found)
 		{	
@@ -1181,37 +1182,42 @@ void trigger_visible_check_player_visibility( gentity_t *self )
 
 	vec3_t	dir;
 	float	dist;
-	gentity_t	*player = &g_entities[0];
-
-	if (!player || !player->client )
+	// co-op: any player looking at it (the first one wins: it frees itself)
+	for ( int coopIdx = 0; coopIdx < COOP_NumPlayers(); coopIdx++ )
 	{
-		return;
-	}
+		gentity_t	*player = COOP_PlayerByIndex( coopIdx );
 
-	//1: see if player is within 512*512 range
-	VectorSubtract( self->currentOrigin, player->client->renderInfo.eyePoint, dir );
-	dist = VectorNormalize( dir );
-	if ( dist < self->radius )
-	{//Within range
-		vec3_t	forward;
-		float	dot;
-		//2: see if dot to us and player viewangles is > 0.7
-		AngleVectors( player->client->renderInfo.eyeAngles, forward, NULL, NULL );
-		dot = DotProduct( forward, dir );
-		if ( dot > self->random )
-		{//Within the desired FOV
-			//3: see if player is in PVS
-			if ( gi.inPVS( self->currentOrigin, player->client->renderInfo.eyePoint ) )
-			{
-				vec3_t	mins = {-1, -1, -1};
-				vec3_t	maxs = {1, 1, 1};
-				//4: If needbe, trace to see if there is clear LOS from player viewpos
-				if ( (self->spawnflags&1) || G_ClearTrace( player->client->renderInfo.eyePoint, mins, maxs, self->currentOrigin, 0, MASK_OPAQUE ) )
+		if (!player || !player->client )
+		{
+			return;
+		}
+
+		//1: see if player is within 512*512 range
+		VectorSubtract( self->currentOrigin, player->client->renderInfo.eyePoint, dir );
+		dist = VectorNormalize( dir );
+		if ( dist < self->radius )
+		{//Within range
+			vec3_t	forward;
+			float	dot;
+			//2: see if dot to us and player viewangles is > 0.7
+			AngleVectors( player->client->renderInfo.eyeAngles, forward, NULL, NULL );
+			dot = DotProduct( forward, dir );
+			if ( dot > self->random )
+			{//Within the desired FOV
+				//3: see if player is in PVS
+				if ( gi.inPVS( self->currentOrigin, player->client->renderInfo.eyePoint ) )
 				{
-					//5: Fire!
-					G_UseTargets( self, player );
-					//6: Remove yourself
-					G_FreeEntity( self );
+					vec3_t	mins = {-1, -1, -1};
+					vec3_t	maxs = {1, 1, 1};
+					//4: If needbe, trace to see if there is clear LOS from player viewpos
+					if ( (self->spawnflags&1) || G_ClearTrace( player->client->renderInfo.eyePoint, mins, maxs, self->currentOrigin, 0, MASK_OPAQUE ) )
+					{
+						//5: Fire!
+						G_UseTargets( self, COOP_StoryActivator( player ) );
+						//6: Remove yourself
+						G_FreeEntity( self );
+						return;
+					}
 				}
 			}
 		}

@@ -473,6 +473,43 @@ void COOP_P2DeadThink( gentity_t *ent, usercmd_t *ucmd )
 }
 
 // P1 uses the host's cg_thirdPerson; P2 has no view of its own in M0, so it shoots first-person
+// P2 when it is in the level, alive and not hidden by a camera
+static gentity_t *COOP_LiveP2( void )
+{
+	gentity_t *p2 = COOP_P2();
+	if ( !p2 || coop_p2.hidden || p2->health <= 0 )
+	{
+		return NULL;
+	}
+	return p2;
+}
+
+int COOP_NumPlayers( void )
+{
+	return COOP_LiveP2() ? 2 : 1;
+}
+
+gentity_t *COOP_PlayerByIndex( int i )
+{
+	return i == 0 ? &g_entities[0] : COOP_LiveP2();
+}
+
+gentity_t *COOP_NearestPlayer( const vec3_t org )
+{
+	gentity_t	*p1 = &g_entities[0];
+	gentity_t	*p2 = COOP_LiveP2();
+
+	if ( !p2 )
+	{
+		return p1;
+	}
+	if ( p1->health <= 0 )
+	{
+		return p2;
+	}
+	return DistanceSquared( org, p2->currentOrigin ) < DistanceSquared( org, p1->currentOrigin ) ? p2 : p1;
+}
+
 int COOP_ThirdPerson( const gentity_t *e )
 {
 	extern vmCvar_t cg_thirdPerson;

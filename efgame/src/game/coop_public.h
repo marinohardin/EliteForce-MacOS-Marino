@@ -20,6 +20,9 @@
 #define COOP_StoryActivator(e)		(e)
 #define COOP_ThirdPerson(e)			cg_thirdPerson.integer
 #define COOP_ViewClientNum()		0
+#define COOP_NearestPlayer(org)		(&g_entities[0])
+#define COOP_NumPlayers()			1
+#define COOP_PlayerByIndex(i)		(&g_entities[0])
 
 #define COOP_Init()					((void)0)
 #define COOP_RunFrame()				((void)0)
@@ -58,6 +61,12 @@ inline gentity_t *COOP_StoryActivator( gentity_t *e ) { return ( e && COOP_IsP2(
 
 // the client whose view this machine draws (P1 on the host; the guest in M1)
 inline int COOP_ViewClientNum( void ) { return 0; }
+
+// the closer of the players that are in the level (P2 only when alive and not hidden)
+gentity_t	*COOP_NearestPlayer( const vec3_t org );
+// loop over the players in the level: index 0 is P1, 1 is P2 (alive and not hidden)
+int			COOP_NumPlayers( void );
+gentity_t	*COOP_PlayerByIndex( int i );
 
 // the shooter's third-person setting (game code reads the host cgame's cvar for it)
 int			COOP_ThirdPerson( const gentity_t *e );
