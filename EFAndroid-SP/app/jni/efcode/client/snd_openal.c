@@ -2241,11 +2241,10 @@ static cvar_t *s_alCapture;
 S_AL_StopAllSounds
 =================
 */
-static
 static qboolean alGamePaused = qfalse;	// S_AL_PauseGameSounds
 static qboolean alMusicPaused = qfalse;
 
-void S_AL_StopAllSounds( void )
+static void S_AL_StopAllSounds( void )
 {
 	int i;
 	alGamePaused = alMusicPaused = qfalse;	// nothing is held after a full stop
@@ -2290,7 +2289,6 @@ void S_AL_Respatialize( int entityNum, const vec3_t origin, vec3_t axis[3], int 
 S_AL_Update
 =================
 */
-static
 /*
 =================
 S_AL_PauseGameSounds
@@ -2376,7 +2374,7 @@ static void S_AL_StopGameSounds( void )
 	}
 }
 
-void S_AL_Update( void )
+static void S_AL_Update( void )
 {
 	int i;
 
