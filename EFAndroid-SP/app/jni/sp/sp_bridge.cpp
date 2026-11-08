@@ -589,9 +589,12 @@ static void SP_EndCutsceneSkip(void){
 // thing now (S_VoiceLipSync, snd_dma.c). The value also gates the dialog `wait` (nonzero keeps the script's
 // TID_CHAN_VOICE task pending), which g_voiceEnd keeps timing, so a talker is never 0 before its line ends.
 // Called every sim tick and every render frame (the cgame reads the array while drawing).
+// With the regression harness on, the mixer's level is not used: it follows the sound playing on the wall
+// clock, and the cgame's head bob (CG_AddHeadBob) draws random numbers when it jumps, so game state
+// would vary from run to run. The fixed mouth cycle below keeps runs identical.
 static void SP_UpdateVisemes(void){
     static int levels[MAX_GENTITIES];
-    qboolean mixer = S_VoiceLipSync( levels, MAX_GENTITIES );
+    qboolean mixer = S_VoiceLipSync( levels, MAX_GENTITIES ) && !Regress_Active();
     for(int i=0;i<MAX_GENTITIES;i++){
         if(g_voiceEnd[i] > g_levelTime){
             if( mixer ){
