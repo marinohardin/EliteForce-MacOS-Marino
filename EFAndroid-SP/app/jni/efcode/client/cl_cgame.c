@@ -1132,6 +1132,11 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 #endif
 
 	default:
+#ifdef ELITEFORCE
+		if ( args[0] == CL_CMOD_TRAP_GETVALUE && Com_Holomatch() ) {
+			return CL_CmodGetValue( cgvm, VMA(1), args[2], VMA(3) );
+		}
+#endif
 	        assert(0);
 		Com_Error( ERR_DROP, "Bad cgame system trap: %ld", (long int) args[0] );
 	}

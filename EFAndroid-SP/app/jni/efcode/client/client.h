@@ -570,6 +570,11 @@ void CL_Voip_f( void );
 
 void CL_SystemInfoChanged( void );
 void CL_ParseModcfg( void );
+#ifdef ELITEFORCE
+// From cMod by Noah Metzger (Chomenor): the GetValue call of his cgame and ui
+#define CL_CMOD_TRAP_GETVALUE 700
+qboolean CL_CmodGetValue( vm_t *vm, char *buffer, int size, const char *key );
+#endif
 void CL_ServerInfoChanged( void );
 void CL_ParseServerMessage( msg_t *msg );
 

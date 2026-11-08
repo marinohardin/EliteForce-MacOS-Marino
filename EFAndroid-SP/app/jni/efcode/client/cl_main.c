@@ -4659,6 +4659,8 @@ void CL_Init( void ) {
 	// modules read it.
 	if ( Com_Holomatch() ) {
 		Cvar_Get( "cg_aspectCorrect", "1", CVAR_ARCHIVE );
+		// Where his modules find the GetValue call (see CL_CmodGetValue)
+		Cvar_Get( "//trap_GetValue", va( "%i", CL_CMOD_TRAP_GETVALUE ), CVAR_ROM );
 	}
 
 	//

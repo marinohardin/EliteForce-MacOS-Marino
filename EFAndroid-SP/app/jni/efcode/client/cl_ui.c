@@ -1105,6 +1105,84 @@ static qboolean CL_HMVideo_SetMode( const char *name, const char *value ) {
 }
 #endif
 
+#ifdef ELITEFORCE
+/*
+====================
+CL_CmodGetValue
+
+From cMod by Noah Metzger (Chomenor): the GetValue call his cgame and ui use to ask the
+engine which options it has (a protocol from Quake3e). The modules find the call number in
+the cvar "//trap_GetValue" and call it with (buffer, size, key); 1 means the key is known.
+
+Only cMod's own modules get answers, and only for what this engine really has: other keys
+(OpenGL renderer choice, framebuffer, raw mouse, windowed-only r_mode, and the rest) are
+left unknown, so his menus keep their stock behavior for them. Any other module that makes
+the call is told nothing, as if the engine had no such call.
+====================
+*/
+static const char *cl_cmodValues[][2] = {
+	{ "ui_version_string", Q3_VERSION },
+
+	// Settings the renderer has, in the same form as in cMod's engine
+	{ "ui_support_r_ext_mapLightingGamma", "1" },
+	{ "ui_support_r_ext_overBrightFactor", "1" },
+	{ "ui_support_r_intensity", "1" },
+	{ "ui_support_r_intensity_fractional", "1" },
+	{ "ui_support_r_swapInterval", "1" },
+	{ "ui_support_r_ext_max_anisotropy", "1" },
+	{ "ui_support_cmd_get_multisample", "1" },
+	{ "ui_support_cmd_set_multisample", "1" },
+	{ "ui_support_screenshotJPEG", "1" },
+#ifdef USE_OPENAL
+	{ "ui_support_s_useOpenAL", "1" },
+#else
+	{ "ui_support_s_useOpenAL", "0" },
+#endif
+
+	// Settings this engine does not have, so the menus leave them out
+	{ "ui_no_a3d", "1" },
+	{ "ui_skip_k_language", "1" },
+	{ "ui_skip_r_glDriver", "1" },
+	{ "ui_skip_r_allowExtensions", "1" },
+	{ "ui_skip_r_colorbits", "1" },
+	{ "ui_skip_r_depthbits", "1" },
+	{ "ui_skip_r_stencilbits", "1" },
+	{ "ui_skip_r_lowEndVideo", "1" },
+	{ "ui_skip_s_khz", "1" },
+};
+
+qboolean CL_CmodGetValue( vm_t *vm, char *buffer, int size, const char *key ) {
+	int i;
+
+	if ( size <= 0 ) {
+		return qfalse;
+	}
+	*buffer = '\0';
+	if ( !VM_FromCmodPak( vm ) ) {
+		return qfalse;
+	}
+
+	for ( i = 0; i < ARRAY_LEN( cl_cmodValues ); i++ ) {
+		if ( !Q_stricmp( key, cl_cmodValues[i][0] ) ) {
+			Q_strncpyz( buffer, cl_cmodValues[i][1], size );
+			return qtrue;
+		}
+	}
+
+	if ( !Q_stricmp( key, "cmd_get_multisample" ) ) {
+		Com_sprintf( buffer, size, "%i", Cvar_VariableIntegerValue( "r_ext_multisample" ) );
+		return qtrue;
+	}
+	if ( !Q_stricmpn( key, "cmd_set_multisample ", 20 ) ) {
+		int value = atoi( key + 20 );
+		Cvar_Set( "r_ext_multisample", value >= 4 ? "4" : value >= 2 ? "2" : "0" );
+		return qtrue;
+	}
+
+	return qfalse;
+}
+#endif
+
 /*
 ====================
 CL_UISystemCalls
@@ -1641,6 +1719,11 @@ intptr_t CL_UISystemCalls( intptr_t *args ) {
 #endif
 		
 	default:
+#ifdef ELITEFORCE
+		if ( args[0] == CL_CMOD_TRAP_GETVALUE && Com_Holomatch() ) {
+			return CL_CmodGetValue( uivm, VMA(1), args[2], VMA(3) );
+		}
+#endif
 		Com_Error( ERR_DROP, "Bad UI system trap: %ld", (long int) args[0] );
 
 	}
