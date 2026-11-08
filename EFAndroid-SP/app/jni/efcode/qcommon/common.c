@@ -2961,6 +2961,15 @@ void Com_Init( char *commandLine ) {
 	}
 	com_holomatch = Cvar_Get("com_holomatch", "0", CVAR_INIT|CVAR_PROTECTED);
 	Cvar_SetDescription( com_holomatch, "Run Holomatch (multiplayer) instead of single player. Command line only." );
+#ifdef EF_COOP
+	// single-player co-op: the game registers sp_coop only when a level starts, so register it
+	// here as well (before the configs run), with the game's flags (latched, not archived), so
+	// `sp_coop 1` works at the main menu. A latched value takes effect at the next level start
+	// (new game, load, map change). Holomatch has no co-op.
+	if ( !com_holomatch->integer ) {
+		Cvar_Get( "sp_coop", "0", CVAR_LATCH );
+	}
+#endif
 
 	FS_InitFilesystem ();
 
