@@ -16,8 +16,9 @@ project(efsp_macos C CXX OBJC)
 set(EF_APP_VERSION "1.3.0" CACHE STRING "App version shown in the console and to server browsers")
 option(EF_BINK "Bink cinematics via Homebrew FFmpeg (OFF = stub, no movies)" ON)
 option(EF_VM_JIT "aarch64 QVM JIT (needs MAP_JIT work on macOS)" OFF)
-# single-player co-op (experimental). The engine side adds nothing yet; the game side is
-# efgame's option of the same name (make-app.sh passes both).
+# single-player co-op (experimental): the engine side is the launcher's Co-op… sheet and the
+# host's answer to co-op checks (sys/sys_osx_coop.m); the game side is efgame's option of the
+# same name (make-app.sh passes both).
 option(EF_COOP "Single-player co-op (experimental)" OFF)
 
 set(JNI ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -107,6 +108,10 @@ set(SYS_SRC
   ${EF}/sys/sys_osx_gog.c)
 set_source_files_properties(${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m
   PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+if(EF_COOP)
+  list(APPEND SYS_SRC ${EF}/sys/sys_osx_coop.m)
+  set_source_files_properties(${EF}/sys/sys_osx_coop.m PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+endif()
 
 file(GLOB RENDERCOMMON_SRC ${EF}/renderercommon/*.c)
 file(GLOB RENDERER_SRC ${EF}/renderervk/*.c)
@@ -160,7 +165,8 @@ target_compile_definitions(efsp PRIVATE
   ARCH_STRING="arm64"
   USE_LOCAL_HEADERS=1
   MACOS_X
-  MACOS_HOMEPATH_NAME="EliteForce-MacOS")
+  MACOS_HOMEPATH_NAME="EliteForce-MacOS"
+  $<$<BOOL:${EF_COOP}>:EF_COOP>)
 
 target_compile_options(efsp PRIVATE
   -fno-strict-aliasing -Werror=implicit-function-declaration -O2 -w

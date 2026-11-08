@@ -37,5 +37,6 @@ void		COOP_SpawnP2( void );
 void		COOP_ApplyHidden( gentity_t *ent, qboolean hidden );
 void		COOP_ReadCarry( void );						// coop_inventory.cpp
 void		COOP_ApplyCarry( gentity_t *ent );
+void		COOP_PublishInfo( void );					// coop_info.cpp
 
 #endif // COOP_LOCAL_H
