@@ -111,3 +111,10 @@ endfunction()
 if(CMAKE_CROSSCOMPILING AND "$ENV{PKG_CONFIG_LIBDIR}" STREQUAL "")
   set(ENV{PKG_CONFIG_LIBDIR} "/nonexistent")
 endif()
+
+# Windows/Linux deps are built in a container or another checkout, so their .pc files carry
+# that machine's prefix (e.g. /src/build-deps/...). --define-prefix makes pkg-config derive
+# the prefix from where each .pc file actually is (CMake >= 3.22 passes PKG_CONFIG_ARGN).
+if(NOT APPLE)
+  set(PKG_CONFIG_ARGN "--define-prefix" CACHE STRING "Extra pkg-config arguments")
+endif()

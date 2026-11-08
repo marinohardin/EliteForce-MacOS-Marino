@@ -75,6 +75,11 @@ static inline char* ef_strupr(char* s){ for(char* p=s; p&&*p; ++p) *p=(char)toup
 /* ---- EF assumes Windows rand() (0..0x7fff); Android rand() is 0..2^31-1, which
  *      breaks Q_irand/crandom/ef_frandom (they divide/shift by 0x7fff). Mask to 15 bits.
  *      (rand) avoids re-expanding the function-like macro -> calls the real libc rand. ---- */
+#ifdef __cplusplus
+/* libstdc++'s <algorithm> (std::random_shuffle) calls std::rand(): pull it in before the
+ * macro below exists, or that becomes std::ef_rand15() and fails to compile (GCC/Linux). */
+#include <algorithm>
+#endif
 static inline int ef_rand15(void){ return (rand)() & 0x7fff; }
 #define rand() ef_rand15()
 
