@@ -1021,3 +1021,11 @@ download tfgpak and run its cgame. Pure servers stay as they were.
   - **For M1.** The query is a status probe only. The co-op protocol replaces the stand-in P2 count, adds
     the `.pk3` checksum check to the version check, and probably moves the answer onto the co-op netchan
     socket on the same port. Connect, Copy Invite and router port opening come then.
+- **First voice line after quitting from the pause menu (2026-11-08).** The bridge's pause/skip
+  gates (`s_spSoundsBlocked`, the skip draw gate, the paused/skipping edge flags) are set per drawn
+  frame, so quitting from the in-game menu left sounds blocked into the next game. A New Game's
+  level-start frames run before its first drawn frame, and borg1 starts Janeway's first captain's
+  log there: it was dropped, its dialog wait ended at once, and the intro began at the second log
+  ("Ensign Munro is second in command..."). Seen after skipping the intro, because Esc only opens
+  the pause menu once the camera scene is over. `SP_UnloadGame` (new game, load, abort) now resets
+  the gates. 1.3.0 had the same bug.
