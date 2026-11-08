@@ -1,0 +1,25 @@
+[Desktop Entry]
+Type=Application
+Name=Elite Force
+GenericName=First-person shooter (single player and Holomatch)
+Comment=Single player and Holomatch for Raven Software's Elite Force (unofficial port; bring your own game files)
+Exec=AppRun %u
+Icon=eliteforce-marino
+Terminal=false
+Categories=Game;ActionGame;
+Keywords=Elite Force;Holomatch;idTech3;FPS;
+MimeType=x-scheme-handler/stvef;
+StartupWMClass=efsp
+Actions=SinglePlayer;Holomatch;DedicatedServer;
+
+[Desktop Action SinglePlayer]
+Name=Single Player
+Exec=AppRun --sp
+
+[Desktop Action Holomatch]
+Name=Holomatch
+Exec=AppRun --holomatch
+
+[Desktop Action DedicatedServer]
+Name=Dedicated Server (terminal)
+Exec=AppRun --server

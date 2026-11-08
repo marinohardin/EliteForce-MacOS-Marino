@@ -1,0 +1,69 @@
+#!/bin/sh
+# AppRun: the AppImage's entry point. Picks the game mode and starts the engine.
+#
+#   AppRun [--sp]             single player (default)
+#   AppRun --holomatch        Holomatch (multiplayer client)
+#   AppRun --server           dedicated server for the internet (dedicated 2); run it in a terminal
+#   AppRun --server-lan       dedicated server for the LAN only (dedicated 1)
+#   AppRun --uri stvef://connect/host:port     join a Holomatch server (a bare stvef://... works too)
+#   anything else             handed to the engine unchanged (e.g. +set r_mode 6, +connect host)
+# A mode flag may be followed by more engine arguments.
+#
+# Steam Deck (Gaming Mode, or SteamDeck=1): the pad is enabled, and on the first run of each
+# mode the game starts fullscreen at the desktop resolution with deck.cfg's controller
+# bindings applied once. EF_JOYSTICK=1 enables the pad on any machine.
+set -eu
+
+HERE="$(dirname "$(readlink -f "$0")")"
+BIN="$HERE/usr/bin/efsp"
+HOMEDIR="${XDG_DATA_HOME:-$HOME/.local/share}/eliteforce-marino"
+
+mode=sp
+dedicated=0
+uri=""
+case "${1:-}" in
+	--sp)         shift ;;
+	--holomatch)  mode=hm; shift ;;
+	--server)     mode=hm; dedicated=2; shift ;;
+	--server-lan) mode=hm; dedicated=1; shift ;;
+	--uri)        mode=hm; uri="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift; fi ;;
+	stvef:*)      mode=hm; uri="$1"; shift ;;
+esac
+
+# a caller that names com_holomatch itself keeps full control of the mode
+for a in "$@"; do
+	[ "$a" = com_holomatch ] && mode=none
+done
+
+onDeck=0
+if [ "${SteamDeck:-}" = 1 ] || [ "${XDG_CURRENT_DESKTOP:-}" = gamescope ]; then
+	onDeck=1
+fi
+
+# The generated arguments go in front of the caller's, so the caller's win.
+# (set -- X "$@" prepends; build in reverse order.)
+if [ "$onDeck" = 1 ] && [ "$dedicated" = 0 ] && [ "$mode" != none ]; then
+	base="$HOMEDIR/baseEF"
+	marker="$HOMEDIR/.deck-applied-$mode"
+	if [ ! -e "$marker" ]; then
+		mkdir -p "$base"
+		[ -e "$base/deck.cfg" ] || cp "$HERE/usr/share/eliteforce-marino/deck.cfg" "$base/deck.cfg"
+		: > "$marker"
+		set -- +set r_fullscreen 1 +set r_mode -2 +exec deck.cfg "$@"
+	fi
+fi
+if [ "$onDeck" = 1 ] || [ "${EF_JOYSTICK:-}" = 1 ]; then
+	set -- +set in_joystick 1 "$@"
+fi
+[ "$dedicated" = 0 ] || set -- +set dedicated "$dedicated" "$@"
+case "$mode" in
+	sp) set -- +set com_holomatch 0 "$@" ;;
+	hm) set -- +set com_holomatch 1 "$@" ;;
+esac
+# Sys_ParseProtocolUri ignores everything after --uri, so it goes last
+[ -z "$uri" ] || set -- "$@" --uri "$uri"
+
+[ -x "$BIN" ] || { echo "AppRun: $BIN is missing" >&2; exit 1; }
+# Bundled libraries are found through the binaries' own rpath ($ORIGIN/../lib); LD_LIBRARY_PATH
+# is left alone because it would leak into programs the game starts.
+exec "$BIN" "$@"
