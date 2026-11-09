@@ -26,6 +26,9 @@ typedef struct
 	qboolean	haveAngles;
 	vec3_t		viewAngles;
 	int			weapon;				// > 0: switch to it
+
+	// the guest's input (coop_net.cpp) steers P2; its view angles were re-based on the guest's
+	qboolean	guestSteering;
 } coopP2State_t;
 
 extern coopP2State_t	coop_p2;
@@ -38,5 +41,7 @@ void		COOP_ApplyHidden( gentity_t *ent, qboolean hidden );
 void		COOP_ReadCarry( void );						// coop_inventory.cpp
 void		COOP_ApplyCarry( gentity_t *ent );
 void		COOP_PublishInfo( void );					// coop_info.cpp
+qboolean	COOP_GuestCmd( usercmd_t *cmd );			// coop_net.cpp
+const char	*COOP_GuestName( void );
 
 #endif // COOP_LOCAL_H

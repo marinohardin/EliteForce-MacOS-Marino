@@ -248,6 +248,7 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	}
 	coop_p2.respawnTime = 0;
 	coop_p2.stuckFrames = 0;
+	coop_p2.guestSteering = qfalse;		// the fresh client's angles start over: re-base on the guest's
 	if ( coop_p2.hidden || in_camera )
 	{
 		COOP_ApplyHidden( ent, qtrue );
@@ -291,9 +292,54 @@ void COOP_SpawnP2( void )
 }
 
 /*
+COOP_GuestBuildCmd
+
+The guest's input, when a guest steers P2 (coop_net.cpp). The guest's view angles are its own;
+when it takes over, P2's delta angles are set so that P2 keeps looking where it looked.
+*/
+static qboolean COOP_GuestBuildCmd( gentity_t *ent, usercmd_t *cmd )
+{
+	gclient_t	*cl = ent->client;
+	usercmd_t	g;
+
+	memset( &g, 0, sizeof( g ) );
+	if ( !COOP_GuestCmd( &g ) )
+	{
+		if ( coop_p2.guestSteering )
+		{
+			gi.Printf( "co-op: player 2 follows player 1 again\n" );
+		}
+		coop_p2.guestSteering = qfalse;
+		return qfalse;
+	}
+	if ( !coop_p2.guestSteering )
+	{
+		vec3_t view;
+		VectorCopy( cl->ps.viewangles, view );
+		for ( int i = 0; i < 3; i++ )
+		{
+			cl->pers.cmd_angles[i] = (short)g.angles[i];
+		}
+		SetClientViewAngle( ent, view );
+		coop_p2.guestSteering = qtrue;
+		gi.Printf( "co-op: %s steers player 2\n", COOP_GuestName()[0] ? COOP_GuestName() : "the guest" );
+	}
+	*cmd = g;
+	cmd->serverTime = level.time;
+	// a weapon P2 doesn't have (or none: the guest isn't in a level) keeps P2's
+	if ( g.weapon <= WP_NONE || g.weapon >= WP_NUM_WEAPONS || !( cl->ps.stats[STAT_WEAPONS] & ( 1 << g.weapon ) ) )
+	{
+		cmd->weapon = cl->ps.weapon;
+	}
+	coop_p2.stuckFrames = 0;
+	VectorCopy( ent->currentOrigin, coop_p2.lastOrigin );
+	return qtrue;
+}
+
+/*
 COOP_BuildCmd
 
-P2's input for this frame: a running console command, else follow P1.
+P2's input for this frame: a running console command, else the guest's input, else follow P1.
 */
 static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 {
@@ -301,6 +347,15 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 	gclient_t	*cl = ent->client;
 	vec3_t		view, dir;
 
+	if ( coop_p2.moveFrames <= 0 && COOP_GuestBuildCmd( ent, cmd ) )
+	{
+		coop_p2.weapon = 0;
+		return;
+	}
+	if ( coop_p2.moveFrames > 0 )
+	{
+		coop_p2.guestSteering = qfalse;	// the console moved P2's view: re-base when the guest is back
+	}
 	memset( cmd, 0, sizeof( *cmd ) );
 	cmd->serverTime = level.time;
 	cmd->weapon = coop_p2.weapon > 0 ? coop_p2.weapon : cl->ps.weapon;

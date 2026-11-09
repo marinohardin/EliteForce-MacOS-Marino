@@ -127,6 +127,31 @@ static camPos_t g_camPos = NULL;
 // game frame when the harness is on (SP_GameRunFrame). NULL if the module lacks it.
 typedef void (*regressDump_t)( void (*emit)( int kind, int num, const char *fields ) );
 static regressDump_t g_regressDump = NULL;
+
+#ifdef EF_COOP
+// Single-player co-op: the game's co-op code gets the guest's input from the engine's co-op
+// connection (efcode/sys/sys_coop_net.c) through this table (game/coop_bridge.h).
+#include "coop_bridge.h"
+extern "C" {
+    int         CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *forwardmove,
+                                    signed char *rightmove, signed char *upmove );
+    const char *CoopNet_GuestName( void );
+}
+static qboolean SP_CoopGuestCmd( usercmd_t *cmd ){
+    int angles[3], buttons = 0, weapon = 0; signed char fwd = 0, side = 0, up = 0;
+    if( !CoopNet_GuestInput( angles, &buttons, &weapon, &fwd, &side, &up ) ) return qfalse;
+    cmd->angles[0] = angles[0]; cmd->angles[1] = angles[1]; cmd->angles[2] = angles[2];
+    cmd->buttons = buttons; cmd->weapon = (byte)weapon;
+    cmd->forwardmove = fwd; cmd->rightmove = side; cmd->upmove = up;
+    return qtrue;
+}
+static void SP_CoopSetBridge( void ){
+    typedef void (*coopSetBridge_t)( const coopBridge_t * );
+    static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName };
+    coopSetBridge_t set = (coopSetBridge_t)dlsym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
+    if( set ) set( &bridge );
+}
+#endif
 static intptr_t SP_VmMain( int cmd, int a0=0, int a1=0, int a2=0, int a3=0, int a4=0, int a5=0, int a6=0, int a7=0 ){
     return g_vmMain( cmd, a0, a1, a2, a3, a4, a5, a6, a7 );
 }
@@ -713,6 +738,9 @@ extern "C" qboolean SP_LoadGame( const char *solib ){
     g_vmMain = (vmMain_t)dlsym(g_lib, "_Z6vmMainiiiiiiiii");
     g_camPos = (camPos_t)dlsym(g_lib, "_Z15CG_GetCameraPosPf");   // optional (snapshot loop-sound culling)
     g_regressDump = (regressDump_t)dlsym(g_lib, "G_RegressDump");  // optional (the regression harness)
+#ifdef EF_COOP
+    SP_CoopSetBridge();   // before the level's InitGame
+#endif
     blog("SP_LoadGame: ge=%p apiversion=%d gentitySize=%d\n", (void*)ge, ge->apiversion, ge->gentitySize);
     return (ge->apiversion==GAME_API_VERSION) ? qtrue : qfalse;
 }
