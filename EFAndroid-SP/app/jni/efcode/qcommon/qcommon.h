@@ -403,6 +403,7 @@ typedef intptr_t (QDECL *vmMainProc)(int callNum, int arg0, int arg1, int arg2, 
 
 void	VM_Init( void );
 qboolean VM_FromCmodPak( vm_t *vm );	// loaded from a cMod pak (cMod by Noah Metzger)
+#define VM_CMOD_TRAP_GETVALUE 700	// the GetValue call of cMod's modules (its number is in the cvar "//trap_GetValue")
 vm_t	*VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *), 
 				   vmInterpret_t interpret );
 // module should be bare: "cgame", not "cgame.dll" or "vm/cgame.qvm"
