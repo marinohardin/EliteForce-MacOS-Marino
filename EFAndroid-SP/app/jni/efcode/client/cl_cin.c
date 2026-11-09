@@ -1799,7 +1799,9 @@ void CIN_DrawCinematic (int handle) {
 	buf = cinTable[handle].buf;
 
 #ifdef USE_FLEXIBLE_DISPLAY
-	if ( cl_flexibleDisplay->integer ) {
+	// (cMod's cgame and ui, by Noah Metzger, do their own widescreen: as without cl_flexibleDisplay)
+	if ( cl_flexibleDisplay->integer && !( cinTable[handle].module == CIN_UI && cls.uiNativeAspect )
+		&& !( cinTable[handle].module == CIN_CGAME && cls.cgameNativeAspect ) ) {
 		switch ( cinTable[handle].module ) {
 			case CIN_UI:
 				CL_AdjustFromUI( &x, &y, &w, &h );

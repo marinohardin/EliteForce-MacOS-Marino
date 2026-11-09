@@ -34,6 +34,9 @@
 #   EF_DATA=<dir>      the baseEF folder with pak0-pak3 (default ~/Library/Application Support/EliteForce-MacOS/baseEF)
 #   REGRESS_ARGS="..." extra arguments for every run, e.g. "+set sp_coop 0" (default: none)
 #   KEEP=1             keep the scratch folder (logs, console output) for a look
+#   REGRESS_CMOD=1     Holomatch with cMod's game modules (the app's Contents/Resources/cmod) instead of
+#                      the stock ones the runs use otherwise (+set sv_cmodGame 0 +set cl_cmodModules 0):
+#                      different game code, so record a baseline of its own for it
 #   TMPDIR=<dir>       where the scratch folder goes (default: your private temp folder; use one only
 #                      this run uses: it holds the scratch HOMEs while the game runs)
 #
@@ -150,7 +153,11 @@ run_scenario() {
 	done
 	common="+set regress_log \"$log\" +set r_fullscreen 0 +set r_swapInterval 0 +set com_maxfps 0 ${REGRESS_ARGS:-}"
 	sp="+set com_holomatch 0 $common"
-	hm="+set com_holomatch 1 $common +set sv_hostname Regress +set sv_master1 \"\" +set sv_master2 \"\" +set sv_master3 \"\" +set g_gametype 0 +set bot_enable 1 +set bot_minplayers 4 +set sv_maxclients 8 +set net_port $PORT"
+	# the stock game modules (pak2): the app's cMod modules (by Noah Metzger, macos/cmod) are other game code
+	# and would change every Holomatch run; REGRESS_CMOD=1 keeps them (for a baseline of its own)
+	stock="+set sv_cmodGame 0 +set cl_cmodModules 0"
+	[ -n "${REGRESS_CMOD:-}" ] && stock=""
+	hm="+set com_holomatch 1 $common $stock +set sv_hostname Regress +set sv_master1 \"\" +set sv_master2 \"\" +set sv_master3 \"\" +set g_gametype 0 +set bot_enable 1 +set bot_minplayers 4 +set sv_maxclients 8 +set net_port $PORT"
 	case "$sc" in
 	sp-borg1)      args="$sp +set regress_frames 2000 +map borg1" ;;
 	sp-save)       cp "$SAVE" "$D/saves/regress.sav"

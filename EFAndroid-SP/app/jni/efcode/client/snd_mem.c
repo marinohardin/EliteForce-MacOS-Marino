@@ -206,6 +206,54 @@ static int ResampleSfxRaw( short *sfx, int channels, int inrate, int inwidth, in
 
 /*
 ==============
+S_ComputeLipSync
+
+The lip sync looks at the sound's own samples, every 100th
+sample at 22 kHz, and at the loudest one (found once when the sound loads and kept
+with the sfx). Kept here as an 8 bit copy so it works for every load path (ADPCM included) and
+mixer rate. Used by S_Base_VoiceLipSync.
+==============
+*/
+static void S_ComputeLipSync( sfx_t *sfx, const snd_info_t *info, const byte *pcm )
+{
+	int		i, k, n, v, frame;
+	double	step;
+
+	free( sfx->lipSamples );
+	sfx->lipSamples = NULL;
+	sfx->lipCount = 0;
+	sfx->lipVolRange = 0;
+	if ( info->samples <= 0 || info->rate <= 0 || info->channels <= 0 ) {
+		return;
+	}
+
+	for ( i = 0; i < info->samples; i++ ) {
+		frame = i * info->channels;
+		v = ( info->width == 2 ) ? ( ((const short *)pcm)[frame] >> 8 ) : ( (int)pcm[frame] - 128 );
+		if ( v < 0 ) v = -v;
+		if ( v > sfx->lipVolRange ) sfx->lipVolRange = v;
+	}
+
+	step = info->rate * 100.0 / 22050.0;	// source frames per 100 samples at 22 kHz
+	n = (int)( info->samples / step ) + 1;
+	sfx->lipSamples = malloc( n );
+	if ( !sfx->lipSamples ) {
+		return;
+	}
+	for ( k = 0; k < n; k++ ) {
+		i = (int)( k * step );
+		if ( i >= info->samples ) {
+			break;
+		}
+		frame = i * info->channels;
+		v = ( info->width == 2 ) ? ( ((const short *)pcm)[frame] >> 8 ) : ( (int)pcm[frame] - 128 );
+		sfx->lipSamples[k] = (signed char)( v > 127 ? 127 : v );
+	}
+	sfx->lipCount = k;
+}
+
+/*
+==============
 S_LoadSound
 
 The filename may be different than sfx->name in the case
@@ -231,6 +279,8 @@ qboolean S_LoadSound( sfx_t *sfx )
 	if ( info.rate != 22050 ) {
 		Com_DPrintf(S_COLOR_YELLOW "WARNING: %s is not a 22kHz audio file\n", sfx->soundName);
 	}
+
+	S_ComputeLipSync( sfx, &info, data + info.dataofs );
 
 	samples = Hunk_AllocateTempMemory(info.channels * info.samples * sizeof(short) * 2);
 

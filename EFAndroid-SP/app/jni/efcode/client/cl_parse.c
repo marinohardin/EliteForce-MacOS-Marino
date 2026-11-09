@@ -338,6 +338,46 @@ int cl_connectedToCheatServer;
 
 /*
 ==================
+CL_ParseModcfg
+
+From cMod by Noah Metzger (Chomenor): a cMod server tells clients about its
+game module in a configstring starting with "!modcfg " (an info string).
+nativeCgame / nativeUI 2 ask clients to use cMod's own cgame / ui even where
+they'd keep another one (qcommon/files.c, "cMod game modules"). The other
+keys (weaponPredict and so on) are for cMod's cgame, which reads them itself.
+==================
+*/
+void CL_ParseModcfg( void ) {
+	int i, nativeCgame = 0, nativeUI = 0;
+	char key[BIG_INFO_KEY], value[BIG_INFO_VALUE];
+
+	if ( !Com_Holomatch() ) {
+		return;
+	}
+	for ( i = 0; i < MAX_CONFIGSTRINGS; i++ ) {
+		const char *str = cl.gameState.stringData + cl.gameState.stringOffsets[i];
+
+		if ( str[0] != '!' || Q_stricmpn( str, "!modcfg ", 8 ) || strlen( str ) >= BIG_INFO_STRING ) {
+			continue;
+		}
+		str += 8;
+		while ( 1 ) {
+			Info_NextPair( &str, key, value );
+			if ( !key[0] ) {
+				break;
+			}
+			if ( !Q_stricmp( key, "nativeCgame" ) ) {
+				nativeCgame = atoi( value );
+			} else if ( !Q_stricmp( key, "nativeUI" ) ) {
+				nativeUI = atoi( value );
+			}
+		}
+	}
+	FS_SetCmodModcfg( nativeCgame, nativeUI );
+}
+
+/*
+==================
 CL_SystemInfoChanged
 
 The systeminfo configstring has been changed, so parse
@@ -551,6 +591,9 @@ void CL_ParseGamestate( msg_t *msg ) {
 
 	// parse serverId and other cvars
 	CL_SystemInfoChanged();
+
+	// the server's wishes for cgame/ui (cMod's !modcfg), before they load
+	CL_ParseModcfg();
 
 	// stop recording now so the demo won't have an unnecessary level load at the end.
 	if(cl_autoRecordDemo->integer && clc.demorecording)

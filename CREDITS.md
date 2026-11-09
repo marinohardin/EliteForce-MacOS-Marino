@@ -46,6 +46,11 @@ idTech3 lineage, all **GPLv2**:
   [docs/macos-port-notes.md](docs/macos-port-notes.md). cMod is the result of years of careful work
   on Elite Force multiplayer, and Noah kindly offered to collaborate on this port. Huge thanks.
   <https://github.com/Chomenor/ioef-cmod> · <https://stvef.org/cmod/>
+- **cMod game modules** — **Noah Metzger (Chomenor)** — his released Holomatch cgame, ui and qagame
+  (`pakcmod-release-2023-09-18.pk3`), bundled unchanged with his permission in
+  `Contents/Resources/cmod`: the widescreen HUD and menus, lag compensation for servers you host,
+  weapon fire prediction and many game fixes. Built from Raven's game source (see below), so under
+  Raven's Limited Use license, not the GPL. <https://github.com/Chomenor/cmod-game-code>
 - **VoyagerNX** — faithvoid — the Nintendo Switch port that proved the ARM + console-controls path this
   Android lineage started from. <https://github.com/faithvoid/VoyagerNX>
 

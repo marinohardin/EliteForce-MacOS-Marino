@@ -91,6 +91,9 @@ extern "C" {
     unsigned char *CM_ClusterPVS( int cluster );
     qboolean CM_AreasConnected( int area1, int area2 );
     void  CM_AdjustAreaPortalState( int area1, int area2, qboolean open );
+    int   CM_PortalStateSize( void );                      // save 'PRTS': numAreas^2 ref counts (bytes)
+    const int *CM_PortalState( void );
+    qboolean CM_SetPortalState( const int *counts, int size );
     int   CM_BoxLeafnums( const vec3_t mins, const vec3_t maxs, int *list, int listsize, int *lastLeaf );
     void  Cvar_Register( vmCvar_t *vmCvar, const char *varName, const char *defaultValue, int flags );
     void  Cvar_Update( vmCvar_t *vmCvar );
@@ -137,7 +140,11 @@ static int        g_numLinked = 0;
 static char       g_curMap[64] = {0};   // current SP map name (for save framing + transitions)
 static int        g_entClip[SP_MAX_ENT];   // bmodel clipHandle per entity number (for mover traces)
 static int        g_entArea[SP_MAX_ENT][2]; // [0]=areanum [1]=areanum2 (-1 none); per-entity, set at link (retail svEntity_t)
-static qboolean   g_entPortalOpen[SP_MAX_ENT]; // per-door areaportal open state -> idempotent guard vs CM ref-count under/overflow
+static signed char g_entPortalOpen[SP_MAX_ENT]; // per-door areaportal state: 1 open, 0 closed, -1 unknown (a load
+                                                // restored CM's counts from the save's PRTS) -> guard vs CM ref-count drift
+static int        *g_loadPortals = NULL;        // a user load's PRTS chunk, applied in SP_FinishTransition
+static int         g_loadPortalsSize = 0;
+static void SP_DropLoadPortals( void ){ free(g_loadPortals); g_loadPortals = NULL; g_loadPortalsSize = 0; }
 static int SP_EntNum( gentity_t *e ){ return (int)(((unsigned char*)e - (unsigned char*)ge->gentities) / ge->gentitySize); }
 
 
@@ -434,8 +441,17 @@ static void W_AdjustAreaPortalState( gentity_t *ent, qboolean open ){
     int eNum = SP_EntNum(ent);
     if( eNum < 0 || eNum >= SP_MAX_ENT ) return;
     if( g_entArea[eNum][1] == -1 ) return;            // doesn't straddle two areas -> no portal to toggle
-    if( g_entPortalOpen[eNum] == open ) return;       // already in this state -> avoid CM ref-count drift
-    g_entPortalOpen[eNum] = open;
+    signed char was = g_entPortalOpen[eNum];
+    if( was == (open ? 1 : 0) ) return;               // already in this state -> avoid CM ref-count drift
+    g_entPortalOpen[eNum] = open ? 1 : 0;
+    // Unknown (the portal counts came from a save, which doesn't say which entity holds them): a close only
+    // releases a portal that is actually held open, so it can't go negative (CM ERR_DROPs on that).
+    if( was < 0 && !open ){
+        int a1 = g_entArea[eNum][0], a2 = g_entArea[eNum][1];
+        int size = CM_PortalStateSize(), n = 0;
+        while( (n+1)*(n+1)*(int)sizeof(int) <= size ) n++;
+        if( a1 < 0 || a2 < 0 || a1 >= n || a2 >= n || CM_PortalState()[a1*n + a2] <= 0 ) return;
+    }
     CM_AdjustAreaPortalState( g_entArea[eNum][0], g_entArea[eNum][1], open );
 }
 static qboolean W_AreasConnected( int a, int b ){ return CM_AreasConnected(a,b); }
@@ -547,6 +563,7 @@ static int   g_sOverride[MAX_GENTITIES];
 // g_sOverride[] from that each frame before ge->RunFrame.
 static int   g_voiceEnd[MAX_GENTITIES];
 extern "C" int S_StopAllSoundsCount( void );   // snd_main.c: bumps on every S_StopAllSounds / S_StopGameSounds
+extern "C" qboolean S_VoiceLipSync( int *levels, int numEntities );   // snd_main.c: lip sync levels
 static void SP_ClearVoiceTimers(void){
     memset(g_voiceEnd, 0, sizeof(g_voiceEnd)); memset(g_sOverride, 0, sizeof(g_sOverride));
 }
@@ -556,6 +573,15 @@ static void SP_ClearVoiceTimers(void){
 // too (retail stops drawing the 3D view during a skip).
 static int   s_spSoundsBlocked = 0;
 static int   s_spSkipDraw = 0;
+static int   s_spWasPaused = 0;     // SP_DrawFrame edge state: the last frame was paused / skipping
+static int   s_spWasSkipping = 0;
+// The gates are set per drawn frame, so the last frame's values outlive the level: quitting from the
+// pause menu left s_spSoundsBlocked at 1, and the next game's level-start frames (run before its first
+// drawn frame) dropped their sounds -- borg1's opening captain's log was lost and its dialog wait ended
+// at once. A new game, load or abort starts with every gate open (SP_UnloadGame).
+static void SP_ResetFrameGates(void){
+    s_spSoundsBlocked = 0; s_spSkipDraw = 0; s_spWasPaused = 0; s_spWasSkipping = 0;
+}
 // Retail cutscene skip: Use Item in a camera scene sets skippingCinematic 1 + timescale 100 and the game
 // clears both when the camera ends (g_active.cpp ClientThink_real); an in-game movie clears them too
 // (cl_cin.c). This ends a skip wherever the level ends without the game seeing the camera end.
@@ -563,6 +589,34 @@ static void SP_EndCutsceneSkip(void){
     if( Cvar_VariableIntegerValue("skippingCinematic") ){
         Cvar_Set("skippingCinematic", "0");
         Cvar_Set("timescale", "1");
+    }
+}
+// gi.S_Override[ent] is the face, not a flag: the cgame draws head->customSkin = ci->headSkin + S_Override.
+// The head skins are -1 blink, -2 frown, -3 frown+blink, -4 neutral, -5..-8 mouth shapes. The sound
+// code sets it from the voice's own volume: -1 while talking but quiet (eyes open, mouth at rest), 5..8 by
+// loudness, 0 when not talking (the cgame then blinks and frowns on its own). The mixer computes the same
+// thing now (S_VoiceLipSync, snd_dma.c). The value also gates the dialog `wait` (nonzero keeps the script's
+// TID_CHAN_VOICE task pending), which g_voiceEnd keeps timing, so a talker is never 0 before its line ends.
+// Called every sim tick and every render frame (the cgame reads the array while drawing).
+// With the regression harness on, the mixer's level is not used: it follows the sound playing on the wall
+// clock, and the cgame's head bob (CG_AddHeadBob) draws random numbers when it jumps, so game state
+// would vary from run to run. The fixed mouth cycle below keeps runs identical.
+static void SP_UpdateVisemes(void){
+    static int levels[MAX_GENTITIES];
+    qboolean mixer = S_VoiceLipSync( levels, MAX_GENTITIES ) && !Regress_Active();
+    for(int i=0;i<MAX_GENTITIES;i++){
+        if(g_voiceEnd[i] > g_levelTime){
+            if( mixer ){
+                g_sOverride[i] = levels[i] ? levels[i] : -1;
+            } else {
+                // no lip sync data (OpenAL backend): cycle the mouth shapes at a talking cadence
+                unsigned h = (unsigned)(g_levelTime/80 + i*131);
+                h = h*1103515245u + 12345u;
+                g_sOverride[i] = 5 + (int)((h>>16) % 4);
+            }
+        } else {
+            g_sOverride[i] = 0;
+        }
     }
 }
 static void SP_UpdateVoiceOverride(void){
@@ -581,23 +635,7 @@ static void SP_UpdateVoiceOverride(void){
           SP_ClearVoiceTimers();
       }
       s_lastStops = stops; s_lastTime = g_levelTime; }
-    // gi.S_Override[ent] is the facial VISEME index, not a flag: the cgame draws
-    // head->customSkin = ci->headSkin + S_Override, where the head ships 8 mouth-shape skins
-    // (head_*-1..8) now registered as viseme extensions in the renderer (RE_RegisterSkin). Retail
-    // derives the index from the playing CHAN_VOICE sample amplitude; our ioq3 mixer doesn't export
-    // that yet, so while a voice line plays we APPROXIMATE lip-sync by cycling the viseme 1..8 at a
-    // talking cadence (per-entity phase so characters don't lip-sync in lock-step). 0 = mouth closed
-    // (the cgame then runs its own idle blink/frown). This also still gates the dialog `wait` (any
-    // nonzero value keeps the TID_CHAN_VOICE task pending until g_voiceEnd elapses).
-    for(int i=0;i<MAX_GENTITIES;i++){
-        if(g_voiceEnd[i] > g_levelTime){
-            unsigned h = (unsigned)(g_levelTime/80 + i*131);   // ~12 Hz, offset per entity
-            h = h*1103515245u + 12345u;                        // cheap LCG hash -> natural variation
-            g_sOverride[i] = 1 + (int)((h>>16) % 8);           // viseme 1..8 (mouth shapes)
-        } else {
-            g_sOverride[i] = 0;                                // not talking -> closed/idle
-        }
-    }
+    SP_UpdateVisemes();
 }
 
 // One game frame at g_levelTime. With the regression harness on (qcommon/regress.c), rand() is
@@ -634,6 +672,7 @@ extern "C" void SP_UnloadGame( void ){
     }
     g_lib = NULL; ge = NULL; g_vmMain = NULL; g_camPos = NULL; g_spActive = 0;
     SP_EndCutsceneSkip();   // a load / new game / abort ends any camera-scene skip (timescale back to 1)
+    SP_ResetFrameGates();   // ... and the pause/skip sound and draw gates
     // H3: g_linked[] holds raw gentity_t* into the module we just dlclose'd. Leaving them dangling is a
     // use-after-free waiting for one missing g_spActive gate. The next spawn resets g_numLinked anyway;
     // zero them now so nothing can walk a freed pointer in between.
@@ -722,6 +761,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     // transition takes g_levelTime from the save (SP_LoadGameFile/SP_FinishTransition), unaffected.
     g_numLinked = 0; g_levelTime = 1000;
     memset(g_entPortalOpen, 0, sizeof(g_entPortalOpen));  // New Game: CM (re)loaded -> all areaportals start sealed
+    SP_DropLoadPortals();                                 // a stale, never-applied load's portal state
     Cvar_Set( "cl_paused", "0" );   // EF1 SP 1:1: retail SV_SpawnServer unpauses every spawn (sv_init.c:464)
     memset(g_voiceEnd, 0, sizeof(g_voiceEnd)); memset(g_sOverride, 0, sizeof(g_sOverride)); // fresh map: no stale voices
     // BRIDGE-side statics dlclose does NOT touch (these live in libmain, not libefgame) — reset per map:
@@ -826,33 +866,41 @@ static void BuildGameState(void){
 // borgfieldhum.wav in holodeck.bsp; g_target.cpp links them "so the server can determine who to send updates
 // to") ran on through Tuvok's speech and into the turbolift, quieter only with distance.
 // The bridge still sends every entity, so nothing the cgame draws or predicts changes; it only drops the loop of
-// an entity outside the view's PVS. Only the cluster PVS, which is fixed per map: the area test also depends on
-// the areaportal state, which a save load doesn't restore yet (all portals start closed), so it could silence a
-// loop behind a door that's really open. So this drops a subset of the loops retail dropped, never more.
+// an entity outside the view's PVS, or in an area that a closed door (areaportal) cuts off from the view's area,
+// (a hum behind a shut door is silent). The area test needs the real portal state, which loads
+// restore since 1.4.0 (the save's PRTS chunk). An entity counts as connected if ANY area it touches is,
+// so this never drops a loop that should be heard.
 // No culling when the view is outside the map (no cluster), for unlinked or broadcast entities, or for an
-// entity spanning more leafs than we look at.
-struct SP_View { const unsigned char *pvs; };
+// entity spanning more leafs than we look at. No area test when the view leaf has no area.
+struct SP_View { const unsigned char *pvs; int area; };
 static void SP_GetView( SP_View *v ){
-    v->pvs = NULL;
+    v->pvs = NULL; v->area = -1;
     vec3_t org;
     if( !g_camPos || !g_camPos( org ) ){
         VectorCopy( g_snap.ps.origin, org );
         org[2] += g_snap.ps.viewheight;
     }
-    int cluster = CM_LeafCluster( CM_PointLeafnum( org ) );
+    int leaf = CM_PointLeafnum( org );
+    int cluster = CM_LeafCluster( leaf );
     if( cluster < 0 ) return;
     v->pvs = CM_ClusterPVS( cluster );
+    v->area = CM_LeafArea( leaf );
 }
 static qboolean SP_EntInView( const SP_View *v, gentity_t *e ){
     if( !v->pvs || !e->linked || (e->svFlags & SVF_BROADCAST) ) return qtrue;
     int leafs[128], lastLeaf = 0;
     int num = CM_BoxLeafnums( e->absmin, e->absmax, leafs, 128, &lastLeaf );
     if( num >= 128 ) return qtrue;
-    for( int i = 0; i < num; i++ ){
+    qboolean inPVS = qfalse, anyArea = qfalse, connected = ( v->area < 0 ) ? qtrue : qfalse;
+    for( int i = 0; i < num && !(inPVS && connected); i++ ){
         int c = CM_LeafCluster( leafs[i] );
-        if( c >= 0 && (v->pvs[c >> 3] & (1 << (c & 7))) ) return qtrue;
+        if( c >= 0 && (v->pvs[c >> 3] & (1 << (c & 7))) ) inPVS = qtrue;
+        if( !connected ){
+            int a = CM_LeafArea( leafs[i] );
+            if( a >= 0 ){ anyArea = qtrue; if( CM_AreasConnected( v->area, a ) ) connected = qtrue; }
+        }
     }
-    return qfalse;
+    return ( inPVS && ( connected || !anyArea ) ) ? qtrue : qfalse;
 }
 
 static void BuildSnapshot(void){
@@ -1117,7 +1165,10 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     }
     if( s_spSoundsBlocked ){   // paused or skipping: no new game sounds (the music still plays)
         switch(cmd){
-        case CG_S_STARTSOUND: case CG_S_STARTLOCALSOUND: case CG_S_ADDLOOPINGSOUND:
+        case CG_S_STARTSOUND:
+            if( (int)A(2) == 3 || (int)A(2) == 4 ) blog("voice: dropped start on ent %d (sounds blocked)\n", (int)A(1));
+            return 0;
+        case CG_S_STARTLOCALSOUND: case CG_S_ADDLOOPINGSOUND:
             return 0;
         default: break;
         }
@@ -1238,7 +1289,7 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
             int dur = SPR_S_GetSampleLength(sSfx);
             g_voiceEnd[sEnt] = g_levelTime + (dur>0 ? dur : 2500);
             blog("voice: ent %d talks %d ms from levelTime %d\n", sEnt, dur>0 ? dur : 2500, g_levelTime);
-            g_sOverride[sEnt] = 1;
+            g_sOverride[sEnt] = -1;   // talking, mouth at rest until the mixer has a level
         }
         return 0; }
     case CG_S_STARTLOCALSOUND:    SPR_S_StartLocalSound((int)A(0),(int)A(1)); return 0;
@@ -1451,6 +1502,21 @@ extern "C" qboolean SP_FinishTransition(void){
     } else if( s_sgFile ){
         SG_Close();   // forward transition (eAUTO): discard the level snapshot; the player carries via cvars
     }
+    // A user (eFULL) load: put back which areaportals were open,
+    // after the spawn. Without it every door read as closed after a load: an open door blocked sight, and the
+    // CM counts no longer matched the doors. The save doesn't record which entity holds which portal, so the
+    // per-entity guard goes to "unknown" (see W_AdjustAreaPortalState). An autosave (eAUTO) respawns every entity
+    // fresh, with its doors closed, so its counts are not applied.
+    if( g_transGameFlag == 0 && g_loadPortals ){
+        if( CM_SetPortalState( g_loadPortals, g_loadPortalsSize ) ){
+            memset(g_entPortalOpen, -1, sizeof(g_entPortalOpen));
+            int open=0; for(int i=0;i<g_loadPortalsSize/(int)sizeof(int);i++) if(g_loadPortals[i]>0) open++;
+            blog("SP_FinishTransition: restored areaportal state (%d bytes, %d open entries)\n", g_loadPortalsSize, open);
+        } else {
+            blog("SP_FinishTransition: save's areaportal state is %d bytes, map has %d -> ignored\n", g_loadPortalsSize, CM_PortalStateSize());
+        }
+    }
+    SP_DropLoadPortals();
     memset(&g_lastcmd,0,sizeof(g_lastcmd)); g_lastcmd.serverTime = g_levelTime;
     SP_ResetViewAngles();   // the usercmd angles restart at 0, matching g_lastcmd (see SP_ResetViewAngles)
     ge->ClientBegin(0, &g_lastcmd, sg);
@@ -1624,10 +1690,9 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
     }
     I_Append('TIME', &tnow, 4);
     I_Append('TIMR', &zero, 4);
-    // PRTS: retail emits a particle/precip grid chunk here, between TIMR and CSCN. The port
-    // doesn't simulate that grid (particles reseed on spawn), but write a zero PRTS so the chunk stream is
-    // structurally retail-identical and frames the same on both sides; SP_LoadGameFile read-skips it.
-    { static unsigned char prts[1296]; I_Append('PRTS', prts, (int)sizeof(prts)); }
+    // PRTS: the areaportal reference counts (numAreas^2 ints). Which doors
+    // are open, so sight, PVS and sound culling stay right after a load. (1.3.0 and older wrote 1296 zero bytes.)
+    I_Append('PRTS', (void*)CM_PortalState(), CM_PortalStateSize());
     // CSCN/CSIN/CSDA: persist the configstring table so a load can rebuild the EXACT index->string map that
     // every entity's s.modelindex (and the cgame's model_draw[]/sound indices) were assigned against. The
     // bridge's g_configstrings lives in libmain and is NEVER cleared per-map, so a load that doesn't restore
@@ -1749,7 +1814,11 @@ extern "C" void SP_LoadGameFile(const char* name){
         for(int i=0;i<32;i++){ char d[512]; d[0]=0; I_ReadSG('ADPT', d,0,0); d[sizeof(d)-1]=0; char nm[32]; snprintf(nm,sizeof(nm),"borgadapt%d",i); Cvar_Set(nm,d); }
     }
     I_ReadSG('TIME',&tnow,4,0); I_ReadSG('TIMR',&timr,4,0);
-    { void* pr=0; if(I_ReadSGOpt('PRTS',0,0,&pr)>0 && pr) free(pr); }   // L-1: consume retail's particle-grid chunk if present
+    // PRTS: the areaportal counts. CM isn't loaded for the save's map yet, so keep it
+    // for SP_FinishTransition. Old port saves wrote zeros here (all doors closed: what they loaded as before).
+    SP_DropLoadPortals();
+    { void* pr=0; int n=I_ReadSGOpt('PRTS',0,0,&pr);
+      if( n>0 && pr && game==0 ){ g_loadPortals=(int*)pr; g_loadPortalsSize=n; } else free(pr); }
     I_ReadSG('CSCN',&cscn,4,0);
     // Restore the saved configstring table (retail SV_ReadGame: clear the whole table, then write each saved
     // index->string back). The cgame's model_draw[]/sound indices and every entity's s.modelindex were assigned
@@ -1949,7 +2018,6 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     // ClientThink/RunFrame; just re-draw the frozen frame behind the menu. (lastReal is already updated
     // above, so unpausing won't time-jump.)
     { extern int SP_MenuPaused(void);
-      static int s_wasPaused = 0;
       if( SP_MenuPaused() ){
         // Hold the game's sounds and the music where they are (S_PauseGameSounds): they used to be
         // stopped with S_StopAllSounds on this edge, which lost the music and the current voice line for
@@ -1959,7 +2027,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         // dropped while paused (s_spSoundsBlocked).
         S_PauseGameSounds( qtrue );
         s_spSoundsBlocked = 1;
-        if( !s_wasPaused ){ s_wasPaused = 1;
+        if( !s_spWasPaused ){ s_spWasPaused = 1;
             // Grab the save-menu thumbnail ONCE here, on the gameplay->menu edge (not every gameplay
             // second). The capture is a full-screen GPU readback that stalls the Adreno pipeline ~100ms;
             // doing it per-second during play was the dominant stutter. You only save from this menu, so a
@@ -1989,7 +2057,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         S_ClearLoopingSounds(qtrue);
         return;
       }
-      if( s_wasPaused ){ s_wasPaused = 0; blog("EFSP: unpaused: game sounds resume\n"); }
+      if( s_spWasPaused ){ s_spWasPaused = 0; blog("EFSP: unpaused: game sounds resume\n"); }
       S_PauseGameSounds( qfalse );   // resume held sounds where they were (no-op when not held)
     }
 
@@ -1998,16 +2066,15 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     // and a load / quit ends it (SP_UnloadGame, CL_Disconnect). While skipping, timescale drives the sim
     // (below), the 3D view isn't drawn (a progress screen instead), and the game's sounds stop -- like
     // retail, which killed every sound but the music when a skip started.
-    static int s_wasSkipping = 0;
     int skipping = Cvar_VariableIntegerValue("skippingCinematic");
-    if( skipping && !s_wasSkipping ){
+    if( skipping && !s_spWasSkipping ){
         S_StopGameSounds();      // effects, voices, loops; the music plays on
         SP_ClearVoiceTimers();
         blog("EFSP: cutscene skip started (timescale %g)\n", Cvar_VariableValue("timescale"));
-    } else if( !skipping && s_wasSkipping ){
+    } else if( !skipping && s_spWasSkipping ){
         blog("EFSP: cutscene skip ended at levelTime %d\n", g_levelTime);
     }
-    s_wasSkipping = skipping;
+    s_spWasSkipping = skipping;
     s_spSoundsBlocked = skipping;
     g_spMovieQueued = 0;
 
@@ -2053,6 +2120,11 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         g_lastcmd.serverTime = g_levelTime;
         Regress_SeedRand( g_levelTime );
         ge->ClientThink(0, &g_lastcmd);
+        // The game ends a skip in ClientThink (the camera is over: skippingCinematic 0, timescale 1), and the
+        // RunFrame right after it is already normal play: the script's next voice line starts there. Blocking
+        // sounds for the whole frame (from `skipping` above) dropped that line, and with no voice timer the
+        // dialog wait finished at once, so the line was lost for good.
+        if( skipping ) s_spSoundsBlocked = Cvar_VariableIntegerValue("skippingCinematic") ? 1 : 0;
         SP_GameRunFrame();
         BuildSnapshot();
         if( skipping ){
@@ -2086,6 +2158,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     int skipNow = Cvar_VariableIntegerValue("skippingCinematic") && !g_spMovieQueued;
     s_spSoundsBlocked = skipNow;
     s_spSkipDraw = skipNow;
+    SP_UpdateVisemes();   // mouths follow the voice per render frame, not per sim tick
     SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
     s_spSkipDraw = 0;
     if( skipNow ){
