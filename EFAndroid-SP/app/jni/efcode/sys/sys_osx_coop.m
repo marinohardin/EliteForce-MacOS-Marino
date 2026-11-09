@@ -11,8 +11,12 @@ The Single Player card gets a "Co-op…" button. Its sheet has:
     +set sp_coop 1 (the latched cvar that turns co-op on at the next level
     start). The sheet lists this Mac's network addresses for the friend.
   - Join: an address field and Check, which asks that address whether a
-    co-op game runs there and shows what the host answers. Connect stays
-    disabled: joining over the network comes with co-op M1.
+    co-op game runs there and shows what the host answers. Connect (after a
+    Check found a game) plays single player with +set coop_connect <address>:
+    the engine joins that host as player 2 (sys_coop_net.c).
+  - An optional password: the host's (a guest must give it) on the Host side,
+    the one to send on the Join side. It is handed to the engine directly
+    (Sys_CoopSetLaunchPassword), never on the command line or in the log.
 
 The host's answer (the engine side, below): single player runs with the
 engine's networking off (net_enabled is 0 there), so a co-op host opens a
@@ -22,9 +26,11 @@ answers one connectionless query, polled once a frame from Com_Frame:
   <- "\xff\xff\xff\xffcoopInfoResponse\n" and an infostring with
      coopProtocol, version (the app's), hostname (the Mac's name), state
      (playing / menu), map, mission (the level's title), skill (g_spskill),
-     players, maxPlayers, time (seconds of game time on the level) and the
-     challenge (up to 32 letters, digits, - or _ of the query; nothing else of
-     a query is ever sent back).
+     players, maxPlayers, time (seconds of game time on the level),
+     needPassword (1 when the host set a password), guest (1 while a guest is
+     connected) and the challenge (up to 32 letters, digits, - or _ of the
+     query; nothing else of a query is ever sent back).
+Every other packet on the port goes to the co-op connection (sys_coop_net.c).
 The game publishes mission, players and time in the cvars coop_mission,
 coop_players and coop_time (efgame/src/coop/coop_info.cpp). Replies are rate
 limited as the server's getinfo is: 10 a second per address, 10 per 100 ms
@@ -219,12 +225,14 @@ static void CoopCloseSocket( void )
 {
 	if( coopSocket < 0 )
 		return;
+	CoopNet_HostShutdown( coopSocket, "the host stopped co-op" );
 	close( coopSocket );
 	coopSocket = -1;
 	Com_Printf( "co-op: no longer answering co-op checks\n" );
 }
 
-static void CoopAnswer( const char *packet, int len, const struct sockaddr_in *from )
+// A co-op check: answer it (unless rate limited) and return YES; NO for any other packet.
+static BOOL CoopAnswer( const char *packet, int len, const struct sockaddr_in *from )
 {
 	char cmd[64], challenge[33], info[MAX_INFO_STRING], reply[MAX_INFO_STRING + 32];
 	const char *p;
@@ -233,15 +241,15 @@ static void CoopAnswer( const char *packet, int len, const struct sockaddr_in *f
 
 	// "\xff\xff\xff\xffgetcoopinfo" and an optional challenge; anything else is dropped
 	if( len < 4 + (int)strlen( COOP_QUERY ) || memcmp( packet, COOP_OOB, 4 ) )
-		return;
+		return NO;
 	len = MIN( len - 4, (int)sizeof( cmd ) - 1 );
 	memcpy( cmd, packet + 4, len );
 	cmd[len] = 0;
 	if( strncmp( cmd, COOP_QUERY, strlen( COOP_QUERY ) ) )
-		return;
+		return NO;
 	p = cmd + strlen( COOP_QUERY );
 	if( *p && *p != ' ' && *p != '\n' )
-		return;
+		return NO;
 	while( *p == ' ' )
 		p++;
 	for( ; n < (int)sizeof( challenge ) - 1 && ( isalnum( (unsigned char)*p ) || *p == '-' || *p == '_' ); p++ )
@@ -249,7 +257,7 @@ static void CoopAnswer( const char *packet, int len, const struct sockaddr_in *f
 	challenge[n] = 0;
 
 	if( CoopAddressLimited( from->sin_addr.s_addr ) || CoopRateLimited( &coopOutbound, 10, 100 ) )
-		return;
+		return YES;
 
 	playing = SP_IsActive() && SP_CurMap()[0];
 	info[0] = 0;
@@ -266,26 +274,41 @@ static void CoopAnswer( const char *packet, int len, const struct sockaddr_in *f
 	CoopSetInfo( info, "skill", va( "%d", Cvar_VariableIntegerValue( "g_spskill" ) ) );
 	CoopSetInfo( info, "players", va( "%d", playing ? MAX( 1, Cvar_VariableIntegerValue( "coop_players" ) ) : 1 ) );
 	CoopSetInfo( info, "maxPlayers", "2" );
+	CoopSetInfo( info, "needPassword", CoopNet_HostNeedsPassword() ? "1" : "0" );
+	CoopSetInfo( info, "guest", CoopNet_HostHasGuest() ? "1" : "0" );
 	if( challenge[0] )
 		CoopSetInfo( info, "challenge", challenge );
 
 	n = Com_sprintf( reply, sizeof( reply ), COOP_OOB COOP_RESPONSE "\n%s", info );
 	sendto( coopSocket, reply, n, 0, (const struct sockaddr *)from, sizeof( *from ) );
+	return YES;
 }
 
 /*
 =================
 Sys_CoopFrame
 
-Once a frame (Com_Frame, EF_COOP builds): while single player runs with
-sp_coop 1, answer co-op checks on VSP_COOP_PORT. Does nothing otherwise.
+Once a frame (Com_Frame, EF_COOP builds): a guest (coop_connect set) runs
+its connection; while single player runs with sp_coop 1 (and this copy isn't a
+guest), answer co-op checks on VSP_COOP_PORT and run the host's side of the
+connection. Does nothing else otherwise.
 =================
 */
 void Sys_CoopFrame( void )
 {
-	char packet[256];
+	static BOOL registered;
+	char packet[COOP_MAX_PACKET];
 
-	if( Com_Holomatch() || Com_DedicatedServer() || Cvar_VariableIntegerValue( "sp_coop" ) != 1 )
+	if( !registered && !Com_Holomatch() && !Com_DedicatedServer() )
+	{
+		// so coop_connect, coop_password and coop_status work from the console
+		registered = YES;
+		Cvar_Get( "coop_connect", "", CVAR_TEMP );
+		Cvar_Get( "coop_password", "", CVAR_TEMP );
+		CoopNet_AddCommands();
+	}
+	CoopNet_GuestFrame();
+	if( Com_Holomatch() || Com_DedicatedServer() || Cvar_VariableIntegerValue( "sp_coop" ) != 1 || CoopNet_GuestActive() )
 	{
 		CoopCloseSocket();
 		return;
@@ -300,9 +323,11 @@ void Sys_CoopFrame( void )
 
 		if( n <= 0 )
 			break;
-		if( fromLen == sizeof( from ) && from.sin_family == AF_INET )
-			CoopAnswer( packet, (int)n, &from );
+		if( fromLen == sizeof( from ) && from.sin_family == AF_INET && !CoopAnswer( packet, (int)n, &from ) )
+			CoopNet_HostPacket( coopSocket, (const unsigned char *)packet, (int)n, &from );
 	}
+	if( coopSocket >= 0 )
+		CoopNet_HostFrame( coopSocket );
 }
 
 /* ------------------------------------------------------------------------
@@ -498,12 +523,14 @@ static NSArray<NSDictionary *> *CoopLANAddresses( void )
 @end
 
 static BOOL coopHostChosen;
+static NSString *coopJoinAddress;	// Connect: the host's "address:port"
 
-@interface VSPCoopController : NSObject
+@interface VSPCoopController : NSObject <NSTextFieldDelegate>
 @property (nonatomic, strong) NSWindow *panel;
 @property (nonatomic, weak) id<VSPCoopLauncher> launcher;
 - (void)check: (id)sender;
 - (void)host: (id)sender;
+- (void)connect: (id)sender;
 - (void)cancel: (id)sender;
 @property (nonatomic, readonly) NSTextField *address;
 @property (nonatomic, copy) void ( ^checked )( NSDictionary *result );	// tests
@@ -534,8 +561,11 @@ static NSString *CoopSkillName( NSString *skill )
 	NSTextField *resultTitle, *resultText;
 	NSImageView *resultIcon;
 	NSProgressIndicator *spinner;
-	NSButton *checkButton, *hostButton;
+	NSButton *checkButton, *hostButton, *connectButton;
+	NSSecureTextField *hostPassword, *joinPassword;
 	NSView *resultRow;
+	NSString *foundAddress;		// the last Check found a game there ("address:port"); Connect joins it
+	NSDictionary *foundInfo;
 	BOOL checking;
 }
 
@@ -570,15 +600,22 @@ static NSString *CoopSkillName( NSString *skill )
 		list = VSP_Label( @"No network found. Connect this Mac to Wi-Fi or Ethernet first.",
 			[NSFont systemFontOfSize: 12], [NSColor systemOrangeColor] );
 	note = VSP_WrapLabel( [NSString stringWithFormat: @"Co-op uses UDP port %d. macOS may ask whether Elite Force can "
-		@"find devices on your local network: allow it. Until the next co-op update, player 2 is a stand-in on this Mac "
-		@"that follows you.", VSP_COOP_PORT], [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+		@"find devices on your local network: allow it. Player 2 follows you until your friend joins, then your friend "
+		@"steers player 2. (Your friend doesn’t see your game yet: that comes with the next co-op update.)", VSP_COOP_PORT],
+		[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
 	for( NSTextField *t in @[ intro, note ] )
 		[t setPreferredMaxLayoutWidth: 400];
 	hostButton = [NSButton buttonWithTitle: @"Host" target: self action: @selector(host:)];
 	[hostButton setEnabled: canPlay];
 	[hostButton setToolTip: canPlay ? @"Play single player with co-op on" : @"Add the game files first"];
 	[[hostButton widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
-	col = CoopStack( @[ intro, list, note ], NSUserInterfaceLayoutOrientationVertical, 8 );
+	hostPassword = [[NSSecureTextField alloc] init];
+	[hostPassword setPlaceholderString: @"none"];
+	[[hostPassword widthAnchor] constraintEqualToConstant: 160].active = YES;
+	col = CoopStack( @[ intro, list,
+		CoopStack( @[ VSP_Label( @"Password (optional)", [NSFont systemFontOfSize: 12], nil ), hostPassword ],
+			NSUserInterfaceLayoutOrientationHorizontal, 8 ),
+		note ], NSUserInterfaceLayoutOrientationVertical, 8 );
 	row = CoopStack( @[ col, hostButton ], NSUserInterfaceLayoutOrientationHorizontal, 16 );
 	[row setAlignment: NSLayoutAttributeTop];
 	[hostButton setContentHuggingPriority: NSLayoutPriorityRequired forOrientation: NSLayoutConstraintOrientationHorizontal];
@@ -588,12 +625,14 @@ static NSString *CoopSkillName( NSString *skill )
 - (NSView *)joinGroup
 {
 	NSTextField *label = VSP_Label( @"Host’s address", [NSFont systemFontOfSize: 12], nil );
-	NSButton *connect = [NSButton buttonWithTitle: @"Connect" target: nil action: nil];
-	NSTextField *later = VSP_WrapLabel( @"Joining a co-op game comes with the next co-op update (M1)",
-		[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
-	NSStackView *line, *result, *texts, *bottom, *col;
+	NSTextField *later = VSP_WrapLabel( @"Connect starts single player and joins the game as player 2. For now you "
+		@"steer player 2 in the host’s game while you see your own copy of the level; seeing the host’s game comes with "
+		@"the next co-op update.", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+	NSStackView *line, *result, *texts, *bottom, *col, *pass;
 
+	[later setPreferredMaxLayoutWidth: 380];
 	_address = [NSTextField textFieldWithString: @""];
+	[_address setDelegate: self];
 	[_address setPlaceholderString: [NSString stringWithFormat: @"192.168.1.20, or address:port (default %d)", VSP_COOP_PORT]];
 	[_address setTarget: self];
 	[_address setAction: @selector(check:)];
@@ -622,10 +661,19 @@ static NSString *CoopSkillName( NSString *skill )
 	resultRow = result;
 	[resultRow setHidden: YES];
 
-	[connect setEnabled: NO];
-	[connect setToolTip: @"Joining a co-op game comes with the next co-op update (M1)"];
-	bottom = CoopStack( @[ connect, later ], NSUserInterfaceLayoutOrientationHorizontal, 10 );
-	col = CoopStack( @[ line, result, bottom ], NSUserInterfaceLayoutOrientationVertical, 12 );
+	joinPassword = [[NSSecureTextField alloc] init];
+	[joinPassword setPlaceholderString: @"if the host set one"];
+	[[joinPassword widthAnchor] constraintEqualToConstant: 160].active = YES;
+	pass = CoopStack( @[ VSP_Label( @"Password", [NSFont systemFontOfSize: 12], nil ), joinPassword ],
+		NSUserInterfaceLayoutOrientationHorizontal, 8 );
+
+	connectButton = [NSButton buttonWithTitle: @"Connect" target: self action: @selector(connect:)];
+	[connectButton setEnabled: NO];
+	[connectButton setToolTip: @"Check the address first"];
+	[[connectButton widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
+	bottom = CoopStack( @[ connectButton, later ], NSUserInterfaceLayoutOrientationHorizontal, 10 );
+	[bottom setAlignment: NSLayoutAttributeTop];
+	col = CoopStack( @[ line, pass, result, bottom ], NSUserInterfaceLayoutOrientationVertical, 12 );
 	return VSP_Group( @"JOIN", col );
 }
 
@@ -714,7 +762,10 @@ static NSString *CoopDescribe( NSDictionary *info )
 		[lines addObject: s];
 	}
 	[lines addObject: [NSString stringWithFormat: @"Players: %d of %d%@", MAX( players, 1 ), maxPlayers > 0 ? maxPlayers : 2,
-		players >= 2 ? @" (the host, and player 2 as a stand-in on the host’s Mac)" : @" (the host)"]];
+		[info[@"guest"] isEqualToString: @"1"] ? @" (the host, and a friend as player 2: the game is full)" :
+		players >= 2 ? @" (the host, and player 2 as a stand-in on the host’s Mac until a friend joins)" : @" (the host)"]];
+	if( [info[@"needPassword"] isEqualToString: @"1"] )
+		[lines addObject: @"The host set a password."];
 	[lines addObject: [NSString stringWithFormat: @"Host’s app: Elite Force for Mac %@ · co-op version %@",
 		info[@"version"] ? info[@"version"] : @"?", info[@"coopProtocol"] ? info[@"coopProtocol"] : @"?"]];
 	return [lines componentsJoinedByString: @"\n"];
@@ -726,6 +777,13 @@ static NSString *CoopDescribe( NSDictionary *info )
 	NSDictionary *info = r[@"info"];
 	NSString *host = [info[@"hostname"] length] ? [NSString stringWithFormat: @" on “%@”", info[@"hostname"]] : @"";
 
+	BOOL found = [status isEqualToString: @"found"] && r[@"address"];
+
+	foundAddress = found ? r[@"address"] : nil;
+	foundInfo = found ? info : nil;
+	[connectButton setEnabled: found && [_launcher canPlay]];
+	[connectButton setToolTip: found ? [NSString stringWithFormat: @"Join %@ as player 2", r[@"address"]] :
+		@"Check the address first"];
 	if( [status isEqualToString: @"found"] )
 		[self showIcon: @"checkmark.circle.fill" color: [NSColor systemGreenColor]
 			title: [NSString stringWithFormat: @"Co-op game found%@ (%@)", host, where] text: CoopDescribe( info )];
@@ -775,7 +833,42 @@ static NSString *CoopDescribe( NSDictionary *info )
 		return;
 	[[_panel sheetParent] endSheet: _panel returnCode: NSModalResponseOK];
 	coopHostChosen = YES;
-	LLog( @"Co-op: hosting (single player with sp_coop 1)" );
+	coopJoinAddress = nil;
+	Sys_CoopSetLaunchPassword( [[hostPassword stringValue] UTF8String] );
+	LLog( @"Co-op: hosting (single player with sp_coop 1)%@", [[hostPassword stringValue] length] ? @", with a password" : @"" );
+	[l selectMode: 0];
+	[l play: nil];
+}
+
+// the address changed since the Check: check again before connecting
+- (void)controlTextDidChange: (NSNotification *)note
+{
+	if( [note object] != _address || !foundAddress )
+		return;
+	foundAddress = nil;
+	foundInfo = nil;
+	[connectButton setEnabled: NO];
+	[connectButton setToolTip: @"Check the address first"];
+}
+
+- (void)connect: (id)sender
+{
+	id<VSPCoopLauncher> l = _launcher;
+
+	if( !foundAddress || ![l canPlay] )
+		return;
+	if( [foundInfo[@"needPassword"] isEqualToString: @"1"] && ![[joinPassword stringValue] length] )
+	{
+		[self showIcon: @"lock.fill" color: [NSColor systemOrangeColor] title: @"This game needs a password"
+			text: @"Type the password the host gave you, then press Connect."];
+		[_panel makeFirstResponder: joinPassword];
+		return;
+	}
+	[[_panel sheetParent] endSheet: _panel returnCode: NSModalResponseOK];
+	coopHostChosen = NO;
+	coopJoinAddress = foundAddress;
+	Sys_CoopSetLaunchPassword( [[joinPassword stringValue] UTF8String] );
+	LLog( @"Co-op: joining %@ as player 2 (single player with coop_connect)", coopJoinAddress );
 	[l selectMode: 0];
 	[l play: nil];
 }
@@ -882,6 +975,15 @@ NSButton *VSP_CoopButton( id launcher )
 
 void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch )
 {
-	if( coopHostChosen && !holomatch )
+	if( holomatch )
+		return;
+	if( coopHostChosen )
 		[args appendString: @"+set sp_coop 1 "];
+	else if( [coopJoinAddress length] )
+	{
+		// "1.2.3.4:29760" from the Check (inet_ntop and a port): nothing to quote, but keep it so
+		NSCharacterSet *bad = [[NSCharacterSet characterSetWithCharactersInString: @"0123456789.:"] invertedSet];
+		if( [coopJoinAddress rangeOfCharacterFromSet: bad].location == NSNotFound )
+			[args appendFormat: @"+set coop_connect \"%@\" ", coopJoinAddress];
+	}
 }

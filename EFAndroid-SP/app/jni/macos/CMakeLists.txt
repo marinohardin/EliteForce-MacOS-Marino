@@ -109,7 +109,7 @@ set(SYS_SRC
 set_source_files_properties(${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m
   PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 if(EF_COOP)
-  list(APPEND SYS_SRC ${EF}/sys/sys_osx_coop.m)
+  list(APPEND SYS_SRC ${EF}/sys/sys_osx_coop.m ${EF}/sys/sys_coop_net.c)
   set_source_files_properties(${EF}/sys/sys_osx_coop.m PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 endif()
 
@@ -136,7 +136,7 @@ target_include_directories(sp_game_bridge PRIVATE
   ${EFG}/src/client ${EFG}/src/renderer ${EFG}/src/qcommon ${SP})
 target_compile_options(sp_game_bridge PRIVATE
   -include ${EFG}/android/ef_android_compat.h -fno-threadsafe-statics -fcommon -w)
-target_compile_definitions(sp_game_bridge PRIVATE NDEBUG EF_DYLIB_MODULES)
+target_compile_definitions(sp_game_bridge PRIVATE NDEBUG EF_DYLIB_MODULES $<$<BOOL:${EF_COOP}>:EF_COOP>)
 set_property(TARGET sp_game_bridge PROPERTY CXX_STANDARD 17)
 
 add_executable(efsp

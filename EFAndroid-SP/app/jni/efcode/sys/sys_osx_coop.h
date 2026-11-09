@@ -16,14 +16,12 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 
 #import <Cocoa/Cocoa.h>
 
-// the UDP port a co-op host answers co-op checks on (and, from M1, guests on)
-#define VSP_COOP_PORT		29760
-// bumped whenever co-op's network messages change; host and guest must match
-#define VSP_COOP_PROTOCOL	1
+#include "sys_coop_net.h"	// VSP_COOP_PORT, VSP_COOP_PROTOCOL and the connection
 
 // The Single Player card's "Co-op…" button. launcher is the VSPLauncher.
 NSButton *VSP_CoopButton( id launcher );
-// Play's extra arguments: +set sp_coop 1 after Host (single player only).
+// Play's extra arguments: +set sp_coop 1 after Host, +set coop_connect <address> after
+// Connect (single player only). Passwords don't go on the command line (Sys_CoopPassword).
 void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch );
 
 // Ask address ("host" or "host:port", default port VSP_COOP_PORT) whether a
