@@ -1048,3 +1048,18 @@ download tfgpak and run its cgame. Pure servers stay as they were.
   choice from `hmconfig.cfg`: it keeps its own (`HudWidescreen` in its defaults, widescreen until
   chosen otherwise in the HUD... sheet) and passes it on the command line, and the engine re-applies
   that command-line value when a cgame or ui starts, so a mod folder's config can't undo it.
+
+### cMod column in the Holomatch server browser (2026-11-08)
+
+Browse... has a **cMod** column: servers running cMod's engine (by Noah Metzger) show its version
+("2.0", "1.29", or a check mark when it doesn't say), with the full version string as the cell's
+tooltip; the column sorts like the others. `getinfo` answers carry nothing that tells cMod apart,
+so the browser now sends each server that answered its `getinfo` one `getstatus` as well (same
+socket, up to a second more for the answers). cMod's engine puts `version_cmod` there and calls
+itself "cMod HM v1.20 compatible" (or "ioEF:cMod HM ...") in `version`. `g_unlagged` isn't used:
+UAM and Razor servers on other engines set it too. The status answers also fill the players list,
+so selecting a server shows its players without asking again (the refresh button still asks).
+
+A server hosted with this app shows no cMod mark even when it runs cMod's qagame: `version_cmod`
+comes from cMod's engine, not its game module, and the game module adds no key of its own. Ours
+reports `version` "Elite Force for Mac ... HM v1.20 compatible" and `version_engine`.

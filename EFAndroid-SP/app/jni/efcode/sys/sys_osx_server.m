@@ -4579,6 +4579,11 @@ static NSColor *AmberColor( void )
 @property (nonatomic) BOOL needPass, thisMac, favorite;
 @property (nonatomic, readonly) NSString *gametypeName, *playersText, *humansText;
 @property (nonatomic, readonly) NSInteger knownHumans;	// for sorting: ? counts as 0
+// a server running cMod's engine (by Noah Metzger): its version_cmod from getstatus,
+// "" when only its version says cMod, nil otherwise
+@property (nonatomic, copy) NSString *cmodVersion;
+@property (nonatomic, readonly) NSString *cmodText;		// "2.0", "1.29", a check mark, or ""
+@property (nonatomic, readonly) double cmodRank;		// for sorting: its version, 0 if not cMod
 @end
 
 @implementation VSPServerInfo
@@ -4598,6 +4603,17 @@ static NSColor *AmberColor( void )
 {
 	return _humans >= 0 ? [NSString stringWithFormat: @"%ld", (long)_humans] : @"?";
 }
+// the version number in "v1.29_GIT_f037859-2023-09-30 linux-x86_64 ..." or
+// "cMod v2.0 Alpha linux-x86_64 ...", nil if there's none
+- (NSString *)cmodNumber
+{
+	NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern: @"\\bv([0-9]+\\.[0-9]+)" options: 0 error: nil];
+	NSTextCheckingResult *m = [_cmodVersion length] ? [re firstMatchInString: _cmodVersion options: 0
+		range: NSMakeRange( 0, [_cmodVersion length] )] : nil;
+	return m ? [_cmodVersion substringWithRange: [m rangeAtIndex: 1]] : nil;
+}
+- (NSString *)cmodText	{ return !_cmodVersion ? @"" : [self cmodNumber] ?: @"✓"; }
+- (double)cmodRank		{ return !_cmodVersion ? 0 : [self cmodNumber] ? [[self cmodNumber] doubleValue] : 0.01; }
 @end
 
 // a fetch for one source, so a newer one (Refresh) or closing the sheet can stop it
@@ -4651,13 +4667,22 @@ static VSPServerInfo *ParseInfoResponse( const char *buf, ssize_t n, NSString *f
 	return info;
 }
 
-// Ask every address (and with broadcast, the network) for its info, all at once.
-// Runs on the calling (background) thread; got and done run on the main queue.
+@class VSPServerStatus;
+static VSPServerStatus *ParseStatusResponse( const char *buf, ssize_t n );
+
+#define BROWSER_WAIT_STATUS	1.0		// s more for the last getstatus answers
+
+// Ask every address (and with broadcast, the network) for its info, all at once,
+// and each server that answers for its status (getstatus: only that says whether
+// it runs cMod, and it has the players for the list below). Runs on the calling
+// (background) thread; got, gotStatus and done run on the main queue.
 static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSPFetch *fetch,
-	void ( ^got )( VSPServerInfo *info ), void ( ^done )( NSUInteger answered ) )
+	void ( ^got )( VSPServerInfo *info ), void ( ^gotStatus )( NSString *address, VSPServerStatus *st ),
+	void ( ^done )( NSUInteger answered ) )
 {
-	static const char q[] = "\xff\xff\xff\xffgetinfo browse";
+	static const char q[] = "\xff\xff\xff\xffgetinfo browse", qs[] = "\xff\xff\xff\xffgetstatus";
 	NSMutableDictionary<NSString *, NSNumber *> *sent = [NSMutableDictionary dictionary];
+	NSMutableSet<NSString *> *statusAsked = [NSMutableSet set];		// a getstatus is out for these
 	CFAbsoluteTime start = CFAbsoluteTimeGetCurrent(), deadline;
 	NSUInteger answered = 0, asked = 0;
 	int fd = socket( AF_INET, SOCK_DGRAM, 0 ), on = 1;
@@ -4688,16 +4713,19 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 			usleep( 2000 );		// don't flood a home router
 	}
 	deadline = CFAbsoluteTimeGetCurrent() + ( broadcast ? BROWSER_WAIT_LOCAL : BROWSER_WAIT );
-	while( !fetch.cancelled && CFAbsoluteTimeGetCurrent() < deadline && ( broadcast || answered < asked ) )
+	// the infos until the deadline (or all are in), then a little longer for the statuses
+	while( !fetch.cancelled && CFAbsoluteTimeGetCurrent() < deadline + ( [statusAsked count] ? BROWSER_WAIT_STATUS : 0 ) &&
+		( broadcast || answered < asked || [statusAsked count] ) )
 	{
 		struct pollfd pfd = { fd, POLLIN, 0 };
-		char buf[4096], host[INET_ADDRSTRLEN];
+		char buf[16384], host[INET_ADDRSTRLEN];
 		struct sockaddr_in from;
 		socklen_t fromLen = sizeof( from );
 		ssize_t n;
 		NSString *key;
 		NSNumber *t;
 		VSPServerInfo *info;
+		VSPServerStatus *st;
 
 		if( poll( &pfd, 1, 100 ) <= 0 )
 			continue;
@@ -4705,6 +4733,15 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 			continue;
 		inet_ntop( AF_INET, &from.sin_addr, host, sizeof( host ) );
 		key = [NSString stringWithFormat: @"%s:%d", host, ntohs( from.sin_port )];
+		if( [statusAsked containsObject: key] && ( st = ParseStatusResponse( buf, n ) ) )
+		{
+			[statusAsked removeObject: key];
+			dispatch_async( dispatch_get_main_queue(), ^{
+				if( !fetch.cancelled )
+					gotStatus( key, st );
+			} );
+			continue;
+		}
 		if( !( info = ParseInfoResponse( buf, n, key ) ) )
 			continue;
 		t = sent[key];
@@ -4722,6 +4759,12 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 			if( !fetch.cancelled )
 				got( info );
 		} );
+		// one getstatus per server that answered, spread out as the answers come in
+		if( ![statusAsked containsObject: key] && ParseAddress( key, &from ) )
+		{
+			[statusAsked addObject: key];
+			sendto( fd, qs, sizeof( qs ) - 1, 0, (struct sockaddr *)&from, sizeof( from ) );
+		}
 	}
 	close( fd );
 	dispatch_async( dispatch_get_main_queue(), ^{
@@ -4743,6 +4786,7 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 @interface VSPServerStatus : NSObject
 @property (nonatomic, copy) NSArray<VSPPlayer *> *players;
 @property (nonatomic) NSInteger humans;			// g_humanplayers, -1: not sent
+@property (nonatomic, copy) NSString *cmodVersion;	// as VSPServerInfo's
 @property (nonatomic, strong) NSDate *when;
 @end
 @implementation VSPServerStatus
@@ -4788,6 +4832,11 @@ static VSPServerStatus *ParseStatusResponse( const char *buf, ssize_t n )
 	}
 	st.players = list;
 	st.humans = kv[@"g_humanplayers"] ? [kv[@"g_humanplayers"] integerValue] : -1;
+	// cMod's engine sends its own version in version_cmod and calls itself
+	// "cMod HM v1.20 compatible" (or "ioEF:cMod HM ...") in version. Not g_unlagged:
+	// other servers (UAM, Razor) have that too.
+	st.cmodVersion = [kv[@"version_cmod"] length] ? kv[@"version_cmod"] :
+		[kv[@"version"] hasPrefix: @"cMod HM"] || [kv[@"version"] hasPrefix: @"ioEF:cMod HM"] ? @"" : nil;
 	st.when = [NSDate date];
 	return st;
 }
@@ -4952,6 +5001,7 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 - (void)joinRow: (NSInteger)row;
 - (void)selectRowForTest: (NSInteger)row;
 - (void)previewForTest;
+- (void)logRowsForTest;
 @end
 
 // the browser's tabs: Local, Combined (every master's list, merged), then Internet 1, 2…
@@ -5113,7 +5163,7 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	[self column: @"fav" title: @"" width: 16 sortKey: @"favorite" ascending: NO];
 	[[[table tableColumnWithIdentifier: @"fav"] headerCell] setImage: Symbol( @"star", 10 )];
 	[[table tableColumnWithIdentifier: @"fav"] setHeaderToolTip: @"Favorites"];
-	[self column: @"name" title: @"Server" width: 212 sortKey: @"name" ascending: YES];
+	[self column: @"name" title: @"Server" width: 162 sortKey: @"name" ascending: YES];
 	[self column: @"lock" title: @"" width: 14 sortKey: @"needPass" ascending: NO];
 	[[[table tableColumnWithIdentifier: @"lock"] headerCell] setImage: Symbol( @"lock.fill", 10 )];
 	[[table tableColumnWithIdentifier: @"lock"] setHeaderToolTip: @"Needs a password"];
@@ -5123,6 +5173,8 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	[self column: @"humans" title: @"Humans" width: 68 sortKey: @"knownHumans" ascending: NO];
 	[[table tableColumnWithIdentifier: @"humans"] setHeaderToolTip: @"People playing, without bots (? if the server doesn't say)"];
 	[self column: @"type" title: @"Game" width: 120 sortKey: @"gametype" ascending: YES];
+	[self column: @"cmod" title: @"cMod" width: 40 sortKey: @"cmodRank" ascending: NO];
+	[[table tableColumnWithIdentifier: @"cmod"] setHeaderToolTip: @"Servers running cMod (by Noah Metzger), with its version"];
 	[self column: @"ping" title: @"Ping" width: 40 sortKey: @"ping" ascending: YES];
 	// only the server name takes up the table's width (the stars come first, so
 	// "first column only" won't do)
@@ -5258,6 +5310,13 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	LLog( @"[test] selected %@", row < (NSInteger)[shown count] ? shown[row].name : @"nothing (no such row)" );
 }
 
+- (void)logRowsForTest
+{
+	for( VSPServerInfo *i in shown )
+		LLog( @"[test] row: %@ | %@ | %@ | cMod %@", i.address, i.name, i.map, i.cmodVersion ?
+			[NSString stringWithFormat: @"%@ (%@)", i.cmodText, i.cmodVersion] : @"-" );
+}
+
 - (void)previewForTest
 {
 	if( VSP_TestEnvIs( "VOYAGERSP_TEST_BROWSER_PREVIEW_3D", "1" ) )
@@ -5350,6 +5409,12 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 			info.thisMac = [thisMac containsObject: info.address];
 			info.listedOn = combined ? listed[info.address] : nil;
 			[self->results[key] addObject: info];
+			[self scheduleReload];
+		}, ^( NSString *address, VSPServerStatus *st ) {
+			for( VSPServerInfo *i in self->results[key] )
+				if( [i.address isEqualToString: address] )
+					i.cmodVersion = st.cmodVersion;
+			self->statuses[address] = st;		// its players, for when it's selected
 			[self scheduleReload];
 		}, ^( NSUInteger answered ) {
 			NSUInteger n = [self->results[key] count];
@@ -5469,9 +5534,8 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	[self showPlayers];
 }
 
-// The selected server's players: from its last answer, or asked now. Only the
-// selected server is asked (getstatus), so nothing extra goes out until a row
-// is picked.
+// The selected server's players: from its last answer (each server is asked
+// once per refresh, with its info), or asked now.
 - (void)showPlayers
 {
 	VSPServerInfo *s = [self selectedServer];
@@ -5506,7 +5570,11 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 			if( [self->asking isEqualToString: address] )
 				self->asking = nil;
 			if( answer )
+			{
 				self->statuses[address] = answer;
+				s.cmodVersion = answer.cmodVersion;
+				[self->table reloadData];
+			}
 			if( current && answer )
 				[self showPlayers];
 			else if( current )
@@ -5718,6 +5786,8 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 		[l setLineBreakMode: NSLineBreakByTruncatingTail];
 		if( [ident isEqualToString: @"ping"] || [ident isEqualToString: @"players"] || [ident isEqualToString: @"humans"] )
 			[l setAlignment: NSTextAlignmentRight];
+		else if( [ident isEqualToString: @"cmod"] )
+			[l setAlignment: NSTextAlignmentCenter];
 	}
 	[l setTextColor: [NSColor labelColor]];
 	[l setToolTip: nil];
@@ -5770,6 +5840,13 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 	}
 	else if( [ident isEqualToString: @"type"] )
 		[l setStringValue: s.gametypeName];
+	else if( [ident isEqualToString: @"cmod"] )
+	{
+		[l setStringValue: s.cmodText];
+		if( s.cmodVersion )
+			[l setToolTip: [s.cmodVersion length] ? [@"cMod " stringByAppendingString: [s.cmodVersion hasPrefix: @"cMod "] ?
+				[s.cmodVersion substringFromIndex: 5] : s.cmodVersion] : @"cMod (the server doesn't say which version)"];
+	}
 	else if( [ident isEqualToString: @"ping"] )
 	{
 		[l setStringValue: [NSString stringWithFormat: @"%ld", (long)s.ping]];
@@ -5922,6 +5999,7 @@ BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, NSS
 	while( [c busy] )
 		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
 	[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate: [NSDate dateWithTimeIntervalSinceNow: 0.2]];
+	[c logRowsForTest];
 	if( getenv( "VOYAGERSP_TEST_BROWSER_SELECT" ) )
 	{
 		[c selectRowForTest: atoi( getenv( "VOYAGERSP_TEST_BROWSER_SELECT" ) )];
