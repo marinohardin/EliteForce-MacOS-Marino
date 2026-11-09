@@ -1780,6 +1780,10 @@ void CL_InitUI( void ) {
 			interpret = VMI_COMPILED;
 	}
 
+	// the launcher's HUD choice beats a game folder's config (see CL_InitCGame)
+	if ( Com_Holomatch() ) {
+		Com_StartupVariable( "cg_aspectCorrect" );
+	}
 	uivm = VM_Create( "ui", CL_UISystemCalls, interpret );
 	if ( !uivm ) {
 		Com_Error( ERR_FATAL, "VM_Create on UI failed" );

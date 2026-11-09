@@ -1029,3 +1029,22 @@ download tfgpak and run its cgame. Pure servers stay as they were.
   ("Ensign Munro is second in command..."). Seen after skipping the intro, because Esc only opens
   the pause menu once the camera scene is over. `SP_UnloadGame` (new game, load, abort) now resets
   the gates. 1.3.0 had the same bug.
+
+### Fixes after the first 1.4 test build (2026-11-08)
+
+- **Listen servers (Solo Match, Create Server, the game's own map menus).** On a listen server the
+  client's `//trap_GetValue` cvar is visible to the server's qagame too, so cMod's qagame made the
+  call and the server stopped with "Bad game system trap: 700". `SV_GameSystemCalls` now answers it
+  with "unknown key" (cMod's game code then does without those extras). Dedicated servers never had
+  the cvar.
+- **Holomatch text tables.** `ext_data/` files (the numbered menu/HUD texts, `mp_*text.dat`) are
+  now looked up in the same order as the game modules: the game's own paks before other baseEF
+  pk3s. Before, a stock ui from pak2 read tfgpak.pk3's tables, whose extra lines overflow the
+  stock ui's text arrays: the main menu showed a stray "...WINNER OF A ROUND IN WEAPONRY..." line.
+  Pure servers keep the server's order (and give tfgpak's ui its own tables, as before).
+- **Widescreen HUD default.** cMod's modules register `cg_aspectCorrect` with 0 (his engine sets 1
+  first), so a cMod cgame that ran on an older build or a mod server saved 0 in that folder's
+  `hmconfig.cfg` (seen in the mod folders of a real install). The launcher no longer reads the HUD
+  choice from `hmconfig.cfg`: it keeps its own (`HudWidescreen` in its defaults, widescreen until
+  chosen otherwise in the HUD... sheet) and passes it on the command line, and the engine re-applies
+  that command-line value when a cgame or ui starts, so a mod folder's config can't undo it.

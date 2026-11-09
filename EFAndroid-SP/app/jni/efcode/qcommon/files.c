@@ -279,6 +279,7 @@ static	cvar_t		*cl_cmodModules;
 static	int			fs_cmodNativeCgame, fs_cmodNativeUI;	// the server's !modcfg nativeCgame / nativeUI
 
 static pack_t *FS_LoadZipFile( const char *zipfile, const char *basename );
+static int FS_VMSearchOrder( searchpath_t ***list, searchpath_t *first );
 static void FS_FreePak( pack_t *thepak );
 static	int			fs_readCount;			// total bytes read
 static	int			fs_loadCount;			// total files read
@@ -1468,15 +1469,25 @@ separate file or a ZIP file.
 */
 long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueFILE)
 {
-	searchpath_t *search;
-	long len;
+	searchpath_t *search, **order = NULL;
+	long len = 0;
 	qboolean isLocalConfig;
+	int count = 0, i = 0;
 
 	if(!fs_searchpaths)
 		Com_Error(ERR_FATAL, "Filesystem call made without initialization");
 
+	// Holomatch's text tables (ext_data/mp_*.dat: menu, HUD and item texts, looked up by
+	// line number) go with the game's own cgame and ui, so they're looked up in the same
+	// order as the game modules (FS_VMSearchOrder): the game's own paks before other baseEF
+	// pk3s. Otherwise a third-party pk3 that brings its own ui and texts (tfgpak.pk3) gives
+	// the game's ui its texts, and the menus show the wrong lines.
+	if ( Com_Holomatch() && !Q_stricmpn( filename, "ext_data/", 9 ) ) {
+		count = FS_VMSearchOrder( &order, NULL );
+	}
+
 	isLocalConfig = !strcmp(filename, "autoexec.cfg") || !strcmp(filename, Q3CONFIG_CFG);
-	for(search = fs_searchpaths; search; search = search->next)
+	for(search = order ? order[0] : fs_searchpaths; search; search = order ? ( ++i < count ? order[i] : NULL ) : search->next)
 	{
 		// autoexec.cfg and q3config.cfg can only be loaded outside of pk3 files.
 		if (isLocalConfig && search->pack)
@@ -1487,14 +1498,20 @@ long FS_FOpenFileRead(const char *filename, fileHandle_t *file, qboolean uniqueF
 		if(file == NULL)
 		{
 			if(len > 0)
-				return len;
+				break;
 		}
 		else
 		{
 			if(len >= 0 && *file)
-				return len;
+				break;
 		}
 
+	}
+	if ( order ) {
+		Z_Free( order );
+	}
+	if ( search ) {
+		return len;
 	}
 	
 #ifdef FS_MISSING

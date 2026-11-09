@@ -572,7 +572,7 @@ void CL_SystemInfoChanged( void );
 void CL_ParseModcfg( void );
 #ifdef ELITEFORCE
 // From cMod by Noah Metzger (Chomenor): the GetValue call of his cgame and ui
-#define CL_CMOD_TRAP_GETVALUE 700
+#define CL_CMOD_TRAP_GETVALUE VM_CMOD_TRAP_GETVALUE
 qboolean CL_CmodGetValue( vm_t *vm, char *buffer, int size, const char *key );
 #endif
 void CL_ServerInfoChanged( void );

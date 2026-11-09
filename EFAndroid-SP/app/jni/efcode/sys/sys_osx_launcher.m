@@ -99,6 +99,7 @@ Test hooks (environment variables):
 #define KEY_UPDATECHECK		@"CheckForUpdates"		// NO: never ask GitHub on its own
 #define KEY_UPDATELAST		@"UpdateLastCheck"		// NSDate
 #define KEY_UPDATELATEST	@"UpdateLatest"			// @{ version, url } from the last check
+#define KEY_HUDASPECT		@"HudWidescreen"		// the HUD… sheet's choice (cg_aspectCorrect), once made
 #define UPDATE_REPO			@"marinohardin/EliteForce-MacOS-Marino"
 #define UPDATE_TAG			@"macos-v"				// the release tags: macos-v1.2.1
 #define UPDATE_INTERVAL		( 24 * 60 * 60 )		// s between automatic checks
@@ -696,7 +697,11 @@ static NSStackView *HStackOf( NSArray *views )
 
 	hm = ReadConfig( ConfigPath( YES ) );
 	[cmodModules setState: CfgInt( hm, @"cl_cmodmodules", 1 ) ? NSControlStateValueOn : NSControlStateValueOff];
-	hudAspect = CfgInt( hm, @"cg_aspectcorrect", 1 ) ? 1 : 0;
+	// Widescreen unless chosen otherwise in the HUD… sheet. Not from hmconfig.cfg: cMod's
+	// modules register cg_aspectCorrect with 0 (his engine sets 1 first), so a cgame that ran
+	// without our default (a server's download, an older build) may have saved a 0 there.
+	hudAspect = [[NSUserDefaults standardUserDefaults] objectForKey: KEY_HUDASPECT] ?
+		( [[NSUserDefaults standardUserDefaults] boolForKey: KEY_HUDASPECT] ? 1 : 0 ) : 1;
 	hudCenter = [hm[@"cg_aspectcorrectcenterhud"] length] ? hm[@"cg_aspectcorrectcenterhud"] : @"0";
 	predictWeapons = CfgInt( hm, @"cg_predictweapons", 1 ) != 0;
 	[self cmodChanged: nil];
@@ -1527,6 +1532,7 @@ static NSStackView *HStackOf( NSArray *views )
 	[cancel setKeyEquivalent: @"\033"];
 	[hudTargets addObject: t = [VSPBlockTarget target: ^{
 		self->hudAspect = (int)[[weakLayout selectedItem] tag];
+		[[NSUserDefaults standardUserDefaults] setBool: self->hudAspect != 0 forKey: KEY_HUDASPECT];
 		if( centerMoved )
 			self->hudCenter = [NSString stringWithFormat: @"%g", round( [weakCenter doubleValue] * 100 ) / 100];
 		self->predictWeapons = [predict state] == NSControlStateValueOn;

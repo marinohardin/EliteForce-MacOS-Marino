@@ -1176,6 +1176,12 @@ void CL_InitCGame( void ) {
 			interpret = VMI_COMPILED;
 	}
 
+	// The launcher's HUD choice (cg_aspectCorrect on the command line) beats a game folder's
+	// config: joining a server with its own fs_game runs that folder's hmconfig.cfg, where a
+	// cMod cgame that ran without our default 1 may have saved its own 0.
+	if ( Com_Holomatch() ) {
+		Com_StartupVariable( "cg_aspectCorrect" );
+	}
 	cgvm = VM_Create( "cgame", CL_CgameSystemCalls, interpret );
 	if ( !cgvm ) {
 		Com_Error( ERR_DROP, "VM_Create on cgame failed" );
