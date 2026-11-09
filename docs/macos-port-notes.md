@@ -1152,3 +1152,22 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   - **For M1.** The query is a status probe only. The co-op protocol replaces the stand-in P2 count, adds
     the `.pk3` checksum check to the version check, and probably moves the answer onto the co-op netchan
     socket on the same port. Connect, Copy Invite and router port opening come then.
+## Co-op M1: the connection and the guest steering player 2 (2026-11-09, branch `1_4_0/coop-m1` only)
+- `efcode/sys/sys_coop_net.c` (EF_COOP only): a small UDP protocol on the co-op port 29760, sharing
+  the host's check socket. Handshake (`coopConnect` / `coopAccept` / `coopReject`): app version, co-op
+  protocol (now 2), a signature of the loaded `.pk3` files, optional password (`coop_password`, or the
+  launcher's field, never on the command line), one guest, 10 s timeouts, disconnect messages both ways.
+  In-session: the guest's newest commands (4 per packet), keepalives, the host's status once a second.
+  Console: `coop_connect <address[:port]>` (cvar), `coop_disconnect`, `coop_kick`, `coop_status`.
+- The check's answer adds `needPassword` and `guest`. The launcher's Join enables Connect after a Check
+  finds a game.
+- The guest's input reaches the game through `COOP_SetBridge` (`game/coop_bridge.h`, exported from
+  EF_COOP game modules only, set by `sp_bridge.cpp` after each module load) and steers P2 in place of the
+  follow-P1 input; with no guest, or input older than 0.5 s, P2 follows P1 as before.
+- Until the replica guest (`docs/coop-m1-design.md`), a guest loads the host's map on its own
+  (`coop_guestLoadMap 1`): it sees its own copy of the level.
+- Tested with two copies on one Mac (127.0.0.1, regress-mode scripted input on both): join, P2 steered
+  (drifts away from P1 instead of following), leave, wrong password, version and file mismatch refusals,
+  host kick, host level reloads with the guest connected. Gates vs a fresh baseline `coop-m1-base`
+  (672ed3c): EF_COOP OFF ALL IDENTICAL (and `efsp` byte-identical to 672ed3c's), EF_COOP ON +
+  `sp_coop 0` ALL IDENTICAL.
