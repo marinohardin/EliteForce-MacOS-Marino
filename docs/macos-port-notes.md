@@ -878,3 +878,78 @@ runs on another Mac or another macOS version.
   ("Ensign Munro is second in command..."). Seen after skipping the intro, because Esc only opens
   the pause menu once the camera scene is over. `SP_UnloadGame` (new game, load, abort) now resets
   the gates. 1.3.0 had the same bug.
+
+## Holomatch: cMod's game modules, widescreen HUD and lag compensation (2026-11-07)
+
+All of this is from cMod by Noah Metzger (Chomenor). He gave permission to ship his released
+game modules (`pakcmod-release-*.pk3`, built under the STEF Game Source License). The app bundles
+one in `Resources/cmod/` with its license and a README (`macos/make-app.sh`, `CMOD_PAK`). The pk3
+is not in git (`*.pk3` is ignored); put the release in `macos/cmod/` before building the app.
+
+- **VM order.** In Holomatch the game's own paks (pak0-pak3, by checksum) are searched first for
+  cgame/ui/qagame, so add-ons like tfgpak or `vm.pk3` no longer replace the stock modules by name
+  order. A mod folder's own modules still win, and pure servers still pick the server's paks.
+- **Recognition by hash.** cMod's releases are known by checksum (the list cMod's engine uses,
+  2021-09-18 to 2025-12-16). The bundled pk3 is loaded privately: it is never in the search path,
+  never referenced, offered for download or listed in `sv_paks`, so stock clients are not pushed it.
+- **Servers** (`sv_cmodGame`, default 1): dedicated servers and Host a Server run cMod's qagame.
+  Config... > cMod sets Run cMod's game code, Lag compensation (`g_unlagged`: Off, Instant-hit
+  weapons (default), All weapons), Smooth other players' movement (`g_smoothClients` 1) and Let
+  cMod players see their own shots at once (`g_unlaggedPredict` 1). Test hook tab name: `cmod`.
+- **Clients** (`cl_cmodModules`, default 1; launcher "Use cMod's game modules, by Noah Metzger"):
+  on non-pure servers the client runs cMod's cgame and ui. On pure servers the server's modules
+  run, as before. A mod's own cgame/ui is replaced only when the server's `!modcfg` configstring
+  asks for cMod's (`nativeCgame`/`nativeUI` 2).
+- **Widescreen.** Our 640x480 flexible-display layer is off for cMod's modules only; they draw
+  with the real screen size. `cg_aspectCorrect` defaults to 1 in Holomatch (as in cMod's engine).
+  The Holomatch video-mode list (HMVideo) is off for cMod's ui. Launcher HUD... sheet: Widescreen
+  (`cg_aspectCorrect`), HUD position Edges to Middle (`cg_aspectCorrectCenterHud`, written only
+  when moved) and weapon prediction (`cg_predictWeapons`). Stock modules look exactly as before.
+- **GetValue.** cMod's modules ask the engine which options it has through a call whose number
+  is in the cvar `//trap_GetValue` (700). `CL_CmodGetValue` answers only cMod's modules and only
+  for what this engine has: our version string, the brightness settings the renderer already
+  ported from cMod, `r_swapInterval`, anisotropy, multisample (`r_ext_multisample`), JPEG
+  screenshots, OpenAL, and "skip" keys for settings this engine lacks (`r_glDriver`, color/depth/
+  stencil bits, `r_lowEndVideo`, `s_khz`, `k_language`, A3D). Renderer choice, framebuffer, raw
+  mouse and windowed-only `r_mode` stay unanswered.
+
+Regression harness: Holomatch scenarios set `sv_cmodGame 0` and `cl_cmodModules 0`, so the
+stock path stays recorded and comparable; `REGRESS_CMOD=1` keeps cMod's modules on. With cMod's
+qagame the listen and dedicated scenarios differ from frame 0, as expected (different game code).
+
+Known, unchanged: a pure server references tfgpak for cgame/ui by name order, so a client can
+download tfgpak and run its cgame. Pure servers stay as they were.
+
+### Fixes after the first 1.4 test build (2026-11-08)
+
+- **Listen servers (Solo Match, Create Server, the game's own map menus).** On a listen server the
+  client's `//trap_GetValue` cvar is visible to the server's qagame too, so cMod's qagame made the
+  call and the server stopped with "Bad game system trap: 700". `SV_GameSystemCalls` now answers it
+  with "unknown key" (cMod's game code then does without those extras). Dedicated servers never had
+  the cvar.
+- **Holomatch text tables.** `ext_data/` files (the numbered menu/HUD texts, `mp_*text.dat`) are
+  now looked up in the same order as the game modules: the game's own paks before other baseEF
+  pk3s. Before, a stock ui from pak2 read tfgpak.pk3's tables, whose extra lines overflow the
+  stock ui's text arrays: the main menu showed a stray "...WINNER OF A ROUND IN WEAPONRY..." line.
+  Pure servers keep the server's order (and give tfgpak's ui its own tables, as before).
+- **Widescreen HUD default.** cMod's modules register `cg_aspectCorrect` with 0 (his engine sets 1
+  first), so a cMod cgame that ran on an older build or a mod server saved 0 in that folder's
+  `hmconfig.cfg` (seen in the mod folders of a real install). The launcher no longer reads the HUD
+  choice from `hmconfig.cfg`: it keeps its own (`HudWidescreen` in its defaults, widescreen until
+  chosen otherwise in the HUD... sheet) and passes it on the command line, and the engine re-applies
+  that command-line value when a cgame or ui starts, so a mod folder's config can't undo it.
+
+### cMod column in the Holomatch server browser (2026-11-08)
+
+Browse... has a **cMod** column: servers running cMod's engine (by Noah Metzger) show its version
+("2.0", "1.29", or a check mark when it doesn't say), with the full version string as the cell's
+tooltip; the column sorts like the others. `getinfo` answers carry nothing that tells cMod apart,
+so the browser now sends each server that answered its `getinfo` one `getstatus` as well (same
+socket, up to a second more for the answers). cMod's engine puts `version_cmod` there and calls
+itself "cMod HM v1.20 compatible" (or "ioEF:cMod HM ...") in `version`. `g_unlagged` isn't used:
+UAM and Razor servers on other engines set it too. The status answers also fill the players list,
+so selecting a server shows its players without asking again (the refresh button still asks).
+
+A server hosted with this app shows no cMod mark even when it runs cMod's qagame: `version_cmod`
+comes from cMod's engine, not its game module, and the game module adds no key of its own. Ours
+reports `version` "Elite Force for Mac ... HM v1.20 compatible" and `version_engine`.
