@@ -12,6 +12,16 @@
 /* #undef const */
 /* #undef CHAR_IS_UNSIGNED */
 
+/* Define "boolean" as unsigned char, not int, on Windows systems. This must be
+ * outside JPEG_INTERNALS: the library and its users (tr_image_jpg.c) have to agree,
+ * or jpeg_CreateDecompress fails with "JPEG parameter struct mismatch". */
+#ifdef _WIN32
+#ifndef __RPCNDR_H__		/* don't conflict if rpcndr.h already read */
+typedef unsigned char boolean;
+#endif
+#define HAVE_BOOLEAN		/* prevent jmorecfg.h from redefining it */
+#endif
+
 #ifdef JPEG_INTERNALS
 
 #define HAVE_STDDEF_H 1
@@ -21,14 +31,6 @@
 /* #undef NEED_SYS_TYPES_H */
 /* #undef NEED_FAR_POINTERS */
 /* #undef NEED_SHORT_EXTERNAL_NAMES */
-
-/* Define "boolean" as unsigned char, not int, on Windows systems. */
-#ifdef _WIN32
-#ifndef __RPCNDR_H__		/* don't conflict if rpcndr.h already read */
-typedef unsigned char boolean;
-#endif
-#define HAVE_BOOLEAN		/* prevent jmorecfg.h from redefining it */
-#endif
 
 /* #undef RIGHT_SHIFT_IS_UNSIGNED */
 #ifdef _MSC_VER
