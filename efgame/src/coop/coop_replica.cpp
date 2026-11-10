@@ -31,7 +31,7 @@ extern void		CG_RegisterNPCEffects( team_t team );
 extern void		CG_RegisterWeapon( int weaponNum );
 extern void		G_SoundOnEnt( gentity_t *ent, soundChannel_t channel, const char *soundPath );
 extern qboolean	player_locked;
-extern int		BMS_MID;
+extern int		BMS_START, BMS_MID, BMS_END;
 
 int		coop_replica = 0;		// sp_coop 2 at InitGame: this level mirrors a host's
 
@@ -39,6 +39,28 @@ int		coop_replica = 0;		// sp_coop 2 at InitGame: this level mirrors a host's
 #define REP_CLIENT		1
 #define REP_NPC			2
 #define REP_PARMS		4
+
+// A door's or lift's sound event (EV_BMODEL_SOUND) carries a sound handle of the host's sound
+// system, and the guest's handles for the same sounds differ (they number sounds in the order each
+// copy registered them). The host sends which sound of the entity's sound set it was (start, loop
+// or end) in an 'RBMS' chunk, and the guest puts its own handle for that sound in the event.
+static int REP_BModelStage( const gentity_t *ent )
+{
+	const int stages[3] = { BMS_START, BMS_MID, BMS_END };
+
+	if ( ( ent->s.event & ~EV_EVENT_BITS ) != EV_BMODEL_SOUND || !VALIDSTRING( ent->soundSet ) )
+	{
+		return -1;
+	}
+	for ( int i = 0; i < 3; i++ )
+	{
+		if ( CAS_GetBModelSound( ent->soundSet, stages[i] ) == ent->s.eventParm )
+		{
+			return stages[i];
+		}
+	}
+	return -1;
+}
 
 // globals that aren't in level_locals_t
 typedef struct
@@ -242,6 +264,13 @@ static int REP_WriteEntity( int num, unsigned char *buf, int size )
 	{
 		gi.AppendToSaveGame( 'PARM', ent->parms, sizeof( *ent->parms ) );
 	}
+	{
+		int stage = REP_BModelStage( ent );
+		if ( stage >= 0 )
+		{
+			gi.AppendToSaveGame( 'RBMS', &stage, sizeof( stage ) );
+		}
+	}
 	return REP_EndWrite();
 }
 
@@ -406,6 +435,9 @@ static void REP_ApplyEntity( int num, const unsigned char *data, int len )
 		temp.parms = rep_parms[num];
 	}
 
+	int bmsStage = -1;
+	gi.ReadFromSaveGameOptional( 'RBMS', &bmsStage, sizeof( bmsStage ), NULL );
+
 	if ( !REP_EndRead() )
 	{
 		gi.Printf( S_COLOR_YELLOW "co-op: entity %d's image from the host didn't read back; skipped\n", num );
@@ -428,6 +460,19 @@ static void REP_ApplyEntity( int num, const unsigned char *data, int len )
 		if ( ent->s.loopSound == -1 )
 		{
 			ent->s.loopSound = 0;
+		}
+	}
+	// ...and so is a door sound event's (see REP_BModelStage); one this copy can't name plays nothing
+	if ( ( ent->s.event & ~EV_EVENT_BITS ) == EV_BMODEL_SOUND )
+	{
+		int sfx = ( bmsStage >= 0 && VALIDSTRING( ent->soundSet ) ) ? CAS_GetBModelSound( ent->soundSet, bmsStage ) : -1;
+		if ( sfx > 0 )
+		{
+			ent->s.eventParm = sfx;
+		}
+		else
+		{
+			ent->s.event = 0;
 		}
 	}
 	if ( num >= globals.num_entities )
