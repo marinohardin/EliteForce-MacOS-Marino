@@ -21,8 +21,9 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 // the UDP port a co-op host answers co-op checks and its guest on
 #define VSP_COOP_PORT		29760
 // bumped whenever co-op's network messages change; host and guest must match
-// (1: the M0 check only; 2: M1, a guest can connect; 3: the guest mirrors the host's world)
-#define VSP_COOP_PROTOCOL	3
+// (1: the M0 check only; 2: M1, a guest can connect; 3: the guest mirrors the host's world;
+// 4: one guest command per host frame, acknowledged for prediction)
+#define VSP_COOP_PROTOCOL	4
 
 // the biggest co-op packet (fits a usual Ethernet/Wi-Fi MTU with room to spare)
 #define COOP_MAX_PACKET		1400
@@ -49,8 +50,9 @@ int			CoopNet_HostHasGuest( void );
 void		CoopNet_AddCommands( void );
 
 // For the host's game, once a game frame (sp/sp_bridge.cpp declares these itself, with the
-// game's types): the guest's newest input; 0 when no guest steers player 2 right now.
-// angles are 0..65535 like a usercmd's; buttons include every press since the last call.
+// game's types): the guest's next command (one a frame, in order; with none waiting, the newest
+// one's angles and no movement); 0 when no guest steers player 2 right now. angles are 0..65535
+// like a usercmd's.
 int			CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *forwardmove,
 				signed char *rightmove, signed char *upmove );
 // the guest's name, "" without a guest
@@ -69,6 +71,10 @@ qboolean	CoopNet_GuestFrameInfo( int frame, int *levelId, int *levelTime, int *a
 int			CoopNet_GuestFrameSlot( int frame, int slot, const unsigned char **data );
 // the host level the guest's current map load is for (frames of other levels aren't applied)
 int			CoopNet_GuestLevelId( void );
+// this player's command for one host frame, numbered by the bridge (a frame's ackCmd is the
+// newest of these the host applied); sent at once; 0 when this player has no input now
+int			CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
+				int forwardmove, int rightmove, int upmove );
 
 // The guest. Once a frame (sys_osx_coop.m, before anything of the host): connects when
 // the coop_connect cvar names a host, sends this player's input, disconnects when the

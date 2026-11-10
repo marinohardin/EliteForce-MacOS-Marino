@@ -70,8 +70,8 @@ inline bool COOP_IsPlayerPtr( const gentity_t *e ) { return e == &g_entities[0] 
 // story scripts expect "the player" as activator: P2 becomes P1
 inline gentity_t *COOP_StoryActivator( gentity_t *e ) { return ( e && COOP_IsP2( e ) ) ? &g_entities[0] : e; }
 
-// the client whose view this machine draws (P1 on the host; the guest in M1)
-inline int COOP_ViewClientNum( void ) { return 0; }
+// the client whose view this machine draws: P1 on the host, P2 in a guest's replica
+inline int COOP_ViewClientNum( void ) { return ( coop_replica && coop_p2Num >= 0 ) ? coop_p2Num : 0; }
 
 // the closer of the players that are in the level (P2 only when alive and not hidden)
 gentity_t	*COOP_NearestPlayer( const vec3_t org );

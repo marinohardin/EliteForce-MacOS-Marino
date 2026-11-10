@@ -165,6 +165,11 @@ static int  g_coopLevelId = 0;      // host: counts level starts, so the guest k
 static int  g_coopApplied = 0;      // guest: the last host frame written into this level
 static int  g_coopAppliedAt = 0;    // ...and when (Sys_Milliseconds), for the cgame's clock
 static int  g_coopCmdSeen = 0;      // guest: the newest host server command passed to the cgame
+#define COOP_CMDS 64
+static int  g_coopSeq = 0;          // guest: its commands (never reset: the host takes only newer numbers)
+static int  g_coopAck = 0;          // guest: the newest of them the host applied (see SP_CoopMakeCmd)
+static int  SP_CoopCurrentCmd( void );
+static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd );
 static void SP_CoopGetReplica( void ){
     typedef const coopReplica_t *(*coopGetReplica_t)( void );
     coopGetReplica_t get = (coopGetReplica_t)dlsym( g_lib, "COOP_GetReplica" );
@@ -975,6 +980,14 @@ static void BuildSnapshot(void){
     if( g_coopReplica && g_coopRep && g_coopRep->ViewEntity() > 0 ) p0 = SP_GEntity( g_coopRep->ViewEntity() );
 #endif
     if(p0->client) g_snap.ps = *(playerState_t*)p0->client;
+#ifdef EF_COOP
+    if( g_coopReplica ){
+        // the guest's prediction: the host's player 2 as of the guest command it applied last;
+        // command times count in the guest's commands (50 ms each, see SP_CoopUserCmd)
+        g_snap.cmdNum = g_coopAck;
+        g_snap.ps.commandTime = g_coopAck * SP_SV_FRAMEMSEC;
+    }
+#endif
     int n=0;
     SP_View view; SP_GetView( &view );
     // Start at 0 to INCLUDE the local player's own entity (entity 0). Q3 ships the client's own entity in
@@ -1373,8 +1386,14 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
         Cmd_TokenizeString( g_svCmds[seq & (SC_RING-1)] );   // cgame then reads via CG_ARGC/CG_ARGV
         return qtrue;
     }
+#ifdef EF_COOP
+    case CG_GETCURRENTCMDNUMBER: if( g_coopReplica ) return SP_CoopCurrentCmd(); return g_cmdNum;
+    case CG_GETUSERCMD:    if( g_coopReplica ) return SP_CoopUserCmd( (int)A(0), (usercmd_t*)P(1) );
+                           *(usercmd_t*)P(1) = g_lastcmd; return qtrue;
+#else
     case CG_GETCURRENTCMDNUMBER: return g_cmdNum;
     case CG_GETUSERCMD:    *(usercmd_t*)P(1) = g_lastcmd; return qtrue;
+#endif
     // Weapon select AND the cgame mouse-look sensitivity scale. The 2nd arg (VMF(1)) feeds
     // cl.cgameSensitivity, which CL_MouseMove multiplies the mouse delta by — if left 0 (the
     // CL_ClearState default), touch/mouse look is dead (x0) while key/joystick look still works.
@@ -2229,8 +2248,44 @@ static void SP_CoopApplyFrame( int frame, int time ){
     g_coopAppliedAt = Sys_Milliseconds();
     g_levelTime = time;
 }
+// The guest's commands. One is made for every host frame taken in (the host applies one a frame),
+// numbered g_coopSeq and kept here; each frame says the newest the host applied (g_coopAck). The
+// cgame's prediction (cg_predict.cpp, on in a replica) starts from that frame's player 2 and replays
+// the commands after it, then the one being made now. Their times are their numbers * 50 ms, and the
+// snapshot's commandTime is the acked number's (BuildSnapshot), so every replayed command moves
+// player 2 for one host frame, as the host's ClientThink will.
+static int       g_coopBtn = 0;     // buttons pressed since the last command
+static int       g_coopSeqAt = 0;   // when the last command was made (Sys_Milliseconds)
+static usercmd_t g_coopCmds[COOP_CMDS];
+static void SP_CoopMakeCmd( void ){
+    usercmd_t c = g_lastcmd;
+    c.buttons |= g_coopBtn;
+    int an[3] = { c.angles[0], c.angles[1], c.angles[2] };
+    g_coopSeqAt = Sys_Milliseconds();
+    if( !CoopNet_GuestQueueCmd( g_coopSeq + 1, an, c.buttons, c.weapon, c.forwardmove, c.rightmove, c.upmove ) ) return;
+    g_coopSeq++;
+    g_coopBtn = 0;
+    c.serverTime = g_coopSeq * SP_SV_FRAMEMSEC;
+    g_coopCmds[g_coopSeq & (COOP_CMDS-1)] = c;
+}
+static int SP_CoopCurrentCmd( void ){
+    if( g_coopSeq - g_coopAck >= COOP_CMDS - 4 ) return g_coopAck;   // too far ahead of the host: no replay
+    return g_coopSeq + 1;   // + the one being made
+}
+static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd ){
+    if( n == g_coopSeq + 1 ){
+        int since = Sys_Milliseconds() - g_coopSeqAt;
+        if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC ) since = SP_SV_FRAMEMSEC;
+        *cmd = g_lastcmd;
+        cmd->serverTime = g_coopSeq * SP_SV_FRAMEMSEC + since;
+        return qtrue;
+    }
+    if( n <= 0 || n > g_coopSeq || n <= g_coopSeq - COOP_CMDS ) return qfalse;
+    *cmd = g_coopCmds[n & (COOP_CMDS-1)];
+    return qtrue;
+}
 // The host's frames that came in since the last call (at most 4, oldest first), each into this level
-// and a snapshot. Returns how many.
+// and a snapshot, and a command for each. Returns how many.
 extern "C" int SP_CoopReplicaApply( void ){
     int newest = CoopNet_GuestNewestFrame(), applied = 0;
     if( !g_coopReplica || !g_coopRep || !newest || newest <= g_coopApplied ) return 0;
@@ -2240,6 +2295,8 @@ extern "C" int SP_CoopReplicaApply( void ){
         if( !CoopNet_GuestFrameInfo( f, &lid, &t, &ack ) || lid != CoopNet_GuestLevelId() ) continue;
         SP_CoopApplyFrame( f, t );
         applied++;
+        if( ack > g_coopAck && ack <= g_coopSeq ) g_coopAck = ack;
+        if( g_spActive ) SP_CoopMakeCmd();
         if( g_spActive ){
             g_cmdNum++;
             g_lastcmd.serverTime = g_levelTime;
@@ -2255,7 +2312,7 @@ static void SP_CoopReplicaDrawFrame( int stereo ){
       SPR_GetLatestCmd(an,&fwd,&side,&up,&btn);
       g_lastcmd.angles[0]=an[0]; g_lastcmd.angles[1]=an[1]; g_lastcmd.angles[2]=an[2];
       g_lastcmd.forwardmove=fwd; g_lastcmd.rightmove=side; g_lastcmd.upmove=up; g_lastcmd.buttons=btn;
-      g_lastcmd.weapon = (byte)g_weaponSelect; }
+      g_lastcmd.weapon = (byte)g_weaponSelect; g_coopBtn |= btn; }
     SP_CoopReplicaApply();
     int since = Sys_Milliseconds() - g_coopAppliedAt;
     if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC - 1 ) since = SP_SV_FRAMEMSEC - 1;

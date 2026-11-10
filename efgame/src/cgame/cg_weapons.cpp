@@ -1,6 +1,7 @@
 #include "cg_local.h"
 #include "../game/anims.h"
 #include "cg_media.h"
+#include "../game/coop_public.h"
 
 /////////////////////  this is a bit kludgy, but it only gives access to one
 //							enum table because of the #define. May get changed.
@@ -951,7 +952,7 @@ void CG_ChangeWeapon( int num )
 */
 void CG_ChangeWeapon( int num )
 {
-	gentity_t	*player = &g_entities[0];
+	gentity_t	*player = &g_entities[COOP_ViewClientNum()];
 
 	if ( num < 1 || num >= WP_NUM_WEAPONS ) 
 	{

@@ -4,6 +4,7 @@
 
 #include "cg_local.h"
 #include "cg_media.h"
+#include "../game/coop_public.h"
 
 static	pmove_t		cg_pmove;
 
@@ -381,7 +382,12 @@ void CG_PredictPlayerState( void ) {
 	}
 
 
+#ifdef EF_COOP
+	// a guest's replica predicts: its player's moves reach the host's game a frame or more later
+	if ( cg_timescale.value >= 1.0f && !COOP_IsReplica() )
+#else
 	if ( cg_timescale.value >= 1.0f )
+#endif
 	{
 		// demo playback just copies the moves
 		if ( (cg.snap->ps.pm_flags & PMF_FOLLOW) ) {
@@ -429,7 +435,13 @@ void CG_PredictPlayerState( void ) {
 		// from the snapshot, but on a wan we will have
 		// to predict several commands to get to the point
 		// we want to compare
+#ifdef EF_COOP
+		// (a replica's newest command is still being made: it stays current over several drawn
+		// frames, so the state before it is no check of last frame's prediction)
+		if ( cmdNum == current - 1 && !COOP_IsReplica() ) {
+#else
 		if ( cmdNum == current - 1 ) {
+#endif
 			vec3_t	delta;
 			float	len;
 

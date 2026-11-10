@@ -25,8 +25,9 @@ launcher's field). A guest asks up to COOP_CONNECT_TRIES times, a second apart.
 After that every packet starts with the session number (a long that is never
 -1, so never out-of-band) and a message type byte:
   guest -> host  COOP_MSG_INPUT       up to COOP_INPUT_BACKUP of the guest's
-                                      newest commands, each with its own number,
-                                      so a lost packet costs nothing
+                                      newest commands (one per host frame it
+                                      took in), each with its own number, so a
+                                      lost packet costs nothing
                  COOP_MSG_KEEPALIVE   nothing new to send for a second, or
                                       the newest replica frame it decoded
                  COOP_MSG_DISCONNECT  a sentence
@@ -39,7 +40,9 @@ keepalive packets end with the newest replica frame the guest has (its ack).
 
 The host's game takes the guest's input once a game frame through
 CoopNet_GuestInput (sp/sp_bridge.cpp hands it to the game's co-op code), and
-player 2 moves with it in place of following player 1. While the guest's input
+player 2 moves with it in place of following player 1: one command a game frame, in
+order, and each replica frame names the last one applied, so the guest's cgame
+can predict its own movement from there. While the guest's input
 is older than COOP_INPUT_STALE ms (the guest is in a menu, the console, or
 loading), player 2 holds still; only without a guest does it follow player 1.
 
@@ -103,9 +106,9 @@ Console:
 #define COOP_CONNECT_RETRY		1000
 #define COOP_STATUS_INTERVAL	1000	// the host's status
 #define COOP_KEEPALIVE_INTERVAL	1000	// the guest's keepalive, when it sends no input
-#define COOP_INPUT_INTERVAL		15		// the guest sends input at most this often (ms)
 #define COOP_INPUT_STALE		500		// older guest input doesn't steer player 2
 #define COOP_INPUT_BACKUP		4		// commands per input packet
+#define COOP_CMD_QUEUE			3		// the host's queue of guest commands (one is applied per game frame)
 
 // Replica frames: once a game frame the host's world as slots of bytes (the game's entity and
 // globals images, the configstrings, the newest server commands), sent as the changes against
@@ -660,7 +663,10 @@ static struct {
 	qboolean			haveCmd;
 	int					cmdHeard;		// when the newest command arrived
 	coopCmd_t			cmd;			// the newest command
-	int					heldButtons;	// every command's buttons since the game last took the input
+	coopCmd_t			queue[COOP_CMD_QUEUE];	// not applied yet, oldest first
+	int					queued;
+	int					appliedSeq;		// the newest command the game applied (the frames' ackCmd)
+	int					heldButtons;	// buttons of commands dropped from a full queue
 
 	// replica frames
 	coopFrame_t			*ring;
@@ -716,6 +722,8 @@ static void CoopHostDrop( int sock, const char *reason, qboolean tell )
 	coopHost.active = qfalse;
 	coopHost.haveCmd = qfalse;
 	coopHost.heldButtons = 0;
+	coopHost.queued = 0;
+	coopHost.appliedSeq = 0;
 	coopHost.name[0] = 0;
 	CoopRingFree( &coopHost.ring );
 	coopHost.building = NULL;
@@ -804,6 +812,8 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	coopHost.lastStatus = now;
 	coopHost.haveCmd = qfalse;
 	coopHost.heldButtons = 0;
+	coopHost.queued = 0;
+	coopHost.appliedSeq = 0;
 	memset( &coopHost.cmd, 0, sizeof( coopHost.cmd ) );
 	CoopRingClear( coopHost.ring );
 	coopHost.ackFrame = 0;
@@ -845,7 +855,14 @@ static void CoopHostInput( msg_t *msg )
 		if ( coopHost.haveCmd && c.seq - coopHost.cmd.seq <= 0 )
 			continue;
 		coopHost.cmd = c;
-		coopHost.heldButtons |= c.buttons;
+		if ( coopHost.queued == COOP_CMD_QUEUE )
+		{
+			// the guest got ahead: drop the oldest, keeping its buttons
+			coopHost.heldButtons |= coopHost.queue[0].buttons;
+			memmove( &coopHost.queue[0], &coopHost.queue[1], sizeof( coopHost.queue[0] ) * ( COOP_CMD_QUEUE - 1 ) );
+			coopHost.queued--;
+		}
+		coopHost.queue[coopHost.queued++] = c;
 		coopHost.haveCmd = qtrue;
 		coopHost.cmdHeard = Sys_Milliseconds();
 	}
@@ -953,27 +970,46 @@ int CoopNet_HostHasGuest( void )
 CoopNet_GuestInput
 
 The game's co-op code, once a game frame on the host (through sp/sp_bridge.cpp): the
-guest's newest command, with the buttons of every command since the last call, so a click
-between two game frames isn't lost. Returns 0 when there is no guest or its input is older
-than COOP_INPUT_STALE ms; player 2 then holds still (or, with no guest, follows player 1).
+guest's next command. The guest makes one command per host frame it gets (each 50 ms
+of its play), so the game applies them one a frame, in order, and every replica frame
+says which was the last (ackCmd): the guest's prediction replays the ones after it.
+With none waiting this frame, player 2 stands with the newest command's angles. Returns
+0 when there is no guest or its input is older than COOP_INPUT_STALE ms; player 2 then
+holds still (or, with no guest, follows player 1).
 =================
 */
 int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *forwardmove,
 	signed char *rightmove, signed char *upmove )
 {
+	coopCmd_t c;
+
 	if ( !coopHost.active || !coopHost.haveCmd || Sys_Milliseconds() - coopHost.cmdHeard > COOP_INPUT_STALE )
 	{
 		coopHost.heldButtons = 0;
+		coopHost.queued = 0;
 		return 0;
 	}
-	angles[0] = coopHost.cmd.angles[0];
-	angles[1] = coopHost.cmd.angles[1];
-	angles[2] = coopHost.cmd.angles[2];
-	*buttons = coopHost.cmd.buttons | coopHost.heldButtons;
-	*weapon = coopHost.cmd.weapon;
-	*forwardmove = coopHost.cmd.forwardmove;
-	*rightmove = coopHost.cmd.rightmove;
-	*upmove = coopHost.cmd.upmove;
+	if ( coopHost.queued )
+	{
+		c = coopHost.queue[0];
+		memmove( &coopHost.queue[0], &coopHost.queue[1], sizeof( coopHost.queue[0] ) * ( COOP_CMD_QUEUE - 1 ) );
+		coopHost.queued--;
+		coopHost.appliedSeq = c.seq;
+	}
+	else
+	{
+		c = coopHost.cmd;
+		c.buttons = 0;
+		c.forwardmove = c.rightmove = c.upmove = 0;
+	}
+	angles[0] = c.angles[0];
+	angles[1] = c.angles[1];
+	angles[2] = c.angles[2];
+	*buttons = c.buttons | coopHost.heldButtons;
+	*weapon = c.weapon;
+	*forwardmove = c.forwardmove;
+	*rightmove = c.rightmove;
+	*upmove = c.upmove;
 	coopHost.heldButtons = 0;
 	return 1;
 }
@@ -1019,7 +1055,7 @@ int CoopNet_HostFrameBegin( int levelId, int levelTime, const char *map )
 	CoopFrameReset( f, coopHost.frameNum );
 	f->levelId = levelId;
 	f->time = levelTime;
-	f->ackCmd = coopHost.haveCmd ? coopHost.cmd.seq : 0;
+	f->ackCmd = coopHost.appliedSeq;
 	Q_strncpyz( f->map, map ? map : "", sizeof( f->map ) );
 	coopHost.building = f;
 	coopHostBuildStart = CoopUsec();
@@ -1127,7 +1163,6 @@ static struct {
 	qboolean			refused;		// the host's Mac said nothing listens on the port
 
 	// input
-	int					lastCmdNumber;	// cl.cmdNumber last taken
 	int					seq;
 	coopCmd_t			cmds[COOP_INPUT_BACKUP];	// the newest last
 	int					numCmds;
@@ -1454,7 +1489,6 @@ static void CoopGuestReceive( void )
 			coopGuest.session = (unsigned)strtoul( sessionText, NULL, 10 );
 			coopGuest.state = COOP_GUEST_CONNECTED;
 			coopGuest.lastHeard = Sys_Milliseconds();
-			coopGuest.lastCmdNumber = cl.cmdNumber;
 			coopGuest.statStart = coopGuest.lastHeard;
 			Com_Printf( "co-op: joined %s as player 2\n", CoopAddressString( &coopGuest.host ) );
 			CoopGuestHostState( rest );
@@ -1501,36 +1535,43 @@ static qboolean CoopGuestHasInput( void )
 	return SP_IsActive() && clc.state == CA_ACTIVE && !SP_MenuPaused() && !SP_IsLoading();
 }
 
-static void CoopGuestTakeInput( void )
+static void CoopGuestSend( void );
+
+/*
+=================
+CoopNet_GuestQueueCmd
+
+The bridge on the guest, once for every host frame its replica level takes in: this
+player's command for that frame, numbered by the bridge (the same numbers its
+prediction uses). Sent at once, with the few before it in case a packet is lost.
+Returns 0 when this player has no input now (a menu, the console, a load).
+=================
+*/
+int CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
+	int forwardmove, int rightmove, int upmove )
 {
-	usercmd_t	*uc;
-	coopCmd_t	*c;
+	coopCmd_t *c;
 
-	if ( !CoopGuestHasInput() )
-	{
-		coopGuest.lastCmdNumber = cl.cmdNumber;
-		return;
-	}
-	if ( cl.cmdNumber == coopGuest.lastCmdNumber )
-		return;
-	coopGuest.lastCmdNumber = cl.cmdNumber;
-	uc = &cl.cmds[cl.cmdNumber & CMD_MASK];
-
+	if ( coopGuest.state != COOP_GUEST_CONNECTED || !CoopGuestHasInput() )
+		return 0;
 	if ( coopGuest.numCmds == COOP_INPUT_BACKUP )
 	{
 		memmove( &coopGuest.cmds[0], &coopGuest.cmds[1], sizeof( coopGuest.cmds[0] ) * ( COOP_INPUT_BACKUP - 1 ) );
 		coopGuest.numCmds--;
 	}
 	c = &coopGuest.cmds[coopGuest.numCmds++];
-	c->seq = ++coopGuest.seq;
+	c->seq = seq;
+	coopGuest.seq = seq;
 	for ( int j = 0; j < 3; j++ )
-		c->angles[j] = uc->angles[j] & 0xffff;
-	c->buttons = uc->buttons;
-	c->weapon = uc->weapon;
-	c->forwardmove = uc->forwardmove;
-	c->rightmove = uc->rightmove;
-	c->upmove = uc->upmove;
+		c->angles[j] = angles[j] & 0xffff;
+	c->buttons = buttons;
+	c->weapon = weapon;
+	c->forwardmove = (signed char)forwardmove;
+	c->rightmove = (signed char)rightmove;
+	c->upmove = (signed char)upmove;
 	coopGuest.unsent = qtrue;
+	CoopGuestSend();
+	return 1;
 }
 
 static void CoopGuestSend( void )
@@ -1539,7 +1580,7 @@ static void CoopGuestSend( void )
 	msg_t	msg;
 	int		now = Sys_Milliseconds();
 
-	if ( coopGuest.unsent && coopGuest.numCmds && now - coopGuest.lastSend >= COOP_INPUT_INTERVAL )
+	if ( coopGuest.unsent && coopGuest.numCmds )
 	{
 		CoopBeginMessage( &msg, buf, sizeof( buf ), coopGuest.session, COOP_MSG_INPUT );
 		MSG_WriteByte( &msg, coopGuest.numCmds );
@@ -1699,7 +1740,6 @@ void CoopNet_GuestFrame( void )
 		return;
 	}
 	CoopGuestFollowLevel();
-	CoopGuestTakeInput();
 	CoopGuestSend();
 	CoopNetStats();
 }

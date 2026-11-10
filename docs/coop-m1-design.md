@@ -68,17 +68,34 @@ hundred bytes compressed). The ring of 32 acked frames is as planned.
 ### Reliable messages (not built)
 Configstrings and server commands travel as slots instead, so they need no reliable layer.
 
-## Step 4: the guest's cgame is P2
+## Step 4: the guest's cgame is P2 (built)
+- `COOP_ViewClientNum()` is P2's entity number in a replica (0 elsewhere). The cgame's "entity 0 is
+  me" uses that matter for the view change to it: the HUD's player (crosshair names, radar,
+  teleport effect, assimilation overlay), the eye point and weapon changes. The rest already went
+  through `cg.snap->ps.clientNum`, which is P2's in the guest's snapshots. The scoreboard's mission
+  statistics and the camera code still read entity 0 (P1, the story player).
+- The guest makes one command for every host frame it takes in (the latest angles and moves, with
+  every button pressed since the last one), numbers it, keeps it, and sends it at once with the few
+  before it. The host queues them (at most 3; a full queue drops the oldest but keeps its buttons)
+  and applies one per game frame; with none waiting P2 stands with the newest angles. Each replica
+  frame names the last command applied (`ackCmd`).
+- The guest's snapshot stamps `cmdNum` with that ack and `ps.commandTime` with ack * 50 ms; command
+  n has `serverTime` n * 50 ms, and the one being made now n * 50 + the time since the last one. So
+  the cgame's own prediction (`CG_PredictPlayerState`, used in a replica even at timescale 1)
+  replays every unacknowledged command as one host frame, the way the host's `ClientThink` runs it.
+  The prediction-error decay is skipped in a replica (the newest command stays current over several
+  drawn frames, so the usual check would see its own partial move as an error).
+- Measured on borg2 with two copies on one Mac: the host's P2 matched the guest's prediction of
+  each acknowledged command exactly (0.00 units) in 405 of 406 frames (one 14-unit miss right after
+  joining). The guest's commands run about 2 host frames behind; prediction hides it.
+
+## Step 4: the plan it started from
 - `COOP_ViewClientNum()` returns P2's entity number on the guest (0 on the host). The cgame's
-  hardcoded "entity 0 is me" uses (about 16 `g_entities[0]` plus some `cg_entities[0]`, and
-  `cg.snap->ps.clientNum`) change to it: HUD, view weapon, crosshair, view angles, the player's
-  own model in first person.
+  hardcoded "entity 0 is me" uses change to it.
 - The bridge on the guest builds `g_snap.ps` from P2's client and stamps `cmdNum` with the guest's
   own command number, so the cgame's prediction replays the guest's unacknowledged commands on top
   of the host's P2 state. Prediction needs no game entities (`cg_pmove.gent = NULL`), and traces go
   through the replica's world.
-- The host keeps acknowledging the newest guest command it applied (its sequence number) in each
-  replica frame, so the guest's prediction knows what to replay.
 
 ## Step 5: sounds, prints, subtitles
 - The bridge's `I_SendServerCmd` and `I_SetCS` on the host also queue the command or configstring
