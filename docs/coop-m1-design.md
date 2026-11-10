@@ -153,6 +153,11 @@ that the cgame doesn't need. (CPU is the whole process, renderer included, sampl
   load, the network). Meanwhile player 2's input and the command being made are held where they
   were, so the prediction stays put, and the game's sounds are held as in a pause of its own.
 
+- A guest started by Join loads the host's level while its startup logo movie may still play; the
+  movie's end used to drop the client to the menu (the first-run setup screen in a fresh home) about
+  30 s later. The guest stops a full-screen movie before it loads a host level. The host's in-game
+  movies pause its game, so the guest shows "Host paused" until cutscenes are mirrored (M2).
+
 ## Open questions and what's left after M1
 - The host's game pausing when its window loses focus matters for two copies on one Mac.
 - Cameras and cutscenes are not mirrored (M2): the guest keeps its own view while the host watches one.

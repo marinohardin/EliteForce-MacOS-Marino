@@ -1656,6 +1656,9 @@ static void CoopGuestFollowLevel( void )
 	}
 	coopGuest.loadLevelId = f->levelId;
 	Com_Printf( "co-op: the host is on %s; loading it as player 2\n", f->map );
+	// a full-screen movie still playing (the logo at startup, when Join starts the game) would
+	// end later in the menu, over the host's level: stop it first
+	SCR_StopCinematic();
 	Cvar_Set( "sp_coop", "2" );
 	Cbuf_AddText( va( "map %s\n", f->map ) );
 }
