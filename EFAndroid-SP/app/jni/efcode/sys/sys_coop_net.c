@@ -36,9 +36,9 @@ Either side gives up after COOP_TIMEOUT ms without a packet.
 
 The host's game takes the guest's input once a game frame through
 CoopNet_GuestInput (sp/sp_bridge.cpp hands it to the game's co-op code), and
-player 2 moves with it in place of following player 1. Without a guest, or
-when the guest's input is older than COOP_INPUT_STALE ms (the guest is in a
-menu, or loading), player 2 follows player 1 as before.
+player 2 moves with it in place of following player 1. While the guest's input
+is older than COOP_INPUT_STALE ms (the guest is in a menu, the console, or
+loading), player 2 holds still; only without a guest does it follow player 1.
 
 Until the guest mirrors the host's world (co-op M1 step 3), a guest that
 connects loads the host's map on its own (coop_guestLoadMap 1, the default)
@@ -539,7 +539,7 @@ CoopNet_GuestInput
 The game's co-op code, once a game frame on the host (through sp/sp_bridge.cpp): the
 guest's newest command, with the buttons of every command since the last call, so a click
 between two game frames isn't lost. Returns 0 when there is no guest or its input is older
-than COOP_INPUT_STALE ms; player 2 then follows player 1.
+than COOP_INPUT_STALE ms; player 2 then holds still (or, with no guest, follows player 1).
 =================
 */
 int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *forwardmove,
@@ -998,7 +998,7 @@ static void CoopStatus_f( void )
 	else if ( coopHost.active )
 		Com_Printf( "co-op: hosting; player 2 is %s at %s, last heard %d ms ago, %s\n", coopHost.name,
 			CoopAddressString( &coopHost.addr ), Sys_Milliseconds() - coopHost.lastHeard,
-			coopHost.haveCmd && Sys_Milliseconds() - coopHost.cmdHeard <= COOP_INPUT_STALE ? "steering" : "not steering" );
+			coopHost.haveCmd && Sys_Milliseconds() - coopHost.cmdHeard <= COOP_INPUT_STALE ? "steering" : "holding player 2 still (no fresh input)" );
 	else if ( coopHostSock >= 0 )
 		Com_Printf( "co-op: hosting; no player 2 has joined\n" );
 	else

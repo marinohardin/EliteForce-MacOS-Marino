@@ -7,7 +7,7 @@
 #ifndef COOP_BRIDGE_H
 #define COOP_BRIDGE_H
 
-#define COOP_BRIDGE_VERSION	1
+#define COOP_BRIDGE_VERSION	2
 
 typedef struct
 {
@@ -17,6 +17,8 @@ typedef struct
 	qboolean	(*GuestCmd)( usercmd_t *cmd );
 	// the guest's name, "" without a guest
 	const char	*(*GuestName)( void );
+	// a guest is connected (it may still have no fresh input: menu, console, loading)
+	qboolean	(*GuestConnected)( void );
 } coopBridge_t;
 
 extern "C" void COOP_SetBridge( const coopBridge_t *bridge );

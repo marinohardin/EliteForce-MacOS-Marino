@@ -30,3 +30,8 @@ const char *COOP_GuestName( void )
 	const char *name = coop_bridge.GuestName ? coop_bridge.GuestName() : NULL;
 	return name ? name : "";
 }
+
+qboolean COOP_GuestConnected( void )
+{
+	return coop_bridge.GuestConnected ? coop_bridge.GuestConnected() : qfalse;
+}

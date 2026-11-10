@@ -307,7 +307,8 @@ static qboolean COOP_GuestBuildCmd( gentity_t *ent, usercmd_t *cmd )
 	{
 		if ( coop_p2.guestSteering )
 		{
-			gi.Printf( "co-op: player 2 follows player 1 again\n" );
+			gi.Printf( COOP_GuestConnected() ? "co-op: player 2 holds still (no input from the guest)\n" :
+				"co-op: player 2 follows player 1 again\n" );
 		}
 		coop_p2.guestSteering = qfalse;
 		return qfalse;
@@ -370,7 +371,8 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 		cmd->upmove = coop_p2.upmove;
 		coop_p2.stuckFrames = 0;
 	}
-	else if ( coop_p2.follow && p1->inuse && p1->client && cl->ps.pm_type < PM_DEAD )
+	// a connected guest without fresh input (menu, console, loading, a network gap): P2 holds still
+	else if ( coop_p2.follow && !COOP_GuestConnected() && p1->inuse && p1->client && cl->ps.pm_type < PM_DEAD )
 	{
 		VectorSubtract( p1->currentOrigin, ent->currentOrigin, dir );
 		float dz = dir[2];
