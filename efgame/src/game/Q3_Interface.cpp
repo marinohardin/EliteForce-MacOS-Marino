@@ -608,7 +608,7 @@ static void Q3_CenterPrint ( const char *format, ... )
 
 	if (text[0] == '@')	// It's a key
 	{
-		gi.SendServerCommand( NULL, "cp \"%s\"", text );
+		gi.SendServerCommand( COOP_EVERYONE, "cp \"%s\"", text );
 		return;
 	}
 
@@ -1269,7 +1269,7 @@ Prints a message in the center of the screen
 */
 static void Q3_ScrollText ( const char *id)
 {
-	gi.SendServerCommand( NULL, "st \"%s\"", id);
+	gi.SendServerCommand( COOP_EVERYONE, "st \"%s\"", id);
 
 	return;
 }
@@ -1283,7 +1283,7 @@ Prints a message in the center of the screen giving it an LCARS frame around it
 */
 static void Q3_LCARSText ( const char *id)
 {
-	gi.SendServerCommand( NULL, "lt \"%s\"", id);
+	gi.SendServerCommand( COOP_EVERYONE, "lt \"%s\"", id);
 
 	return;
 }
@@ -1396,11 +1396,11 @@ static void HeadText(int index,int entID,char *finalName)
 	//		only override if closer?
 	if ( entID == 0 && precacheWav[index].speaker != SP_MUNRO )
 	{//Not Munro speaking, someone speaking on player channel
-		gi.SendServerCommand( NULL, "gt %s %i %i %i", precacheWav[index].textKey, precacheWav[index].speaker, -1, index2 );
+		gi.SendServerCommand( COOP_EVERYONE, "gt %s %i %i %i", precacheWav[index].textKey, precacheWav[index].speaker, -1, index2 );
 	}
 	else
 	{
-		gi.SendServerCommand( NULL, "gt %s %i %i %i", precacheWav[index].textKey, precacheWav[index].speaker, entID, index2 );
+		gi.SendServerCommand( COOP_EVERYONE, "gt %s %i %i %i", precacheWav[index].textKey, precacheWav[index].speaker, entID, index2 );
 	}
 }
 
@@ -1479,7 +1479,7 @@ static int Q3_PlaySound( int taskID, int entID, const char *name, const char *ch
 					{
 						if ( in_camera)	// Cinematic
 						{					
-							gi.SendServerCommand( NULL, "ct \"%s\" %i", precacheWav[i].textKey, soundHandle );
+							gi.SendServerCommand( COOP_EVERYONE, "ct \"%s\" %i", precacheWav[i].textKey, soundHandle );
 						}
 						else if (precacheWav[i].speaker==SP_NONE)	//  lower screen text
 						{
@@ -1487,7 +1487,7 @@ static int Q3_PlaySound( int taskID, int entID, const char *name, const char *ch
 							//
 							if (bBroadcast || (DistanceSquared(ent->currentOrigin, ent2->currentOrigin) < ((voice_chan == CHAN_VOICE_ATTEN)?(350 * 350):(1200 * 1200)) ) )
 							{
-								gi.SendServerCommand( NULL, "ct \"%s\" %i", precacheWav[i].textKey, soundHandle );
+								gi.SendServerCommand( COOP_EVERYONE, "ct \"%s\" %i", precacheWav[i].textKey, soundHandle );
 							}
 						}
 						else if (precacheWav[i].speaker!=SP_NONE)	// Head text
@@ -1500,7 +1500,7 @@ static int Q3_PlaySound( int taskID, int entID, const char *name, const char *ch
 					{
 						if ( in_camera)	// Cinematic text
 						{							
-							gi.SendServerCommand( NULL, "ct \"%s\" %i", precacheWav[i].textKey, soundHandle);
+							gi.SendServerCommand( COOP_EVERYONE, "ct \"%s\" %i", precacheWav[i].textKey, soundHandle);
 						}
 						else if (precacheWav[i].speaker!=SP_NONE)	// Head text
 						{

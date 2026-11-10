@@ -127,7 +127,7 @@ void CGCam_Disable( void )
 	}
 	COOP_OnCameraDisable();
 
-	gi.SendServerCommand( NULL, "cts");
+	gi.SendServerCommand( COOP_EVERYONE, "cts");
 
 }
 

@@ -516,12 +516,30 @@ static void  I_SendConsole( const char *t ){
     Cbuf_AddText(t);
 }
 static void  I_DropClient( int n, const char *r ){ (void)n;(void)r; }
+#ifdef EF_COOP
+// Co-op host: who each server command is for. The game addresses story text (centre prints,
+// subtitles) to every client (-1), messages for a player to that player's number: player 1's (0)
+// show here only, player 2's go to the guest only (here too while no guest is connected).
+#define COOP_FOR_ALL    0
+#define COOP_FOR_HOST   1
+#define COOP_FOR_GUEST  2
+static signed char g_svCmdFor[SC_RING];
+static int SP_CoopCmdTarget( int n ){
+    if( n < 0 || !g_coopRep || g_coopReplica ) return COOP_FOR_ALL;
+    int p2 = g_coopRep->ViewEntity();
+    if( p2 > 0 && n == p2 ) return CoopNet_HostHasGuest() ? COOP_FOR_GUEST : COOP_FOR_ALL;
+    return COOP_FOR_HOST;
+}
+#endif
 static void  I_SendServerCmd( int n, const char *fmt, ... ){
     (void)n;
     g_svCmdSeq++;
     va_list a; va_start(a,fmt);
     vsnprintf( g_svCmds[g_svCmdSeq & (SC_RING-1)], sizeof(g_svCmds[0]), fmt, a );
     va_end(a);
+#ifdef EF_COOP
+    g_svCmdFor[g_svCmdSeq & (SC_RING-1)] = (signed char)SP_CoopCmdTarget( n );
+#endif
 }
 static void  I_SetCS( int n, const char *s ){
     if(n>=0&&n<CS_MAX){
@@ -1383,6 +1401,9 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     case CG_GETSERVERCOMMAND: {
         int seq = (int)A(0);
         if( seq <= 0 || seq > g_svCmdSeq || seq <= g_svCmdSeq - SC_RING ) return qfalse;
+#ifdef EF_COOP
+        if( g_svCmdFor[seq & (SC_RING-1)] == COOP_FOR_GUEST ) return qfalse;   // player 2's: the guest shows it
+#endif
         Cmd_TokenizeString( g_svCmds[seq & (SC_RING-1)] );   // cgame then reads via CG_ARGC/CG_ARGV
         return qtrue;
     }
@@ -2158,12 +2179,14 @@ static void SP_DrawSkipProgress(void){
 }
 #ifdef EF_COOP
 // ---- co-op replica: the host's side ----
-// The host's newest server commands (not the configstring updates: those travel as configstrings) as
-// [newest seq][count] then count x ([seq][text\0]), for the guest to hand its cgame what's new.
+// The host's newest server commands for the guest (not player 1's own, and not the configstring
+// updates: those travel as configstrings) as [newest seq][count] then count x ([seq][text\0]), for
+// the guest to hand its cgame what's new.
 static int SP_CoopCommandsImage( unsigned char *buf, int size ){
     int seqs[32], n = 0;
     for( int seq = g_svCmdSeq; seq > 0 && seq > g_svCmdSeq - SC_RING && n < 32; seq-- ){
         if( !strncmp( g_svCmds[seq & (SC_RING-1)], "cs ", 3 ) ) continue;
+        if( g_svCmdFor[seq & (SC_RING-1)] == COOP_FOR_HOST ) continue;
         seqs[n++] = seq;
     }
     int len = 0;

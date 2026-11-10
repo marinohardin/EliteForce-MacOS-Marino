@@ -42,12 +42,17 @@
 #define COOP_OnPickup(i,p)			((void)0)
 #define COOP_OnScriptWeapon(e,w)	((void)0)
 #define COOP_CacheForNextLevel()	((void)0)
+#define COOP_EVERYONE				NULL
 
 #else // EF_COOP
 
 extern int	coop_enabled;		// sp_coop 1 at InitGame
 extern int	coop_p2Num;			// P2's entity number, -1 when there is none
 extern int	coop_replica;		// sp_coop 2 at InitGame: a guest's copy of the host's level
+
+// the client a script's story text (centre prints, subtitles, voice text) goes to: both players.
+// Without co-op it is NULL, which reads as client 0, the same as a message for player 1 only.
+#define COOP_EVERYONE	-1
 
 // this level is a guest's replica: no game frames run here, the host's entities are written in
 inline int COOP_IsReplica( void ) { return coop_replica; }
