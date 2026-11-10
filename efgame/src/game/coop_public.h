@@ -87,6 +87,8 @@ void		COOP_FindPlayerWaypoints( void );
 
 // Touch_Item after a pickup: weapons and holdables go to the other player too
 void		COOP_OnPickup( gentity_t *item, gentity_t *picker );
+// the game started a sound itself, not through an entity event (the guest's replica plays it too)
+void		COOP_OnDirectSound( int entNum, int channel, const char *path );
 // Q3_SetWeapon gave P1 a weapon: P2 gets it too
 void		COOP_OnScriptWeapon( gentity_t *ent, int wp );
 // G_ChangeMap: keep P2's health, armor and ammo for the next level

@@ -558,6 +558,16 @@ qboolean G_PlayerGreet( gentity_t *self, qboolean useWhenDone )
 		{
 			//G_SoundOnEnt( user, CHAN_VOICE, greeting );
 			cgi_S_StartSound (NULL, 0, CHAN_VOICE, greeting );
+#ifdef EF_COOP
+			for ( int c = 0; c < CHARACTER_NUM_CHARS; c++ )
+			{
+				if ( CharacterNames[c].soundIndex == greeting && CharacterNames[c].sound )
+				{
+					COOP_OnDirectSound( 0, CHAN_VOICE, CharacterNames[c].sound );	// the guest hears it too
+					break;
+				}
+			}
+#endif
 
 			//Responder waits until Munro is done talking then makes the NPC respond.
 			gentity_t *responder = G_Spawn();

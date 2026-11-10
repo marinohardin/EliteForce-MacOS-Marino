@@ -75,6 +75,9 @@ void G_SoundOnEnt (gentity_t *ent, soundChannel_t channel, const char *soundPath
 {
 	int	index = G_SoundIndex( (char *)soundPath );
 
+#ifdef EF_COOP
+	COOP_OnDirectSound( ent->s.number, channel, soundPath );	// the guest's replica plays it too
+#endif
 	if ( cgs.sound_precache[ index ] ) 
 	{
 		cgi_S_StartSound( NULL, ent->s.number, channel, cgs.sound_precache[ index ] );

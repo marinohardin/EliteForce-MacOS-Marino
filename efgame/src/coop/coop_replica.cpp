@@ -29,6 +29,7 @@ extern void		CG_RegisterClientModels( int entityNum );
 extern void		CG_RegisterNPCCustomSounds( clientInfo_t *ci );
 extern void		CG_RegisterNPCEffects( team_t team );
 extern void		CG_RegisterWeapon( int weaponNum );
+extern void		G_SoundOnEnt( gentity_t *ent, soundChannel_t channel, const char *soundPath );
 extern qboolean	player_locked;
 extern int		BMS_MID;
 
@@ -47,6 +48,26 @@ typedef struct
 	int		p2Num;
 	int		numEntities;
 } repGlobals_t;
+
+// sounds the host's game started directly (G_SoundOnEnt: script voice lines, some NPC sounds), not
+// through an entity event; the last second's go with the globals and the guest plays the new ones
+#define REP_SOUNDS		16
+#define REP_SOUND_KEEP	1000	// ms
+typedef struct
+{
+	int		seq;
+	int		time;			// level.time when it started
+	int		ent;
+	int		chan;
+	char	path[MAX_QPATH];
+} repSound_t;
+
+static repSound_t	rep_sounds[REP_SOUNDS];		// host: the newest at rep_soundSeq % REP_SOUNDS
+static int			rep_soundSeq;
+static int			rep_soundSeen;				// guest: the newest one played (or skipped on joining)
+static qboolean		rep_soundSynced;
+static repSound_t	rep_soundPending[REP_SOUNDS];
+static int			rep_soundPendingCount;
 
 /*
 ==============================================================================
@@ -233,6 +254,22 @@ static int REP_WriteGlobals( unsigned char *buf, int size )
 		level_locals_t temp = level;
 		EnumerateFields( savefields_LevelLocals, (byte *)&temp, 'LVLC', LLOFS( LEVEL_LOCALS_T_SAVESTOP ) );
 	}
+	{
+		repSound_t	recent[REP_SOUNDS];
+		int			n = 0;
+		for ( int seq = rep_soundSeq - REP_SOUNDS + 1; seq <= rep_soundSeq; seq++ )
+		{
+			const repSound_t *s = &rep_sounds[seq % REP_SOUNDS];
+			if ( seq > 0 && s->seq == seq && level.time - s->time <= REP_SOUND_KEEP )
+			{
+				recent[n++] = *s;
+			}
+		}
+		if ( n )
+		{
+			gi.AppendToSaveGame( 'RSND', recent, n * sizeof( recent[0] ) );
+		}
+	}
 	return REP_EndWrite();
 }
 
@@ -413,12 +450,28 @@ static void REP_ApplyGlobals( const unsigned char *data, int len )
 	{
 		level_locals_t temp = level;
 		EvaluateFields( savefields_LevelLocals, (byte *)&temp, (byte *)&level, 'LVLC', LLOFS( LEVEL_LOCALS_T_SAVESTOP ), qfalse );
+		repSound_t	recent[REP_SOUNDS];
+		int			n = gi.ReadFromSaveGameOptional( 'RSND', recent, sizeof( recent ), NULL ) / (int)sizeof( recent[0] );
 		if ( !REP_EndRead() )
 		{
 			gi.Printf( S_COLOR_YELLOW "co-op: the host's level globals didn't read back; skipped\n" );
 			return;
 		}
 		level = temp;
+		for ( int i = 0; i < n && i < REP_SOUNDS; i++ )
+		{
+			if ( recent[i].seq <= rep_soundSeen )
+			{
+				continue;
+			}
+			rep_soundSeen = recent[i].seq;
+			if ( rep_soundSynced && rep_soundPendingCount < REP_SOUNDS )
+			{
+				recent[i].path[MAX_QPATH - 1] = 0;
+				rep_soundPending[rep_soundPendingCount++] = recent[i];
+			}
+		}
+		rep_soundSynced = qtrue;	// joining: only the sounds that start from now on
 	}
 	level.clients = clients;
 	// in_camera stays the guest's own: the host's camera itself isn't mirrored yet (M2), and the
@@ -435,6 +488,7 @@ static void REP_ApplyDone( qboolean cgameUp )
 {
 	if ( !cgameUp )
 	{
+		rep_soundPendingCount = 0;
 		return;		// CG_Init registers every client's media itself
 	}
 	for ( int i = 0; i < globals.num_entities; i++ )
@@ -464,6 +518,33 @@ static void REP_ApplyDone( qboolean cgameUp )
 			}
 		}
 	}
+	for ( int i = 0; i < rep_soundPendingCount; i++ )
+	{
+		const repSound_t *s = &rep_soundPending[i];
+		if ( s->ent >= 0 && s->ent < MAX_GENTITIES && s->path[0] )
+		{
+			G_SoundOnEnt( &g_entities[s->ent], (soundChannel_t)s->chan, s->path );
+		}
+	}
+	rep_soundPendingCount = 0;
+}
+
+// host: the game started a sound itself (G_SoundOnEnt); the guest plays it too
+void COOP_OnDirectSound( int entNum, int channel, const char *path )
+{
+	repSound_t *s;
+
+	if ( !coop_enabled || !path || !path[0] )
+	{
+		return;
+	}
+	rep_soundSeq++;
+	s = &rep_sounds[rep_soundSeq % REP_SOUNDS];
+	s->seq = rep_soundSeq;
+	s->time = level.time;
+	s->ent = entNum;
+	s->chan = channel;
+	Q_strncpyz( s->path, path, sizeof( s->path ) );
 }
 
 static int REP_ViewEntity( void )
@@ -484,6 +565,9 @@ void COOP_ReplicaInit( void )
 	memset( rep_parms, 0, sizeof( rep_parms ) );
 	memset( rep_needMedia, 0, sizeof( rep_needMedia ) );
 	memset( rep_weapon, 0, sizeof( rep_weapon ) );
+	memset( rep_sounds, 0, sizeof( rep_sounds ) );
+	rep_soundSeq = rep_soundSeen = rep_soundPendingCount = 0;
+	rep_soundSynced = qfalse;
 }
 
 static const coopReplica_t coop_replicaExport = {

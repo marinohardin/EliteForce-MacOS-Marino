@@ -97,13 +97,20 @@ Configstrings and server commands travel as slots instead, so they need no relia
   of the host's P2 state. Prediction needs no game entities (`cg_pmove.gent = NULL`), and traces go
   through the replica's world.
 
-## Step 5: sounds, prints, subtitles
-- The bridge's `I_SendServerCmd` and `I_SetCS` on the host also queue the command or configstring
-  as a reliable co-op message; the guest feeds them to its cgame as its own bridge does locally
-  (centre prints, subtitles, voice lines, music, objectives).
-- Sounds started by the game as entity events travel with the entity deltas (the cgame plays them
-  from the snapshot). Sounds the game starts directly through the engine (`gi.S_Override`, voice
-  lines) need an explicit message.
+## Step 5: sounds, prints, subtitles (built)
+- Server commands (prints, centre prints, subtitles `ct`/`gt`, objectives) and configstrings
+  (music, objectives, models, sounds) travel as slots (step 3); the guest's bridge hands the new
+  commands to its cgame as its own `I_SendServerCmd` would. The bridge ignores a command's target
+  client, so prints meant for P1 ("godmode ON") show on the guest too.
+- Sounds that come from entity events reach the guest with the entities (the cgame plays the events
+  of the snapshot). Sounds the game starts itself (`G_SoundOnEnt`: script voice lines, some NPC
+  sounds, and P1's greeting to a crew member) are recorded by the host's game in a ring of 16
+  (entity, channel, path) with a number; the last second's go with the level's globals (`RSND`),
+  and the guest's game plays the ones newer than it has seen, through its own `G_SoundOnEnt`.
+  Joining plays nothing old. The speaking-head indicator (`S_Override`) follows the guest's own
+  sound system, so it works for these.
+- Tested on borg1 (the opening captain's log, voice line 2 heard on a guest that joined during
+  line 1) and with host prints (`god`), both showing on the guest.
 
 ## Step 6: measure
 - Bytes per second on borg1 (busy), voy1 (many NPCs) and a quiet map; CPU of the host's per-frame
