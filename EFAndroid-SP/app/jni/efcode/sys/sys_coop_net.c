@@ -14,7 +14,7 @@ co-op check (getcoopinfo, sys_osx_coop.m), which shares the host's socket.
 Connecting (out-of-band text packets, "\xff\xff\xff\xff" then a word, a
 newline and an infostring or a sentence):
   guest -> host  coopConnect   coopProtocol, version, paks (the loaded .pk3
-                               files' checksums, as count-hash), name, password,
+                               files single player reads, as count-hash), name, password,
                                nonce (the guest's, echoed back)
   host -> guest  coopAccept    session, nonce, hostname, map, state
                  coopReject    a sentence for the guest's console
@@ -130,12 +130,14 @@ static int CoopIntCompare( const void *a, const void *b )
 	return x < y ? -1 : x > y;
 }
 
-// The loaded .pk3 files as "count-hash" (the hash of their sorted checksums): two copies with
-// the same files have the same signature, whatever order their search paths are in.
+// The .pk3 files single player's game logic reads (the game's own paks, and any that change
+// single player: FS_CoopPakChecksums) as "count-hash" (the hash of their sorted checksums): two
+// copies with the same files have the same signature, whatever order their search paths are in.
+// Holomatch-only packs (maps, bots, cMod) don't count.
 static void CoopPakSignature( char *out, int size )
 {
 	static int	sums[1024];
-	const char	*s = FS_LoadedPakChecksums();
+	const char	*s = FS_CoopPakChecksums();
 	int			n = 0;
 
 	while ( *s && n < (int)ARRAY_LEN( sums ) )
@@ -384,8 +386,9 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	CoopPakSignature( ourPaks, sizeof( ourPaks ) );
 	if ( strcmp( paks, ourPaks ) )
 	{
-		CoopHostReject( sock, from, va( "Your game files differ from the host's (host: %d .pk3 files, you: %d). "
-			"Both need the same .pk3 files in baseEF.", atoi( ourPaks ), atoi( paks ) ) );
+		CoopHostReject( sock, from, va( "Your game files differ from the host's (host: %d single-player .pk3 files, "
+			"you: %d). Both need the same pak0-pak3, and the same packs that change single player "
+			"(Holomatch map packs don't matter).", atoi( ourPaks ), atoi( paks ) ) );
 		return;
 	}
 	// compared as it crossed the network (CoopSetInfo cleans the guest's)

@@ -4524,6 +4524,71 @@ const char *FS_LoadedPakChecksums( void ) {
 	return info;
 }
 
+#ifdef EF_COOP
+/*
+=====================
+FS_CoopPakChecksums
+
+Single-player co-op (EF_COOP builds): the checksums of the loaded pk3 files that
+single player's game logic reads, as for FS_LoadedPakChecksums. A host and its
+guest must have the same ones; other packs (Holomatch maps, bots, cMod) don't
+matter to co-op. A pack counts when it is one of the game's own (pak0-pak3), or
+when it has a file that steers single player: an NPC/weapon/item definition
+(ext_data/), an ICARUS script (*.ibi), or a single-player map that one of the
+game's own paks has too (a replacement).
+=====================
+*/
+static qboolean FS_CoopPakHasFile( const pack_t *pak, const char *name ) {
+	fileInPack_t *f;
+
+	for ( f = pak->hashTable[FS_HashFileName( name, pak->hashSize )]; f; f = f->next ) {
+		if ( !FS_FilenameCompare( f->name, name ) ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+static qboolean FS_CoopPakCounts( const pack_t *pak ) {
+	searchpath_t *core;
+	int i;
+
+	if ( FS_IsCorePak( pak ) ) {
+		return qtrue;
+	}
+	for ( i = 0; i < pak->numfiles; i++ ) {
+		const char *name = pak->buildBuffer[i].name;
+
+		if ( !Q_stricmpn( name, "ext_data/", 9 ) || COM_CompareExtension( name, ".ibi" ) ) {
+			return qtrue;
+		}
+		if ( Q_stricmpn( name, "maps/", 5 ) || !COM_CompareExtension( name, ".bsp" ) ||
+			!Q_stricmpn( name + 5, "hm_", 3 ) || !Q_stricmpn( name + 5, "ctf_", 4 ) ) {
+			continue;
+		}
+		for ( core = fs_searchpaths; core; core = core->next ) {
+			if ( core->pack && core->pack != pak && FS_IsCorePak( core->pack ) && FS_CoopPakHasFile( core->pack, name ) ) {
+				return qtrue;
+			}
+		}
+	}
+	return qfalse;
+}
+
+const char *FS_CoopPakChecksums( void ) {
+	static char	info[BIG_INFO_STRING];
+	searchpath_t	*search;
+
+	info[0] = 0;
+	for ( search = fs_searchpaths ; search ; search = search->next ) {
+		if ( search->pack && FS_CoopPakCounts( search->pack ) ) {
+			Q_strcat( info, sizeof( info ), va( "%i ", search->pack->checksum ) );
+		}
+	}
+	return info;
+}
+#endif
+
 /*
 =====================
 FS_LoadedPakNames
