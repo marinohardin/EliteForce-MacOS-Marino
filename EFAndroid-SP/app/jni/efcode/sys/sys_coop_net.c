@@ -118,6 +118,7 @@ Console:
 #define COOP_MAX_FRAGMENTS		2048
 #define COOP_FULL_RETRY			1000	// a whole-world frame the guest hasn't acknowledged: at most once this often
 #define COOP_ASSEMBLY			4		// frames being put together from their fragments on the guest
+#define COOP_HOST_STALL			400		// ms without a new frame: the guest shows it's waiting for the host
 
 // sp/sp_bridge.cpp, sp/sp_integration.c
 extern int			SP_IsActive( void );
@@ -656,6 +657,7 @@ static struct {
 	char				nonce[24];
 	int					lastHeard;		// Sys_Milliseconds of the guest's last packet
 	int					lastStatus;
+	int					pausedSent;		// the paused state the guest was last told
 	int					connectWindow;	// connect requests: at most 5 a second, from anyone
 	int					connectCount;
 
@@ -810,6 +812,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	Q_strncpyz( coopHost.nonce, nonce, sizeof( coopHost.nonce ) );
 	coopHost.lastHeard = now;
 	coopHost.lastStatus = now;
+	coopHost.pausedSent = 0;
 	coopHost.haveCmd = qfalse;
 	coopHost.heldButtons = 0;
 	coopHost.queued = 0;
@@ -924,6 +927,7 @@ void CoopNet_HostPacket( int sock, const unsigned char *data, int len, const str
 void CoopNet_HostFrame( int sock )
 {
 	int now = Sys_Milliseconds();
+	int paused;
 
 	coopHostSock = sock;
 	if ( !coopHost.active )
@@ -934,15 +938,21 @@ void CoopNet_HostFrame( int sock )
 		CoopHostDrop( sock, "timed out", qtrue );
 		return;
 	}
-	if ( now - coopHost.lastStatus >= COOP_STATUS_INTERVAL )
+	// the guest hears at once when this game pauses or goes on (and once a second anyway)
+	paused = ( SP_IsActive() && SP_MenuPaused() ) ? 1 : 0;
+	if ( now - coopHost.lastStatus >= COOP_STATUS_INTERVAL || paused != coopHost.pausedSent )
 	{
 		byte	buf[COOP_MAX_PACKET];
 		char	info[MAX_INFO_STRING];
 		msg_t	msg;
 
 		coopHost.lastStatus = now;
+		coopHost.pausedSent = paused;
 		info[0] = 0;
 		CoopHostStateInfo( info );
+		// paused: the game is stopped (menu, console); frame: the newest frame sent before it
+		CoopSetInfo( info, "paused", paused ? "1" : "0" );
+		CoopSetInfo( info, "frame", va( "%d", coopHost.frameNum ) );
 		CoopBeginMessage( &msg, buf, sizeof( buf ), coopHost.session, COOP_MSG_STATUS );
 		MSG_WriteString( &msg, info );
 		CoopSendMessage( sock, &coopHost.addr, &msg );
@@ -1171,10 +1181,13 @@ static struct {
 	// the host's state
 	char				hostMap[MAX_QPATH];
 	char				hostState[16];
+	qboolean			hostPaused;		// the host's game is paused...
+	int					hostPausedFrame;	// ...after this frame
 
 	// replica frames
 	coopFrame_t			*ring;
 	int					newestFrame;	// the newest frame put together
+	int					newestFrameAt;	// and when (Sys_Milliseconds)
 	int					ackSent;		// the newest frame the host was told about
 	int					loadLevelId;	// the host level this guest loaded the map for (0: none yet)
 	struct {
@@ -1344,6 +1357,13 @@ static void CoopGuestHostState( const char *info )
 {
 	CoopGetInfo( info, "state", coopGuest.hostState, sizeof( coopGuest.hostState ) );
 	CoopGetInfo( info, "map", coopGuest.hostMap, sizeof( coopGuest.hostMap ) );
+	{
+		char paused[8], frame[16];
+		CoopGetInfo( info, "paused", paused, sizeof( paused ) );
+		CoopGetInfo( info, "frame", frame, sizeof( frame ) );
+		coopGuest.hostPaused = atoi( paused ) ? qtrue : qfalse;
+		coopGuest.hostPausedFrame = atoi( frame );
+	}
 }
 
 /*
@@ -1447,6 +1467,7 @@ static void CoopGuestFragment( msg_t *msg )
 		}
 		f->num = frame;
 		coopGuest.newestFrame = frame;
+		coopGuest.newestFrameAt = Sys_Milliseconds();
 		coopGuest.statFrames++;
 		if ( !baseNum )
 			coopGuest.statFulls++;
@@ -1670,6 +1691,17 @@ int CoopNet_GuestFrameSlot( int frame, int slot, const unsigned char **data )
 int CoopNet_GuestLevelId( void )
 {
 	return coopGuest.loadLevelId;
+}
+
+int CoopNet_GuestHostPaused( void )
+{
+	if ( coopGuest.state != COOP_GUEST_CONNECTED || !coopGuest.newestFrame )
+		return 0;
+	if ( coopGuest.hostPaused && coopGuest.newestFrame <= coopGuest.hostPausedFrame )
+		return 1;		// (a newer frame means it went on, even if that status was lost)
+	if ( Sys_Milliseconds() - coopGuest.newestFrameAt > COOP_HOST_STALL )
+		return 2;
+	return 0;
 }
 
 static void CoopStatus_f( void );

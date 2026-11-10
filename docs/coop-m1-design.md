@@ -100,10 +100,15 @@ Configstrings and server commands travel as slots instead, so they need no relia
 ## Step 5: sounds, prints, subtitles (built)
 - Server commands (prints, centre prints, subtitles `ct`/`gt`, objectives) and configstrings
   (music, objectives, models, sounds) travel as slots (step 3); the guest's bridge hands the new
-  commands to its cgame as its own `I_SendServerCmd` would. The bridge ignores a command's target
-  client, so prints meant for P1 ("godmode ON") show on the guest too.
+  commands to its cgame as its own `I_SendServerCmd` would. Only commands for everyone go: story
+  text (script centre prints, subtitles, caption stops) is addressed to every client (`COOP_EVERYONE`,
+  -1; it was NULL, which reads as client 0), and the host keeps what the game sends to P1 alone
+  (replies to console commands, `target_print` for P1). What it sends to P2 shows on the guest only.
 - Sounds that come from entity events reach the guest with the entities (the cgame plays the events
-  of the snapshot). Sounds the game starts itself (`G_SoundOnEnt`: script voice lines, some NPC
+  of the snapshot). A door's or lift's sound event (`EV_BMODEL_SOUND`) carries a sound handle, and the
+  two copies number sounds differently (borg1's lift: host 167/169, guest 168/170 for start/stop), so
+  the host's entity image names the sound set's stage in an `RBMS` chunk and the guest puts its own
+  handle in the event (a mover's looping sound was already looked up again). Sounds the game starts itself (`G_SoundOnEnt`: script voice lines, some NPC
   sounds, and P1's greeting to a crew member) are recorded by the host's game in a ring of 16
   (entity, channel, path) with a number; the last second's go with the level's globals (`RSND`),
   and the guest's game plays the ones newer than it has seen, through its own `G_SoundOnEnt`.
@@ -141,11 +146,15 @@ that the cgame doesn't need. (CPU is the whole process, renderer included, sampl
 3. Replica mode (`sp_coop 2`) in the bridge: no game frames, snapshot from P2.
 4. Deltas, then the cgame "local client", then forwarded commands.
 
+## Host paused (built)
+- The host's status message says when its game is paused (menu, console, an in-game movie) and the
+  newest frame before it, sent at once when that changes. The guest shows "Host paused" over its view
+  while no newer frame has come, or "Waiting for the host" when frames stop for 0.4 s otherwise (a
+  load, the network). Meanwhile player 2's input and the command being made are held where they
+  were, so the prediction stays put, and the game's sounds are held as in a pause of its own.
+
 ## Open questions and what's left after M1
-- A host that pauses (menu, console) stops its game frames: the guest should see "paused".
 - The host's game pausing when its window loses focus matters for two copies on one Mac.
 - Cameras and cutscenes are not mirrored (M2): the guest keeps its own view while the host watches one.
-- `EV_BMODEL_SOUND` carries a sound handle, not an index; the guest's handles may differ.
-- Prints aimed at P1 show on the guest too (the bridge ignores a command's client).
 - The guest can't save, load, or change levels itself; a host level change makes it load the new map.
 - Two Macs on a LAN haven't been tried; only two copies on one Mac.

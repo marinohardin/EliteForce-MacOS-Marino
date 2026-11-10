@@ -2149,6 +2149,9 @@ extern "C" void SP_AbortState(void){
 // repeat of 'map <same-map>' that would otherwise reload and hit the renderer's redundant-world guard.
 extern "C" const char* SP_CurMap(void){ return g_curMap; }
 extern "C" {
+#ifdef EF_COOP
+    void  SCR_DrawBigString( int x, int y, const char *s, float alpha, qboolean noColorEscape );   // cl_scrn.c
+#endif
     void  S_PauseGameSounds( qboolean pause );   // snd_main.c: hold / resume the game's sounds + music
     void  S_StopGameSounds( void );              // snd_main.c: stop effects + loops, keep the music
     void  S_ClearLoopingSounds( qboolean killall );
@@ -2279,6 +2282,8 @@ static void SP_CoopApplyFrame( int frame, int time ){
 // player 2 for one host frame, as the host's ClientThink will.
 static int       g_coopBtn = 0;     // buttons pressed since the last command
 static int       g_coopSeqAt = 0;   // when the last command was made (Sys_Milliseconds)
+static int       g_coopHostPaused = 0;  // the host's game isn't going on (CoopNet_GuestHostPaused)
+static int       g_coopPausedSince = 0; // ...and how far into its frame the guest's command was then
 static usercmd_t g_coopCmds[COOP_CMDS];
 static void SP_CoopMakeCmd( void ){
     usercmd_t c = g_lastcmd;
@@ -2299,6 +2304,7 @@ static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd ){
     if( n == g_coopSeq + 1 ){
         int since = Sys_Milliseconds() - g_coopSeqAt;
         if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC ) since = SP_SV_FRAMEMSEC;
+        if( g_coopHostPaused ) since = g_coopPausedSince;   // held where the pause found it
         *cmd = g_lastcmd;
         cmd->serverTime = g_coopSeq * SP_SV_FRAMEMSEC + since;
         return qtrue;
@@ -2330,8 +2336,22 @@ extern "C" int SP_CoopReplicaApply( void ){
 }
 // The guest's render frame: no game frames here; the host's frames come in instead, and the cgame draws
 // one host frame behind the newest (as the host's own view does), moving on with real time between them.
+// While the host's game is paused (or its frames stop coming) the guest's world holds too: player 2's
+// input is held where it was (so its prediction stays put), the game's sounds are held as in the host's
+// own pause, and a line says why.
 static void SP_CoopReplicaDrawFrame( int stereo ){
-    { int an[3]; signed char fwd=0,side=0,up=0; int btn=0;
+    int paused = CoopNet_GuestHostPaused();
+    if( paused && !g_coopHostPaused ){
+        int since = Sys_Milliseconds() - g_coopSeqAt;
+        if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC ) since = SP_SV_FRAMEMSEC;
+        g_coopPausedSince = since;
+        blog("co-op: the host's game %s\n", paused == 1 ? "paused" : "stopped sending frames");
+    } else if( !paused && g_coopHostPaused ){
+        blog("co-op: the host's game goes on\n");
+    }
+    g_coopHostPaused = paused;
+    if( !paused ){
+      int an[3]; signed char fwd=0,side=0,up=0; int btn=0;
       SPR_GetLatestCmd(an,&fwd,&side,&up,&btn);
       g_lastcmd.angles[0]=an[0]; g_lastcmd.angles[1]=an[1]; g_lastcmd.angles[2]=an[2];
       g_lastcmd.forwardmove=fwd; g_lastcmd.rightmove=side; g_lastcmd.upmove=up; g_lastcmd.buttons=btn;
@@ -2341,9 +2361,15 @@ static void SP_CoopReplicaDrawFrame( int stereo ){
     if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC - 1 ) since = SP_SV_FRAMEMSEC - 1;
     int cgTime = g_levelTime - SP_SV_FRAMEMSEC + since;
     if( cgTime < g_snapBaseTime ) cgTime = g_snapBaseTime;
-    s_spSoundsBlocked = 0; s_spSkipDraw = 0;
+    S_PauseGameSounds( paused ? qtrue : qfalse );   // (nothing to do when they aren't held)
+    s_spSoundsBlocked = paused ? 1 : 0; s_spSkipDraw = 0;
     SP_UpdateVisemes();
     SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+    if( paused ){
+        S_ClearLoopingSounds( qtrue );   // the frame above re-added the loops; silent, like the host's pause
+        const char *text = paused == 1 ? "Host paused" : "Waiting for the host";
+        SCR_DrawBigString( 320 - (int)strlen( text ) * 8, 232, text, 1.0f, qtrue );   // 16-pixel characters, centred on 640x480
+    }
 }
 #endif
 

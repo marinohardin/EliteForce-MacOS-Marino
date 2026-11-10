@@ -71,6 +71,9 @@ qboolean	CoopNet_GuestFrameInfo( int frame, int *levelId, int *levelTime, int *a
 int			CoopNet_GuestFrameSlot( int frame, int slot, const unsigned char **data );
 // the host level the guest's current map load is for (frames of other levels aren't applied)
 int			CoopNet_GuestLevelId( void );
+// the host's game isn't going on: 1 the host paused it (menu, console), 2 its frames stopped
+// coming for another reason (a load, the network); 0 it plays
+int			CoopNet_GuestHostPaused( void );
 // this player's command for one host frame, numbered by the bridge (a frame's ackCmd is the
 // newest of these the host applied); sent at once; 0 when this player has no input now
 int			CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,

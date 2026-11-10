@@ -1194,3 +1194,12 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   configstrings already did.
 - Measured with two copies on one Mac: 7 to 27 KB/s from host to guest (quiet map to borg2), about 1 ms per
   frame on the host; a Holomatch client with 9 bots gets 1.6 to 2.8 KB/s. Table in `docs/coop-m1-design.md`.
+
+### Co-op M1: door sounds, prints, host pause (2026-11-10)
+- Door and lift sound events name their sound set's stage for the guest (`RBMS` chunk), which plays
+  its own handle for it; the two copies' handles differ.
+- Server commands carry their target: story text goes to every client (`COOP_EVERYONE`), P1's own
+  messages stay on the host, P2's go to the guest only.
+- The host's status says when its game is paused; the guest shows "Host paused" (or "Waiting for the
+  host" when frames stop otherwise), holds P2's input and the game's sounds, and goes on with the
+  next frame.
