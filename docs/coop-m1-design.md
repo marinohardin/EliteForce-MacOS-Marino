@@ -1,18 +1,46 @@
 # Co-op M1, steps 3 to 6: the replica guest (design)
 
-Status: design only. Steps 1 and 2 (the connection, and the guest's input steering player 2) are
-in: `efcode/sys/sys_coop_net.c`, `efgame/src/coop/coop_net.cpp`. This note plans the rest of M1
-against the code as it is now. Background: `docs/coop-proposal.md` (the host runs the game, the
-guest mirrors it).
+Status: steps 1 to 3 are in (2026-11-10). Step 3 was built differently from the plan below it in
+places; "Step 3 as built" says how. Code: `efcode/sys/sys_coop_net.c` (connection, frames),
+`sp/sp_bridge.cpp` (host frames, the guest's replica level), `efgame/src/coop/coop_net.cpp`
+(input), `efgame/src/coop/coop_replica.cpp` (entity images). Background: `docs/coop-proposal.md`
+(the host runs the game, the guest mirrors it).
 
 ## Where we are
 - The guest connects (`coop_connect`), sends its newest commands, and P2 on the host moves with
-  them. Until the replica exists, the guest loads the host's map on its own (`coop_guestLoadMap`)
-  and plays a private copy of it, so what it sees is not the host's world.
-- The connection is unreliable datagrams: a status infostring once a second, input, keepalives and
-  disconnects. Nothing in it is reliable or fragmented yet. Both are needed below.
+  them. While a guest is connected and its input is missing or stale, P2 holds still; P2 follows
+  P1 only with no guest.
+- Only the `.pk3` files single player reads must match (the core packs, packs with SP data
+  `ext_data/` or `.ibi`, and packs overriding a core pack's SP map); Holomatch map packs may differ.
+- The guest loads the host's map as a replica (`sp_coop 2`) and shows the host's world.
 
-## Step 3: the replica guest
+## Step 3 as built
+- No reliable layer, no full state from `WriteLevel`. The host's world is `COOP_NUM_SLOTS` slots:
+  each entity (0..1023), each configstring (1024..2047), the level's globals (2048) and the newest
+  server commands (2049, the last 32 with their sequence numbers; the guest runs the ones newer
+  than it has seen). Every frame the host sends the slots that differ from the newest frame the
+  guest acked; a guest with no ack gets every slot (a "whole" frame, which is just a change from
+  nothing), at most once a second while it stays unacked. Losing a fragment loses that frame only.
+- Each entity slot is the save's own images (`GENT`, `GNPC`, `GCLI`, `PARM` chunks made by
+  `EnumerateFields`, pointers as indexes, strings inline) written to memory by swapping
+  `gi.AppendToSaveGame` for a memory sink; the guest reads them with `EvaluateFields` the same way.
+  No ICARUS state goes: the guest runs no scripts. P2 needs no extra chunk, it is an entity.
+- Frames are compressed with the system's Compression library (zlib; `efcode/zlib` has only
+  inflate), cut into 1200-byte fragments; 32 frames are kept on both sides. Acks ride on input and
+  keepalive packets; the guest sends one at once for every new frame.
+- A level id counts the host's level starts; frames of a level the guest hasn't loaded make it load
+  that map with `sp_coop 2`. The replica level runs no game frames: the bridge applies the host's
+  frames (relinking entities, brush model clips from `s.modelindex`), sets the configstrings, and
+  builds a snapshot per host frame with P2's player state. The cgame draws one frame behind, moving
+  on with real time between frames.
+- The guest keeps its own media handles (model, skin, sound and animation file indexes) and
+  registers models again when an entity's model names change. Camera mirroring (`in_camera`) is
+  left for M2.
+- First numbers (borg2, host idle, two copies on one Mac): a whole frame is 44 KB compressed;
+  steady state about 22 to 26 KB/s at 20 frames/s; the host spends 0.7 ms building and 0.25 ms
+  sending per frame, the guest 0.05 ms decoding.
+
+## Step 3: the plan it started from
 
 ### Replica mode
 The guest loads the same map and the same game module, with the latched cvar `sp_coop 2`
@@ -20,55 +48,25 @@ The guest loads the same map and the same game module, with the latched cvar `sp
 - The bridge (`sp_bridge.cpp`) runs no `ge->RunFrame` and no `ge->ClientThink` for P1. ICARUS,
   AI, movers and triggers therefore never run on the guest.
 - `InitGame` still runs (it registers models, sounds and configstrings, and sets up `level`), but
-  its spawned entities are thrown away by the first full state from the host (below), so the guest's
-  entity numbering never has to match a spawn of its own.
+  its spawned entities are overwritten by the host's (below), so the guest's entity numbering
+  never has to match a spawn of its own.
 - The cgame's one piece of game logic, the `G_UseTargets` call when a camera track ends
   (`cg_camera.cpp`), is skipped on the guest (`COOP_IsReplica()`).
 - Saving is refused on the guest (only the host saves).
 
-### Full state: the in-memory save
-A join (and later any resync: a host load, a level change, a guest that fell behind) sends the
-whole level the way a save stores it. The save code already turns every pointer into an index
-(`EnumerateFields` with the `savefields_*` tables in `g_savegame.cpp`), covers entities, clients,
-NPC structs, `level`, ICARUS and the portal state, and the bridge already loads such a state
-(`SP_FinishTransition` with a save). So:
-1. Host: write the level into memory instead of a file: the bridge's `I_Append`
-   (`gi.AppendToSaveGame`) gets a memory sink for the length of one `WriteLevel` call. P2 is
-   handled as for a normal save (`COOP_PreSave`), then written as one extra chunk the guest knows
-   (it isn't in a `.sav` at all).
-2. Compress it with the engine's zlib (`efcode/zlib`, already linked), and send it in fragments of
-   about 1200 bytes, each numbered; the guest acks the fragments it has; the host resends the rest.
-   A typical level should be some hundreds of KB raw and much less compressed.
-3. Guest: run the existing load path on the buffer (`ReadLevel` through `gi.ReadFromSaveGame`
-   redirected to the buffer), then add P2's chunk.
+### Full state (planned: an in-memory `WriteLevel`; built: a change from nothing, above)
+The save code already turns every pointer into an index (`EnumerateFields` with the `savefields_*`
+tables in `g_savegame.cpp`) and covers entities, clients, NPC structs and `level`. The plan was to
+write a whole `WriteLevel` to memory, send it reliably in acked fragments and load it with
+`ReadLevel`. Sending per-entity images as slots does the same with one mechanism.
 
-### Changes each tick: entity deltas
-Every game frame the host makes a "replica frame" for the guest:
-- Per entity in use: a copy of `gentity_t` with its pointers turned into indexes by the same field
-  tables (into a scratch copy, exactly as the save does), plus its `gclient_t` and `gNPC_t` when it
-  has them.
-- Compared with the copy the guest last acknowledged (kept per entity on the host, a ring of the
-  last 32 frames as in a Quake server's client frames), as runs of changed bytes:
-  `entity number, struct, [offset, length, bytes]...`; new and freed entities are marked.
-- The packet is zlib-compressed and carries the frame number and the frame it is a delta from. The
-  guest acks frame numbers in its input packets. A lost packet costs nothing: the next frame is a
-  delta from the last acked one. If the guest falls more than 32 frames behind, the host sends a
-  full state.
-- Byte-runs over whole structs (rather than chosen fields) need no audit of what the cgame reads,
-  and the save tables already know which members are pointers. Fields that change every frame
-  without mattering (think times relative to `level.time`, as `g_regress.cpp` treats them) can be
-  masked if measurement says they cost too much.
-- `level` (time, frame number), `player_locked`, `in_camera` and the objectives go with every frame
-  (small).
+### Changes each tick (planned: byte runs per struct; built: whole slot images)
+Byte runs inside each struct were planned; whole images of the slots that changed, compressed
+together, turned out small enough (one moving entity costs its images, about 1 to 3 KB raw, a few
+hundred bytes compressed). The ring of 32 acked frames is as planned.
 
-The guest writes each delta into its entities, turns indexes back into pointers (the load code's
-`EnumerateFields` reverse), relinks moved entities in the bridge's world (`gi.linkentity`), and the
-bridge builds its snapshot from them as now, with P2's `playerState_t` instead of P1's.
-
-### Reliable messages
-Configstrings, server commands and fragments need delivery in order. A small reliable layer in
-`sys_coop_net.c`, the Quake 3 way: each side numbers its reliable messages, every packet carries
-the unacknowledged ones and the number of the last one received; resend until acked.
+### Reliable messages (not built)
+Configstrings and server commands travel as slots instead, so they need no reliable layer.
 
 ## Step 4: the guest's cgame is P2
 - `COOP_ViewClientNum()` returns P2's entity number on the guest (0 on the host). The cgame's
@@ -104,7 +102,5 @@ the unacknowledged ones and the number of the last one received; resend until ac
 Steps 1 and 2 are cleanly separable and come first.
 
 ## Open questions
-- `.pk3` match: today every loaded `.pk3` must match. A guest with extra Holomatch map packs in
-  `baseEF` is refused; maybe only the packs the SP game reads should count.
 - A host that pauses (menu, console) stops its game frames: the guest should see "paused".
 - The host's game pausing when its window loses focus matters for two copies on one Mac.

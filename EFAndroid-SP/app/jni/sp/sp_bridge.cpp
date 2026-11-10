@@ -153,6 +153,24 @@ static void SP_CoopSetBridge( void ){
     coopSetBridge_t set = (coopSetBridge_t)dlsym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
     if( set ) set( &bridge );
 }
+// The replica (co-op M1): the host sends its world after every game frame; a guest's level
+// (sp_coop 2 at its start) runs no game frames and writes the host's frames into its entities
+// (game/coop_bridge.h, efcode/sys/sys_coop_net.c).
+extern "C" {
+#include "../efcode/sys/sys_coop_net.h"
+}
+static const coopReplica_t *g_coopRep = NULL;   // the game module's replica functions
+static int  g_coopReplica = 0;      // this level is a guest's replica
+static int  g_coopLevelId = 0;      // host: counts level starts, so the guest knows a new level from a frame
+static int  g_coopApplied = 0;      // guest: the last host frame written into this level
+static int  g_coopAppliedAt = 0;    // ...and when (Sys_Milliseconds), for the cgame's clock
+static int  g_coopCmdSeen = 0;      // guest: the newest host server command passed to the cgame
+static void SP_CoopGetReplica( void ){
+    typedef const coopReplica_t *(*coopGetReplica_t)( void );
+    coopGetReplica_t get = (coopGetReplica_t)dlsym( g_lib, "COOP_GetReplica" );
+    g_coopRep = get ? get() : NULL;
+    if( g_coopRep && g_coopRep->version != COOP_REPLICA_VERSION ) g_coopRep = NULL;
+}
 #endif
 static intptr_t SP_VmMain( int cmd, int a0=0, int a1=0, int a2=0, int a3=0, int a4=0, int a5=0, int a6=0, int a7=0 ){
     return g_vmMain( cmd, a0, a1, a2, a3, a4, a5, a6, a7 );
@@ -698,6 +716,9 @@ extern "C" void SP_UnloadGame( void ){
         dlclose( g_lib );
     }
     g_lib = NULL; ge = NULL; g_vmMain = NULL; g_camPos = NULL; g_spActive = 0;
+#ifdef EF_COOP
+    g_coopRep = NULL; g_coopReplica = 0;
+#endif
     SP_EndCutsceneSkip();   // a load / new game / abort ends any camera-scene skip (timescale back to 1)
     SP_ResetFrameGates();   // ... and the pause/skip sound and draw gates
     // H3: g_linked[] holds raw gentity_t* into the module we just dlclose'd. Leaving them dangling is a
@@ -742,6 +763,7 @@ extern "C" qboolean SP_LoadGame( const char *solib ){
     g_regressDump = (regressDump_t)dlsym(g_lib, "G_RegressDump");  // optional (the regression harness)
 #ifdef EF_COOP
     SP_CoopSetBridge();   // before the level's InitGame
+    SP_CoopGetReplica();
 #endif
     blog("SP_LoadGame: ge=%p apiversion=%d gentitySize=%d\n", (void*)ge, ge->apiversion, ge->gentitySize);
     return (ge->apiversion==GAME_API_VERSION) ? qtrue : qfalse;
@@ -814,6 +836,13 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     ge->Init( mapname, "", checksum, entstring, g_levelTime, Regress_Active() ? Regress_Seed() : Sys_Milliseconds(), Sys_Milliseconds(),
               (SavedGameJustLoaded_e)0, qfalse );
     blog("SP_SpawnServer: ge->Init done. num_entities=%d linked=%d\n", ge->num_entities, g_numLinked);
+#ifdef EF_COOP
+    g_coopLevelId++;
+    g_coopApplied = 0; g_coopCmdSeen = 0;
+    // a guest's replica level (sp_coop 2, applied by InitGame): no game frames, the host's come instead
+    g_coopReplica = ( g_coopRep && Cvar_VariableIntegerValue( "sp_coop" ) == 2 ) ? 1 : 0;
+    if( !g_coopReplica )
+#endif
     SP_RunFrames( SP_SETTLE_FRAMES );   // retail SV_SpawnServer settle frames, before SP_StartClient connects the player
     // C1 (reclaim path only): bring the renderer we tore down above back up BEFORE SP_StartClient's CG_INIT
     // loads the new world. Mirrors SP_FinishTransition's SP_FillGlConfig()+SPR_InitRenderer() ordering. On the
@@ -942,6 +971,9 @@ static void BuildSnapshot(void){
                                 // the predicted view (visible during timescale<1 slow-mo). Stamping = prediction
                                 // tracks the snapshot (predicted_player_state = snap.ps), no spurious replay.
     gentity_t* p0 = SP_GEntity(0);
+#ifdef EF_COOP
+    if( g_coopReplica && g_coopRep && g_coopRep->ViewEntity() > 0 ) p0 = SP_GEntity( g_coopRep->ViewEntity() );
+#endif
     if(p0->client) g_snap.ps = *(playerState_t*)p0->client;
     int n=0;
     SP_View view; SP_GetView( &view );
@@ -1545,6 +1577,10 @@ extern "C" qboolean SP_FinishTransition(void){
     }
     ge->Init(g_transMap, g_transSpawn, checksum, entstring, g_levelTime,
              Regress_Active() ? Regress_Seed() : Sys_Milliseconds(), Sys_Milliseconds(), sg, g_transHub ? qtrue : qfalse);
+#ifdef EF_COOP
+    g_coopLevelId++;
+    g_coopReplica = 0;   // a replica level starts only through SP_SpawnServer (the guest's map load)
+#endif
     // Fresh spawn (eAUTO: forward transition or autosave load): retail SV_SpawnServer's settle frames, before the
     // player connects. Not for an eFULL user load: ReadLevel below replaces every entity with the saved, already
     // settled ones, so frames run on the fresh spawn would only start scripts that the load then throws away.
@@ -1692,6 +1728,9 @@ static int g_pendingAutosave = 0;
 //    re-locks the player) and the loadout is restored via Player_RestoreFromPrevLevel from the carry cvars.
 static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
     if(!ge || !g_spActive || !name || !name[0]){ bwarn("save: not in a game\n"); return; }
+#ifdef EF_COOP
+    if( g_coopReplica ){ SP_ComPrintf()("co-op: only the host saves the game\n"); return; }
+#endif
     // Cutscene gate (retail SV_CanSave -> GameAllowedToSaveHere == !in_camera). Retail SV_SaveGame only checks
     // it for gameFlag 0: `if ((param_2==0) && !SV_CanSave) return;`. So an eAUTO autosave (bEAUTO) is NEVER
     // gated -- it writes immediately even during the opening cinematic, which is SAFE now that it is eAUTO:
@@ -1828,6 +1867,9 @@ static void SP_WriteEntryAutosave(void){
 
 extern "C" void SP_LoadGameFile(const char* name){
     if(!name || !name[0]) return;
+#ifdef EF_COOP
+    if( g_coopReplica ){ SP_ComPrintf()("co-op: player 2 can't load a game (coop_disconnect leaves the host first)\n"); return; }
+#endif
     // P1-1: don't clobber an already-pending load/transition (consume-once g_transMap). A load requested while
     // another is mid-flight would overwrite the pending map + reuse __trans.sav -> wrong-map desync.
     if( g_transMap[0] ){ bwarn("SP_LoadGameFile: '%s' already pending -> ignoring overlapping load '%s'\n", g_transMap, name); return; }
@@ -1974,6 +2016,11 @@ extern "C" qboolean SP_StartClient(void){
     SP_ResetViewAngles();   // the usercmd angles restart at 0, matching g_lastcmd (see SP_ResetViewAngles)
     ge->ClientBegin(0, &g_lastcmd, (SavedGameJustLoaded_e)0);
     blog("SP_StartClient: client connected+begun\n");
+#ifdef EF_COOP
+    extern int SP_CoopReplicaApply( void );
+    if( g_coopReplica ) SP_CoopReplicaApply();   // the host's newest frame, before the cgame starts
+    else
+#endif
     SP_SettleClient( SP_SETTLE_CLIENT_TICKS );   // player lands, spawn scripts start, spawn events expire
     BuildSnapshot();
     // Rebuild the gamestate AFTER ClientBegin/RunFrame so it includes configstrings the game set during
@@ -1994,6 +2041,9 @@ extern "C" qboolean SP_StartClient(void){
     blog("SP_StartClient: CG_INIT returned OK\n");
     g_spActive = 1;
     SP_EndLoad();   // SP cgame is live now -> SP_DrawFrame owns the screen; stop the load screen
+#ifdef EF_COOP
+    if( g_coopReplica ) return qtrue;   // only the host saves
+#endif
     SP_WriteEntryAutosave();   // New Game = fresh entry -> level-start autosave for death-respawn
     return qtrue;
 }
@@ -2087,6 +2137,136 @@ static void SP_DrawSkipProgress(void){
     }
     SPR_SetColor(NULL);
 }
+#ifdef EF_COOP
+// ---- co-op replica: the host's side ----
+// The host's newest server commands (not the configstring updates: those travel as configstrings) as
+// [newest seq][count] then count x ([seq][text\0]), for the guest to hand its cgame what's new.
+static int SP_CoopCommandsImage( unsigned char *buf, int size ){
+    int seqs[32], n = 0;
+    for( int seq = g_svCmdSeq; seq > 0 && seq > g_svCmdSeq - SC_RING && n < 32; seq-- ){
+        if( !strncmp( g_svCmds[seq & (SC_RING-1)], "cs ", 3 ) ) continue;
+        seqs[n++] = seq;
+    }
+    int len = 0;
+    memcpy( buf + len, &g_svCmdSeq, 4 ); len += 4;
+    memcpy( buf + len, &n, 4 ); len += 4;
+    for( int i = n - 1; i >= 0; i-- ){
+        const char *t = g_svCmds[seqs[i] & (SC_RING-1)];
+        int tl = (int)strlen( t ) + 1;
+        if( len + 4 + tl > size ) break;
+        memcpy( buf + len, &seqs[i], 4 ); len += 4;
+        memcpy( buf + len, t, tl ); len += tl;
+    }
+    return len;
+}
+// After every game frame while a guest is connected: the world as replica slots.
+static void SP_CoopHostFrame( void ){
+    static unsigned char buf[512 * 1024];
+    static int warned;
+    if( !g_coopRep || g_coopReplica || !g_spActive ) return;
+    if( !CoopNet_HostFrameBegin( g_coopLevelId, g_levelTime, g_curMap ) ) return;
+    for( int i = 0; i < ge->num_entities && i < COOP_SLOT_CS; i++ ){
+        int n = g_coopRep->WriteEntity( i, buf, sizeof(buf) );
+        if( n > 0 ) CoopNet_HostFrameSlot( i, buf, n );
+        else if( n < 0 && !warned ){ warned = 1; bwarn("co-op: entity %d's image is too big; not sent\n", i); }
+    }
+    for( int i = 0; i < CS_MAX && i < COOP_SLOT_GLOBALS - COOP_SLOT_CS; i++ ){
+        if( g_configstrings[i][0] ) CoopNet_HostFrameSlot( COOP_SLOT_CS + i, g_configstrings[i], (int)strlen(g_configstrings[i]) + 1 );
+    }
+    int n = g_coopRep->WriteGlobals( buf, sizeof(buf) );
+    if( n > 0 ) CoopNet_HostFrameSlot( COOP_SLOT_GLOBALS, buf, n );
+    n = SP_CoopCommandsImage( buf, sizeof(buf) );
+    CoopNet_HostFrameSlot( COOP_SLOT_COMMANDS, buf, n );
+    CoopNet_HostFrameEnd();
+}
+
+// ---- co-op replica: the guest's side ----
+static qboolean SP_CoopSlotSame( int a, int b, int slot, const unsigned char **data, int *len ){
+    *len = CoopNet_GuestFrameSlot( b, slot, data );
+    if( !a ) return qfalse;
+    const unsigned char *od; int ol = CoopNet_GuestFrameSlot( a, slot, &od );
+    return ( ol == *len && ( !ol || !memcmp( od, *data, ol ) ) ) ? qtrue : qfalse;
+}
+// One host frame into this level: the slots that differ from the last frame applied (all of them
+// when that one is gone or there was none).
+static void SP_CoopApplyFrame( int frame, int time ){
+    int prev = g_coopApplied, lid, t, ack;
+    if( prev && !CoopNet_GuestFrameInfo( prev, &lid, &t, &ack ) ) prev = 0;
+    const unsigned char *d; int len;
+    if( !SP_CoopSlotSame( prev, frame, COOP_SLOT_GLOBALS, &d, &len ) ) g_coopRep->ApplyGlobals( d, len );
+    int top = ge->num_entities;
+    for( int i = 0; i < COOP_SLOT_CS; i++ ){
+        if( SP_CoopSlotSame( prev, frame, i, &d, &len ) ) continue;
+        if( !len && i >= top && i >= ge->num_entities ) continue;   // free and never used here
+        g_coopRep->ApplyEntity( i, d, len );
+        gentity_t *e = SP_GEntity( i );
+        if( len && e->inuse && e->bmodel && e->s.modelindex > 0 && e->s.modelindex < CM_NumInlineModels() )
+            g_entClip[i] = CM_InlineModel( e->s.modelindex );   // traces through this brush model (W_SetBrushModel)
+    }
+    for( int i = 0; i < CS_MAX && i < COOP_SLOT_GLOBALS - COOP_SLOT_CS; i++ ){
+        if( SP_CoopSlotSame( prev, frame, COOP_SLOT_CS + i, &d, &len ) ) continue;
+        if( i == CS_SERVERINFO ) continue;   // this copy's own (the map name is the same)
+        I_SetCS( i, len ? (const char *)d : "" );   // the cgame hears of it when it runs
+    }
+    len = CoopNet_GuestFrameSlot( frame, COOP_SLOT_COMMANDS, &d );
+    if( len >= 8 ){
+        int newest, count, pos = 8;
+        memcpy( &newest, d, 4 ); memcpy( &count, d + 4, 4 );
+        if( !prev ) g_coopCmdSeen = newest;   // joining: only what comes from now on
+        for( int i = 0; i < count && pos + 5 <= len; i++ ){
+            int seq; memcpy( &seq, d + pos, 4 ); pos += 4;
+            const char *text = (const char *)d + pos;
+            int tl = (int)strnlen( text, len - pos );
+            if( pos + tl >= len ) break;
+            pos += tl + 1;
+            if( seq > g_coopCmdSeen && g_spActive ) I_SendServerCmd( 0, "%s", text );
+            if( seq > g_coopCmdSeen ) g_coopCmdSeen = seq;
+        }
+        if( newest < g_coopCmdSeen ) g_coopCmdSeen = newest;   // (the host's count restarts with a level)
+    }
+    g_coopRep->ApplyDone( g_spActive ? qtrue : qfalse );
+    g_coopApplied = frame;
+    g_coopAppliedAt = Sys_Milliseconds();
+    g_levelTime = time;
+}
+// The host's frames that came in since the last call (at most 4, oldest first), each into this level
+// and a snapshot. Returns how many.
+extern "C" int SP_CoopReplicaApply( void ){
+    int newest = CoopNet_GuestNewestFrame(), applied = 0;
+    if( !g_coopReplica || !g_coopRep || !newest || newest <= g_coopApplied ) return 0;
+    int first = ( g_coopApplied && newest - g_coopApplied <= 4 ) ? g_coopApplied + 1 : newest;
+    for( int f = first; f <= newest; f++ ){
+        int lid, t, ack;
+        if( !CoopNet_GuestFrameInfo( f, &lid, &t, &ack ) || lid != CoopNet_GuestLevelId() ) continue;
+        SP_CoopApplyFrame( f, t );
+        applied++;
+        if( g_spActive ){
+            g_cmdNum++;
+            g_lastcmd.serverTime = g_levelTime;
+            BuildSnapshot();
+        }
+    }
+    return applied;
+}
+// The guest's render frame: no game frames here; the host's frames come in instead, and the cgame draws
+// one host frame behind the newest (as the host's own view does), moving on with real time between them.
+static void SP_CoopReplicaDrawFrame( int stereo ){
+    { int an[3]; signed char fwd=0,side=0,up=0; int btn=0;
+      SPR_GetLatestCmd(an,&fwd,&side,&up,&btn);
+      g_lastcmd.angles[0]=an[0]; g_lastcmd.angles[1]=an[1]; g_lastcmd.angles[2]=an[2];
+      g_lastcmd.forwardmove=fwd; g_lastcmd.rightmove=side; g_lastcmd.upmove=up; g_lastcmd.buttons=btn;
+      g_lastcmd.weapon = (byte)g_weaponSelect; }
+    SP_CoopReplicaApply();
+    int since = Sys_Milliseconds() - g_coopAppliedAt;
+    if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC - 1 ) since = SP_SV_FRAMEMSEC - 1;
+    int cgTime = g_levelTime - SP_SV_FRAMEMSEC + since;
+    if( cgTime < g_snapBaseTime ) cgTime = g_snapBaseTime;
+    s_spSoundsBlocked = 0; s_spSkipDraw = 0;
+    SP_UpdateVisemes();
+    SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+}
+#endif
+
 // Advance the sim by REAL elapsed wall-clock time each rendered frame. This keeps the original's
 // smooth per-frame structure (RunFrame every frame -> smooth view) while running at CORRECT speed
 // (the prior code added a fixed 50ms/frame -> 3x at 60fps; a 20Hz accumulator was correct-speed but
@@ -2101,6 +2281,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     int delta = now - lastReal; lastReal = now;
     if(delta < 1) delta = 1; if(delta > 100) delta = 100;   // clamp hitches (no >100ms sim jumps)
     if( Regress_Active() ) delta = SP_SV_FRAMEMSEC;          // regression harness: one game frame per drawn frame
+#ifdef EF_COOP
+    if( g_coopReplica ){ SP_CoopReplicaDrawFrame( stereo ); return; }
+#endif
 
     // PAUSE when the in-game menu (ESC), the console or an in-game movie is up: retail SP pauses the
     // server; our loopback has no server, so freeze the sim here -- do NOT advance g_levelTime or run
@@ -2216,6 +2399,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         if( skipping ) s_spSoundsBlocked = Cvar_VariableIntegerValue("skippingCinematic") ? 1 : 0;
         SP_GameRunFrame();
         BuildSnapshot();
+#ifdef EF_COOP
+        SP_CoopHostFrame();
+#endif
         if( skipping ){
             if( !Cvar_VariableIntegerValue("skippingCinematic") || g_spMovieQueued ){
                 g_simResidual %= SP_SV_FRAMEMSEC;   // skip over: back to real time from here

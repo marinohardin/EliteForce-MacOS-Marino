@@ -21,11 +21,18 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 // the UDP port a co-op host answers co-op checks and its guest on
 #define VSP_COOP_PORT		29760
 // bumped whenever co-op's network messages change; host and guest must match
-// (1: the M0 check only; 2: M1, a guest can connect)
-#define VSP_COOP_PROTOCOL	2
+// (1: the M0 check only; 2: M1, a guest can connect; 3: the guest mirrors the host's world)
+#define VSP_COOP_PROTOCOL	3
 
 // the biggest co-op packet (fits a usual Ethernet/Wi-Fi MTU with room to spare)
 #define COOP_MAX_PACKET		1400
+
+// A replica frame's slots: the game's entity images, the configstrings, the game's globals image,
+// and the host's newest server commands.
+#define COOP_SLOT_CS		1024
+#define COOP_SLOT_GLOBALS	2048
+#define COOP_SLOT_COMMANDS	2049
+#define COOP_NUM_SLOTS		2050
 
 // The host (sys_osx_coop.m calls these while it has the co-op socket open).
 // A packet that isn't a co-op check:
@@ -48,6 +55,20 @@ int			CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *f
 				signed char *rightmove, signed char *upmove );
 // the guest's name, "" without a guest
 const char	*CoopNet_GuestName( void );
+
+// The host's replica frames (sp/sp_bridge.cpp, after every game frame while a guest is here):
+// Begin returns 0 when no guest wants one; then every slot that isn't empty, then End sends it.
+int			CoopNet_HostFrameBegin( int levelId, int levelTime, const char *map );
+void		CoopNet_HostFrameSlot( int slot, const void *data, int len );
+void		CoopNet_HostFrameEnd( void );
+
+// The guest's replica frames, for sp/sp_bridge.cpp: the newest one put together (0: none yet),
+// a frame's header (qfalse: no longer kept), and a slot of it (its length, 0 when empty).
+int			CoopNet_GuestNewestFrame( void );
+qboolean	CoopNet_GuestFrameInfo( int frame, int *levelId, int *levelTime, int *ackCmd );
+int			CoopNet_GuestFrameSlot( int frame, int slot, const unsigned char **data );
+// the host level the guest's current map load is for (frames of other levels aren't applied)
+int			CoopNet_GuestLevelId( void );
 
 // The guest. Once a frame (sys_osx_coop.m, before anything of the host): connects when
 // the coop_connect cvar names a host, sends this player's input, disconnects when the

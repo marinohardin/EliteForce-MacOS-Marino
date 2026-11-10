@@ -1171,3 +1171,19 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   host kick, host level reloads with the guest connected. Gates vs a fresh baseline `coop-m1-base`
   (672ed3c): EF_COOP OFF ALL IDENTICAL (and `efsp` byte-identical to 672ed3c's), EF_COOP ON +
   `sp_coop 0` ALL IDENTICAL.
+
+## Co-op M1: P2 holds still, the pack match, the replica guest (2026-11-10, branch `1_4_0/coop-m1` only)
+- While a guest is connected, missing or stale guest input makes P2 hold still; P2 follows P1 only with
+  no guest (`COOP_BRIDGE_VERSION` 2 adds `GuestConnected`).
+- The pack signature covers only the `.pk3` files single player reads (`FS_CoopPakChecksums`): the core
+  packs, packs with `ext_data/` or `.ibi` files, and packs with an SP map a core pack also has. Holomatch
+  map packs no longer refuse a guest.
+- The replica guest (protocol 3): the host sends its world every game frame as slots (entities as the
+  save's chunk images, configstrings, globals, recent server commands), only those changed since the
+  guest's ack, compressed with the system's Compression library (linked only with EF_COOP) and cut into
+  1200-byte fragments. The guest loads the host's map with `sp_coop 2` and its level shows the host's
+  world: no game frames, one snapshot per host frame, P2's player state. `coop_netstats 1` prints bytes/s
+  and per-frame times every 5 s; `coop_status` prints them once. `coop_guestLoadMap` is gone. Details and
+  where it differs from the plan: `docs/coop-m1-design.md`.
+- `macos/make-app.sh` takes the engine build folder from `ENGINE_BUILD` (default `build-macos`), so a
+  co-op test app can be bundled from a separate build.

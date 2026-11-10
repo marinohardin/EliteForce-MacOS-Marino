@@ -22,13 +22,19 @@ void COOP_Init( void )
 {
 	sp_coop = gi.cvar( "sp_coop", "0", CVAR_LATCH );
 	coop_enabled = ( sp_coop->integer == 1 );
+	coop_replica = ( sp_coop->integer == 2 );
 	coop_p2Num = -1;
+	COOP_ReplicaInit();
 	memset( &coop_p2, 0, sizeof( coop_p2 ) );
 	coop_p2.follow = qtrue;
 	COOP_ReadCarry();
 	if ( coop_enabled )
 	{
 		gi.Printf( "co-op: on (player 2 is a local puppet)\n" );
+	}
+	else if ( coop_replica )
+	{
+		gi.Printf( "co-op: this level mirrors the host's (player 2's view)\n" );
 	}
 }
 

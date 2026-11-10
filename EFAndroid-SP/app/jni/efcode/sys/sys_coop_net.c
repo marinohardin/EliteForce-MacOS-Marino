@@ -27,12 +27,15 @@ After that every packet starts with the session number (a long that is never
   guest -> host  COOP_MSG_INPUT       up to COOP_INPUT_BACKUP of the guest's
                                       newest commands, each with its own number,
                                       so a lost packet costs nothing
-                 COOP_MSG_KEEPALIVE   nothing new to send for a second
+                 COOP_MSG_KEEPALIVE   nothing new to send for a second, or
+                                      the newest replica frame it decoded
                  COOP_MSG_DISCONNECT  a sentence
   host -> guest  COOP_MSG_STATUS      an infostring (map, state, players, time)
                                       once a second
+                 COOP_MSG_FRAME       a fragment of a replica frame
                  COOP_MSG_DISCONNECT  a sentence
-Either side gives up after COOP_TIMEOUT ms without a packet.
+Either side gives up after COOP_TIMEOUT ms without a packet. Input and
+keepalive packets end with the newest replica frame the guest has (its ack).
 
 The host's game takes the guest's input once a game frame through
 CoopNet_GuestInput (sp/sp_bridge.cpp hands it to the game's co-op code), and
@@ -40,9 +43,18 @@ player 2 moves with it in place of following player 1. While the guest's input
 is older than COOP_INPUT_STALE ms (the guest is in a menu, the console, or
 loading), player 2 holds still; only without a guest does it follow player 1.
 
-Until the guest mirrors the host's world (co-op M1 step 3), a guest that
-connects loads the host's map on its own (coop_guestLoadMap 1, the default)
-so it has a level to steer from; what it sees there is its own copy.
+The replica: after every game frame the host describes its world as
+COOP_NUM_SLOTS slots (each entity, each configstring, the level's globals and
+the newest server commands; sp_bridge.cpp fills them through the game's
+COOP_GetReplica) and sends the slots that differ from the newest frame the
+guest acked, compressed and cut into fragments. A guest that has acked nothing
+(it just joined, or fell behind the COOP_FRAME_BACKUP frames kept) gets every
+slot, a "whole" frame, at most once per COOP_FULL_RETRY ms. Lost
+fragments cost a frame, never a resend: the next frame is a change from the
+guest's ack again. The guest keeps the same ring, rebuilds each frame from its
+base, and loads the host's map with sp_coop 2 when the frames are of a level it
+hasn't loaded; that level then shows the host's world instead of running its
+own (see docs/coop-m1-design.md).
 
 Console:
   coop_connect <address[:port]>   (a cvar) join that host; "" leaves
@@ -65,6 +77,9 @@ Console:
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <sys/time.h>
+
+#include <compression.h>		// the system's Compression library: the replica frames
 
 #include "sys_coop_net.h"
 
@@ -81,6 +96,7 @@ Console:
 #define COOP_MSG_KEEPALIVE		2		// guest -> host
 #define COOP_MSG_STATUS			3		// host -> guest
 #define COOP_MSG_DISCONNECT		4		// both ways
+#define COOP_MSG_FRAME			5		// host -> guest: a fragment of a replica frame
 
 #define COOP_TIMEOUT			10000	// ms without a packet: the other side is gone
 #define COOP_CONNECT_TRIES		5		// the guest asks this often, COOP_CONNECT_RETRY apart
@@ -91,11 +107,21 @@ Console:
 #define COOP_INPUT_STALE		500		// older guest input doesn't steer player 2
 #define COOP_INPUT_BACKUP		4		// commands per input packet
 
+// Replica frames: once a game frame the host's world as slots of bytes (the game's entity and
+// globals images, the configstrings, the newest server commands), sent as the changes against
+// the last frame the guest acknowledged.
+#define COOP_FRAME_BACKUP		32		// frames kept on both sides (a delta's base must be among them)
+#define COOP_FRAGMENT			1200	// the most frame bytes in one packet
+#define COOP_MAX_FRAGMENTS		2048
+#define COOP_FULL_RETRY			1000	// a whole-world frame the guest hasn't acknowledged: at most once this often
+#define COOP_ASSEMBLY			4		// frames being put together from their fragments on the guest
+
 // sp/sp_bridge.cpp, sp/sp_integration.c
 extern int			SP_IsActive( void );
 extern const char	*SP_CurMap( void );
 extern int			SP_MenuPaused( void );
 extern int			SP_IsLoading( void );
+extern void			SP_AbortToMenu( void );
 
 // one guest command, as it crosses the network
 typedef struct {
@@ -106,9 +132,23 @@ typedef struct {
 	signed char		forwardmove, rightmove, upmove;
 } coopCmd_t;
 
+typedef struct {
+	int				num;				// frame number (0: unused)
+	int				levelId;			// the host's level (a new one at every level start)
+	int				time;				// the host's level time
+	int				ackCmd;				// the newest guest command the host had applied
+	char			map[MAX_QPATH];
+	byte			*data;				// the slots' bytes, back to back
+	int				dataLen, dataSize;
+	int				ofs[COOP_NUM_SLOTS];
+	int				len[COOP_NUM_SLOTS];	// 0: empty
+} coopFrame_t;
+
 /* ------------------------------------------------------------------------
    Shared
    ------------------------------------------------------------------------ */
+
+static void		CoopNetStats( void );
 
 static char		coopLaunchPassword[64];
 static qboolean	coopCommandsAdded;
@@ -267,6 +307,340 @@ static const char *CoopAddressString( const struct sockaddr_in *a )
 	return buf;
 }
 
+
+/* ------------------------------------------------------------------------
+   Replica frames (both sides)
+
+   A frame on the wire, compressed (the system's zlib-format encoder), then cut
+   into fragments of up to COOP_FRAGMENT bytes:
+     frame, base (0: from nothing), levelId, level time, ackCmd, map
+     then the slots that differ from the base frame's, each:
+       slot (2 bytes), kind: 0 now empty
+                             1 whole: length, bytes
+                             2 changed: new length, then runs of (skip, length, bytes)
+                               counted from the end of the last run, a length of 0 ends them
+     slot 0xffff ends the frame.
+   Lengths and skips are variable-length numbers (7 bits a byte).
+   ------------------------------------------------------------------------ */
+
+typedef struct {
+	byte	*data;
+	int		len, size;
+} coopBuf_t;
+
+static void CoopBufNeed( coopBuf_t *b, int more )
+{
+	if ( b->len + more <= b->size )
+		return;
+	b->size = MAX( b->size * 2, b->len + more + 65536 );
+	b->data = realloc( b->data, b->size );
+	if ( !b->data )
+		Com_Error( ERR_FATAL, "co-op: out of memory for replica frames" );
+}
+
+static void CoopBufPut( coopBuf_t *b, const void *data, int len )
+{
+	CoopBufNeed( b, len );
+	memcpy( b->data + b->len, data, len );
+	b->len += len;
+}
+
+static void CoopBufByte( coopBuf_t *b, int v )
+{
+	byte c = (byte)v;
+	CoopBufPut( b, &c, 1 );
+}
+
+static void CoopBufVar( coopBuf_t *b, unsigned v )
+{
+	while ( v >= 0x80 )
+	{
+		CoopBufByte( b, ( v & 0x7f ) | 0x80 );
+		v >>= 7;
+	}
+	CoopBufByte( b, v );
+}
+
+static void CoopBufLong( coopBuf_t *b, int v )
+{
+	byte c[4] = { v & 0xff, ( v >> 8 ) & 0xff, ( v >> 16 ) & 0xff, ( v >> 24 ) & 0xff };
+	CoopBufPut( b, c, 4 );
+}
+
+// reading a decompressed frame
+typedef struct {
+	const byte	*p, *end;
+	qboolean	bad;
+} coopReader_t;
+
+static int CoopReadByteR( coopReader_t *r )
+{
+	if ( r->p >= r->end ) { r->bad = qtrue; return 0; }
+	return *r->p++;
+}
+
+static unsigned CoopReadVar( coopReader_t *r )
+{
+	unsigned v = 0;
+	for ( int shift = 0; shift < 35; shift += 7 )
+	{
+		int c = CoopReadByteR( r );
+		v |= (unsigned)( c & 0x7f ) << shift;
+		if ( !( c & 0x80 ) )
+			return v;
+	}
+	r->bad = qtrue;
+	return 0;
+}
+
+static int CoopReadLongR( coopReader_t *r )
+{
+	int a = CoopReadByteR( r ), b = CoopReadByteR( r ), c = CoopReadByteR( r ), d = CoopReadByteR( r );
+	return a | ( b << 8 ) | ( c << 16 ) | ( (unsigned)d << 24 );
+}
+
+static const byte *CoopReadBytes( coopReader_t *r, int len )
+{
+	const byte *p = r->p;
+	if ( len < 0 || r->end - r->p < len ) { r->bad = qtrue; return NULL; }
+	r->p += len;
+	return p;
+}
+
+static coopFrame_t *CoopRingAlloc( void )
+{
+	coopFrame_t *ring = calloc( COOP_FRAME_BACKUP, sizeof( coopFrame_t ) );
+	if ( !ring )
+		Com_Error( ERR_FATAL, "co-op: out of memory for replica frames" );
+	return ring;
+}
+
+static void CoopRingClear( coopFrame_t *ring )
+{
+	if ( !ring )
+		return;
+	for ( int i = 0; i < COOP_FRAME_BACKUP; i++ )
+		ring[i].num = 0;
+}
+
+static void CoopRingFree( coopFrame_t **ring )
+{
+	if ( !*ring )
+		return;
+	for ( int i = 0; i < COOP_FRAME_BACKUP; i++ )
+		free( (*ring)[i].data );
+	free( *ring );
+	*ring = NULL;
+}
+
+static coopFrame_t *CoopRingFind( coopFrame_t *ring, int num )
+{
+	coopFrame_t *f;
+	if ( !ring || num <= 0 )
+		return NULL;
+	f = &ring[num % COOP_FRAME_BACKUP];
+	return f->num == num ? f : NULL;
+}
+
+static void CoopFrameReset( coopFrame_t *f, int num )
+{
+	f->num = num;
+	f->dataLen = 0;
+	memset( f->len, 0, sizeof( f->len ) );
+}
+
+static void CoopFrameAdd( coopFrame_t *f, int slot, const void *data, int len )
+{
+	if ( slot < 0 || slot >= COOP_NUM_SLOTS || len <= 0 )
+		return;
+	if ( f->dataLen + len > f->dataSize )
+	{
+		f->dataSize = MAX( f->dataSize * 2, f->dataLen + len + 262144 );
+		f->data = realloc( f->data, f->dataSize );
+		if ( !f->data )
+			Com_Error( ERR_FATAL, "co-op: out of memory for replica frames" );
+	}
+	memcpy( f->data + f->dataLen, data, len );
+	f->ofs[slot] = f->dataLen;
+	f->len[slot] = len;
+	f->dataLen += len;
+}
+
+// f's slots that differ from base (NULL: from nothing) into out
+static void CoopEncodeFrame( coopBuf_t *out, const coopFrame_t *f, const coopFrame_t *base )
+{
+	CoopBufLong( out, f->num );
+	CoopBufLong( out, base ? base->num : 0 );
+	CoopBufLong( out, f->levelId );
+	CoopBufLong( out, f->time );
+	CoopBufLong( out, f->ackCmd );
+	CoopBufPut( out, f->map, (int)strlen( f->map ) + 1 );
+
+	for ( int slot = 0; slot < COOP_NUM_SLOTS; slot++ )
+	{
+		const byte	*nb = f->data + f->ofs[slot], *bb = base ? base->data + base->ofs[slot] : NULL;
+		int			nl = f->len[slot], bl = base ? base->len[slot] : 0;
+
+		if ( nl == bl && ( !nl || !memcmp( nb, bb, nl ) ) )
+			continue;
+		CoopBufByte( out, slot & 0xff );
+		CoopBufByte( out, slot >> 8 );
+		if ( !nl )
+		{
+			CoopBufByte( out, 0 );
+			continue;
+		}
+		if ( !bl )
+		{
+			CoopBufByte( out, 1 );
+			CoopBufVar( out, nl );
+			CoopBufPut( out, nb, nl );
+			continue;
+		}
+		CoopBufByte( out, 2 );
+		CoopBufVar( out, nl );
+		{
+			int pos = 0, last = 0;
+			while ( pos < nl )
+			{
+				int start, end, same;
+
+				while ( pos < nl && pos < bl && nb[pos] == bb[pos] )
+					pos++;
+				if ( pos >= nl )
+					break;
+				start = pos;
+				// the run ends at 8 equal bytes in a row (a shorter gap is cheaper sent along)
+				for ( end = pos, same = 0; end < nl && same < 8; end++ )
+					same = ( end < bl && nb[end] == bb[end] ) ? same + 1 : 0;
+				end -= same;
+				CoopBufVar( out, start - last );
+				CoopBufVar( out, end - start );
+				CoopBufPut( out, nb + start, end - start );
+				pos = last = end;
+			}
+			CoopBufVar( out, 0 );
+			CoopBufVar( out, 0 );
+		}
+	}
+	CoopBufByte( out, 0xff );
+	CoopBufByte( out, 0xff );
+}
+
+// a decompressed frame into f (base: the frame it's a delta from, NULL when from nothing);
+// qfalse when it doesn't parse
+static qboolean CoopDecodeFrame( const byte *data, int len, coopFrame_t *f, const coopFrame_t *base )
+{
+	static const byte	*changed[COOP_NUM_SLOTS];
+	static byte			kind[COOP_NUM_SLOTS];
+	coopReader_t		r = { data, data + len, qfalse };
+	const char			*map;
+	int					n;
+
+	memset( kind, 0xff, sizeof( kind ) );
+	r.p += 8;	// frame, base (the caller read them)
+	f->levelId = CoopReadLongR( &r );
+	f->time = CoopReadLongR( &r );
+	f->ackCmd = CoopReadLongR( &r );
+	map = (const char *)r.p;
+	for ( n = 0; r.p < r.end && *r.p; r.p++, n++ )
+		;
+	if ( r.p >= r.end || n >= MAX_QPATH )
+		return qfalse;
+	memcpy( f->map, map, n );
+	f->map[n] = 0;
+	r.p++;
+
+	for ( ;; )
+	{
+		int slot = CoopReadByteR( &r );
+		slot |= CoopReadByteR( &r ) << 8;
+		if ( r.bad )
+			return qfalse;
+		if ( slot == 0xffff )
+			break;
+		if ( slot >= COOP_NUM_SLOTS )
+			return qfalse;
+		kind[slot] = CoopReadByteR( &r );
+		changed[slot] = r.p;
+		if ( kind[slot] == 1 )
+		{
+			int nl = CoopReadVar( &r );
+			CoopReadBytes( &r, nl );
+		}
+		else if ( kind[slot] == 2 )
+		{
+			CoopReadVar( &r );
+			for ( ;; )
+			{
+				CoopReadVar( &r );
+				int rl = CoopReadVar( &r );
+				if ( r.bad || !rl )
+					break;
+				CoopReadBytes( &r, rl );
+			}
+			if ( !base )
+				return qfalse;
+		}
+		else if ( kind[slot] != 0 )
+			return qfalse;
+		if ( r.bad )
+			return qfalse;
+	}
+
+	f->dataLen = 0;
+	memset( f->len, 0, sizeof( f->len ) );
+	for ( int slot = 0; slot < COOP_NUM_SLOTS; slot++ )
+	{
+		const byte	*bb = base ? base->data + base->ofs[slot] : NULL;
+		int			bl = base ? base->len[slot] : 0;
+
+		if ( kind[slot] == 0xff )
+		{
+			CoopFrameAdd( f, slot, bb, bl );
+			continue;
+		}
+		if ( kind[slot] == 0 )
+			continue;
+		r.p = changed[slot];
+		r.end = data + len;
+		if ( kind[slot] == 1 )
+		{
+			int nl = CoopReadVar( &r );
+			CoopFrameAdd( f, slot, CoopReadBytes( &r, nl ), nl );
+			continue;
+		}
+		{
+			static coopBuf_t	tmp;
+			int					nl = CoopReadVar( &r ), pos = 0;
+
+			if ( nl <= 0 )
+				return qfalse;
+			// the base's bytes (zeros past their end), then the runs over them
+			tmp.len = 0;
+			CoopBufNeed( &tmp, nl );
+			memset( tmp.data, 0, nl );
+			memcpy( tmp.data, bb, MIN( bl, nl ) );
+			for ( ;; )
+			{
+				int skip = CoopReadVar( &r ), rl = CoopReadVar( &r );
+				const byte *run;
+				if ( r.bad )
+					return qfalse;
+				if ( !rl )
+					break;
+				pos += skip;
+				if ( pos < 0 || rl < 0 || pos + rl > nl || !( run = CoopReadBytes( &r, rl ) ) )
+					return qfalse;
+				memcpy( tmp.data + pos, run, rl );
+				pos += rl;
+			}
+			CoopFrameAdd( f, slot, tmp.data, nl );
+		}
+	}
+	return qtrue;
+}
+
 /* ------------------------------------------------------------------------
    The host
    ------------------------------------------------------------------------ */
@@ -287,6 +661,21 @@ static struct {
 	int					cmdHeard;		// when the newest command arrived
 	coopCmd_t			cmd;			// the newest command
 	int					heldButtons;	// every command's buttons since the game last took the input
+
+	// replica frames
+	coopFrame_t			*ring;
+	coopFrame_t			*building;		// between CoopNet_HostFrameBegin and End
+	int					frameNum;		// the newest frame's number
+	int					ackFrame;		// the newest frame the guest has
+	int					fullFrame;		// the last whole-world frame sent, and when
+	int					fullSentAt;
+	int					sndbufSet;
+
+	// what it costs (coop_status, coop_netstats)
+	int					statStart;		// Sys_Milliseconds the counts below started
+	int					statBytes, statPackets, statFrames, statFulls, statSkipped;
+	int					statBuildUsec, statSendUsec;	// building the frame (the game) and encoding + sending it
+	int					statMaxBytes;	// the biggest frame
 } coopHost;
 
 static int coopHostSock = -1;			// for coop_kick (the socket is sys_osx_coop.m's)
@@ -328,6 +717,8 @@ static void CoopHostDrop( int sock, const char *reason, qboolean tell )
 	coopHost.haveCmd = qfalse;
 	coopHost.heldButtons = 0;
 	coopHost.name[0] = 0;
+	CoopRingFree( &coopHost.ring );
+	coopHost.building = NULL;
 }
 
 static void CoopHostReject( int sock, const struct sockaddr_in *from, const char *reason )
@@ -414,6 +805,13 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	coopHost.haveCmd = qfalse;
 	coopHost.heldButtons = 0;
 	memset( &coopHost.cmd, 0, sizeof( coopHost.cmd ) );
+	CoopRingClear( coopHost.ring );
+	coopHost.ackFrame = 0;
+	coopHost.fullFrame = 0;
+	coopHost.fullSentAt = 0;
+	coopHost.statStart = now;
+	coopHost.statBytes = coopHost.statPackets = coopHost.statFrames = coopHost.statFulls = coopHost.statSkipped = 0;
+	coopHost.statBuildUsec = coopHost.statSendUsec = coopHost.statMaxBytes = 0;
 
 	info[0] = 0;
 	CoopSetInfo( info, "session", va( "%u", coopHost.session ) );
@@ -453,6 +851,18 @@ static void CoopHostInput( msg_t *msg )
 	}
 }
 
+// the newest replica frame the guest has put together (at the end of its input and keepalives)
+static void CoopHostReadAck( msg_t *msg )
+{
+	int ack;
+
+	if ( msg->readcount + 4 > msg->cursize )
+		return;
+	ack = MSG_ReadLong( msg );
+	if ( ack > coopHost.ackFrame && ack <= coopHost.frameNum )
+		coopHost.ackFrame = ack;
+}
+
 void CoopNet_HostPacket( int sock, const unsigned char *data, int len, const struct sockaddr_in *from )
 {
 	char		text[COOP_MAX_PACKET];
@@ -477,8 +887,10 @@ void CoopNet_HostPacket( int sock, const unsigned char *data, int len, const str
 	{
 	case COOP_MSG_INPUT:
 		CoopHostInput( &msg );
+		CoopHostReadAck( &msg );
 		break;
 	case COOP_MSG_KEEPALIVE:
+		CoopHostReadAck( &msg );
 		break;
 	case COOP_MSG_DISCONNECT:
 		{
@@ -499,6 +911,7 @@ void CoopNet_HostFrame( int sock )
 	coopHostSock = sock;
 	if ( !coopHost.active )
 		return;
+	CoopNetStats();
 	if ( now - coopHost.lastHeard > COOP_TIMEOUT )
 	{
 		CoopHostDrop( sock, "timed out", qtrue );
@@ -571,6 +984,126 @@ const char *CoopNet_GuestName( void )
 	return coopHost.active ? coopHost.name : "";
 }
 
+/*
+=================
+CoopNet_HostFrameBegin / Slot / End
+
+The bridge, after every game frame while a guest is connected: the world as slots
+(the game's images, the configstrings, the newest server commands). End sends the
+changes against the newest frame the guest has, compressed and in fragments; with
+no such frame (the guest just joined, or fell more than COOP_FRAME_BACKUP frames
+behind, or a new level started), the whole world, at most once every
+COOP_FULL_RETRY ms until the guest has it.
+=================
+*/
+static long long CoopUsec( void )
+{
+	struct timeval tv;
+	gettimeofday( &tv, NULL );
+	return (long long)tv.tv_sec * 1000000 + tv.tv_usec;
+}
+
+static long long coopHostBuildStart;
+
+int CoopNet_HostFrameBegin( int levelId, int levelTime, const char *map )
+{
+	coopFrame_t *f;
+
+	coopHost.building = NULL;
+	if ( !coopHost.active || coopHostSock < 0 )
+		return 0;
+	if ( !coopHost.ring )
+		coopHost.ring = CoopRingAlloc();
+	coopHost.frameNum++;
+	f = &coopHost.ring[coopHost.frameNum % COOP_FRAME_BACKUP];
+	CoopFrameReset( f, coopHost.frameNum );
+	f->levelId = levelId;
+	f->time = levelTime;
+	f->ackCmd = coopHost.haveCmd ? coopHost.cmd.seq : 0;
+	Q_strncpyz( f->map, map ? map : "", sizeof( f->map ) );
+	coopHost.building = f;
+	coopHostBuildStart = CoopUsec();
+	return 1;
+}
+
+void CoopNet_HostFrameSlot( int slot, const void *data, int len )
+{
+	if ( coopHost.building )
+		CoopFrameAdd( coopHost.building, slot, data, len );
+}
+
+void CoopNet_HostFrameEnd( void )
+{
+	static coopBuf_t	enc, zbuf;
+	coopFrame_t			*f = coopHost.building, *base;
+	long long			t0 = CoopUsec();
+	int					now = Sys_Milliseconds(), zlen, count;
+
+	coopHost.building = NULL;
+	if ( !f || !coopHost.active )
+		return;
+	coopHost.statBuildUsec += (int)( t0 - coopHostBuildStart );
+	coopHost.statFrames++;
+
+	base = CoopRingFind( coopHost.ring, coopHost.ackFrame );
+	if ( base && ( base == f || base->levelId != f->levelId ) )
+		base = NULL;
+	if ( !base )
+	{
+		// the guest hasn't got the last whole frame yet: don't send another so soon
+		if ( coopHost.fullFrame && coopHost.ackFrame < coopHost.fullFrame && now - coopHost.fullSentAt < COOP_FULL_RETRY )
+		{
+			coopHost.statSkipped++;
+			return;
+		}
+		coopHost.fullFrame = f->num;
+		coopHost.fullSentAt = now;
+		coopHost.statFulls++;
+	}
+
+	enc.len = 0;
+	CoopEncodeFrame( &enc, f, base );
+	zbuf.len = 0;
+	CoopBufNeed( &zbuf, enc.len + 4096 );
+	zlen = (int)compression_encode_buffer( zbuf.data, zbuf.size, enc.data, enc.len, NULL, COMPRESSION_ZLIB );
+	if ( zlen <= 0 )
+	{
+		Com_Printf( "co-op: couldn't compress replica frame %d (%d bytes)\n", f->num, enc.len );
+		return;
+	}
+	count = ( zlen + COOP_FRAGMENT - 1 ) / COOP_FRAGMENT;
+	if ( count > COOP_MAX_FRAGMENTS )
+	{
+		Com_Printf( "co-op: replica frame %d is too big (%d bytes)\n", f->num, zlen );
+		return;
+	}
+	if ( !coopHost.sndbufSet )
+	{
+		int size = 4 * 1024 * 1024;
+		setsockopt( coopHostSock, SOL_SOCKET, SO_SNDBUF, &size, sizeof( size ) );
+		coopHost.sndbufSet = 1;
+	}
+	for ( int i = 0; i < count; i++ )
+	{
+		byte	buf[COOP_MAX_PACKET];
+		msg_t	msg;
+		int		n = MIN( COOP_FRAGMENT, zlen - i * COOP_FRAGMENT );
+
+		CoopBeginMessage( &msg, buf, sizeof( buf ), coopHost.session, COOP_MSG_FRAME );
+		MSG_WriteLong( &msg, f->num );
+		MSG_WriteShort( &msg, i );
+		MSG_WriteShort( &msg, count );
+		MSG_WriteLong( &msg, zlen );
+		MSG_WriteLong( &msg, enc.len );
+		MSG_WriteData( &msg, zbuf.data + i * COOP_FRAGMENT, n );
+		CoopSendMessage( coopHostSock, &coopHost.addr, &msg );
+		coopHost.statBytes += msg.cursize + 28;		// + the UDP and IPv4 headers
+		coopHost.statPackets++;
+	}
+	coopHost.statMaxBytes = MAX( coopHost.statMaxBytes, zlen );
+	coopHost.statSendUsec += (int)( CoopUsec() - t0 );
+}
+
 /* ------------------------------------------------------------------------
    The guest
    ------------------------------------------------------------------------ */
@@ -603,7 +1136,24 @@ static struct {
 	// the host's state
 	char				hostMap[MAX_QPATH];
 	char				hostState[16];
-	char				requestedMap[MAX_QPATH];	// coop_guestLoadMap: the map this guest last loaded for it
+
+	// replica frames
+	coopFrame_t			*ring;
+	int					newestFrame;	// the newest frame put together
+	int					ackSent;		// the newest frame the host was told about
+	int					loadLevelId;	// the host level this guest loaded the map for (0: none yet)
+	struct {
+		int		frame;					// 0: free
+		int		count, got, zlen, rawlen;
+		byte	have[COOP_MAX_FRAGMENTS / 8];
+		byte	*buf;
+		int		bufSize;
+	} assembly[COOP_ASSEMBLY];
+
+	// what it costs (coop_status, coop_netstats)
+	int					statStart;
+	int					statBytes, statPackets, statFrames, statFulls, statDropped;
+	int					statDecodeUsec;
 } coopGuest = { COOP_GUEST_IDLE, -1 };
 
 int CoopNet_GuestActive( void )
@@ -672,6 +1222,16 @@ static void CoopGuestStop( const char *why, qboolean tell )
 		close( coopGuest.sock );
 	if ( why )
 		Com_Printf( "co-op: %s\n", why );
+	CoopRingFree( &coopGuest.ring );
+	for ( int i = 0; i < COOP_ASSEMBLY; i++ )
+		free( coopGuest.assembly[i].buf );
+	// a replica level can't go on alone: back to the menu, and the next level is this copy's own
+	if ( coopGuest.loadLevelId )
+	{
+		Cvar_Set( "sp_coop", "0" );
+		if ( SP_IsActive() || SP_IsLoading() )
+			SP_AbortToMenu();
+	}
 	memset( &coopGuest, 0, sizeof( coopGuest ) );
 	coopGuest.state = COOP_GUEST_IDLE;
 	coopGuest.sock = -1;
@@ -733,6 +1293,10 @@ static void CoopGuestStart( const char *address )
 		CoopGuestStop( va( "can't join %s: no network socket (%s)", address, strerror( errno ) ), qfalse );
 		return;
 	}
+	{
+		int size = 8 * 1024 * 1024;		// whole-world frames come in a burst of fragments
+		setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof( size ) );
+	}
 	coopGuest.sock = fd;
 	coopGuest.state = COOP_GUEST_CONNECTING;
 	Com_sprintf( coopGuest.nonce, sizeof( coopGuest.nonce ), "%08x%08x", arc4random(), arc4random() );
@@ -740,36 +1304,119 @@ static void CoopGuestStart( const char *address )
 	CoopGuestSendConnect();
 }
 
-// the host's state (from its accept or status): coop_guestLoadMap loads the host's map
+// the host's state (from its accept or status), for coop_status
 static void CoopGuestHostState( const char *info )
 {
-	char map[MAX_QPATH];
-
 	CoopGetInfo( info, "state", coopGuest.hostState, sizeof( coopGuest.hostState ) );
-	CoopGetInfo( info, "map", map, sizeof( map ) );
-	for ( char *p = map; *p; p++ )
+	CoopGetInfo( info, "map", coopGuest.hostMap, sizeof( coopGuest.hostMap ) );
+}
+
+/*
+=================
+CoopGuestFragment
+
+A fragment of a replica frame. When a frame is whole: decompress it, put it
+together from its base frame, and acknowledge it.
+=================
+*/
+static void CoopGuestFragment( msg_t *msg )
+{
+	int		frame = MSG_ReadLong( msg );
+	int		index = MSG_ReadShort( msg ) & 0xffff;
+	int		count = MSG_ReadShort( msg ) & 0xffff;
+	int		zlen = MSG_ReadLong( msg );
+	int		rawlen = MSG_ReadLong( msg );
+	int		n = msg->cursize - msg->readcount;
+	int		a, oldest = 0;
+
+	if ( msg->readcount > msg->cursize || frame <= coopGuest.newestFrame || count < 1 || count > COOP_MAX_FRAGMENTS ||
+		index >= count || zlen <= 0 || zlen > count * COOP_FRAGMENT || rawlen <= 0 || rawlen > 64 * 1024 * 1024 || n <= 0 ||
+		index * COOP_FRAGMENT + n > zlen )
+		return;
+	coopGuest.statBytes += msg->cursize + 28;
+	coopGuest.statPackets++;
+
+	for ( a = 0; a < COOP_ASSEMBLY; a++ )
 	{
-		if ( !isalnum( (unsigned char)*p ) && *p != '_' && *p != '-' && *p != '/' )
-		{
-			map[0] = 0;		// not a map name
+		if ( coopGuest.assembly[a].frame == frame )
 			break;
+		if ( coopGuest.assembly[a].frame < coopGuest.assembly[oldest].frame )
+			oldest = a;
+	}
+	if ( a == COOP_ASSEMBLY )
+	{
+		a = oldest;
+		coopGuest.assembly[a].frame = frame;
+		coopGuest.assembly[a].count = count;
+		coopGuest.assembly[a].got = 0;
+		coopGuest.assembly[a].zlen = zlen;
+		coopGuest.assembly[a].rawlen = rawlen;
+		memset( coopGuest.assembly[a].have, 0, sizeof( coopGuest.assembly[a].have ) );
+		if ( coopGuest.assembly[a].bufSize < zlen )
+		{
+			coopGuest.assembly[a].bufSize = zlen;
+			coopGuest.assembly[a].buf = realloc( coopGuest.assembly[a].buf, zlen );
+			if ( !coopGuest.assembly[a].buf )
+				Com_Error( ERR_FATAL, "co-op: out of memory for replica frames" );
 		}
 	}
-	Q_strncpyz( coopGuest.hostMap, map, sizeof( coopGuest.hostMap ) );
+	if ( coopGuest.assembly[a].count != count || coopGuest.assembly[a].zlen != zlen ||
+		( coopGuest.assembly[a].have[index >> 3] & ( 1 << ( index & 7 ) ) ) )
+		return;
+	coopGuest.assembly[a].have[index >> 3] |= 1 << ( index & 7 );
+	MSG_ReadData( msg, coopGuest.assembly[a].buf + index * COOP_FRAGMENT, n );
+	if ( ++coopGuest.assembly[a].got < count )
+		return;
 
-	if ( !Cvar_VariableIntegerValue( "coop_guestLoadMap" ) || strcmp( coopGuest.hostState, "playing" ) || !map[0] )
-		return;
-	if ( !Q_stricmp( coopGuest.requestedMap, map ) || SP_IsLoading() )
-		return;
-	if ( SP_IsActive() && !Q_stricmp( SP_CurMap(), map ) )
+	// whole: decode it
 	{
-		Q_strncpyz( coopGuest.requestedMap, map, sizeof( coopGuest.requestedMap ) );
-		return;
+		static coopBuf_t	raw;
+		long long			t0 = CoopUsec();
+		coopFrame_t			*f, *base = NULL;
+		int					baseNum, got;
+
+		coopGuest.assembly[a].frame = 0;
+		raw.len = 0;
+		CoopBufNeed( &raw, rawlen );
+		got = (int)compression_decode_buffer( raw.data, rawlen, coopGuest.assembly[a].buf, zlen, NULL, COMPRESSION_ZLIB );
+		if ( got != rawlen || rawlen < 8 )
+		{
+			coopGuest.statDropped++;
+			return;
+		}
+		memcpy( &baseNum, raw.data + 4, 4 );
+		baseNum = LittleLong( baseNum );
+		if ( baseNum )
+		{
+			base = CoopRingFind( coopGuest.ring, baseNum );
+			if ( !base )
+			{
+				coopGuest.statDropped++;		// its base is gone: the host sends from a newer one soon
+				return;
+			}
+		}
+		if ( !coopGuest.ring )
+			coopGuest.ring = CoopRingAlloc();
+		f = &coopGuest.ring[frame % COOP_FRAME_BACKUP];
+		if ( f == base )
+		{
+			coopGuest.statDropped++;		// would overwrite its own base (more than a ring behind)
+			return;
+		}
+		CoopFrameReset( f, 0 );
+		if ( !CoopDecodeFrame( raw.data, rawlen, f, base ) )
+		{
+			Com_Printf( "co-op: replica frame %d from the host doesn't decode; dropped\n", frame );
+			coopGuest.statDropped++;
+			return;
+		}
+		f->num = frame;
+		coopGuest.newestFrame = frame;
+		coopGuest.statFrames++;
+		if ( !baseNum )
+			coopGuest.statFulls++;
+		coopGuest.statDecodeUsec += (int)( CoopUsec() - t0 );
 	}
-	Q_strncpyz( coopGuest.requestedMap, map, sizeof( coopGuest.requestedMap ) );
-	Com_Printf( "co-op: the host is on %s; loading it here (until co-op mirrors the host's world, "
-		"this is your own copy of the level, and your moves steer player 2 in the host's)\n", map );
-	Cbuf_AddText( va( "map %s\n", map ) );
 }
 
 static void CoopGuestReceive( void )
@@ -777,7 +1424,7 @@ static void CoopGuestReceive( void )
 	unsigned char	data[COOP_MAX_PACKET];
 	char			text[COOP_MAX_PACKET];
 
-	for ( int i = 0; coopGuest.sock >= 0 && i < 16; i++ )
+	for ( int i = 0; coopGuest.sock >= 0 && i < 4096; i++ )
 	{
 		ssize_t		n = recv( coopGuest.sock, data, sizeof( data ), 0 );
 		const char	*rest;
@@ -808,6 +1455,7 @@ static void CoopGuestReceive( void )
 			coopGuest.state = COOP_GUEST_CONNECTED;
 			coopGuest.lastHeard = Sys_Milliseconds();
 			coopGuest.lastCmdNumber = cl.cmdNumber;
+			coopGuest.statStart = coopGuest.lastHeard;
 			Com_Printf( "co-op: joined %s as player 2\n", CoopAddressString( &coopGuest.host ) );
 			CoopGuestHostState( rest );
 			continue;
@@ -827,7 +1475,11 @@ static void CoopGuestReceive( void )
 			continue;
 
 		coopGuest.lastHeard = Sys_Milliseconds();
-		if ( type == COOP_MSG_STATUS )
+		if ( type == COOP_MSG_FRAME )
+		{
+			CoopGuestFragment( &msg );
+		}
+		else if ( type == COOP_MSG_STATUS )
 		{
 			char info[MAX_INFO_STRING];
 			Q_strncpyz( info, MSG_ReadString( &msg ), sizeof( info ) );
@@ -903,16 +1555,80 @@ static void CoopGuestSend( void )
 			MSG_WriteByte( &msg, (byte)c->rightmove );
 			MSG_WriteByte( &msg, (byte)c->upmove );
 		}
+		MSG_WriteLong( &msg, coopGuest.newestFrame );
 		CoopSendMessage( coopGuest.sock, NULL, &msg );
 		coopGuest.unsent = qfalse;
 		coopGuest.lastSend = now;
+		coopGuest.ackSent = coopGuest.newestFrame;
 	}
-	else if ( now - coopGuest.lastSend >= COOP_KEEPALIVE_INTERVAL )
+	else if ( now - coopGuest.lastSend >= COOP_KEEPALIVE_INTERVAL || coopGuest.ackSent != coopGuest.newestFrame )
 	{
+		// (a new replica frame is acknowledged at once, so the host's next one is a small change)
 		CoopBeginMessage( &msg, buf, sizeof( buf ), coopGuest.session, COOP_MSG_KEEPALIVE );
+		MSG_WriteLong( &msg, coopGuest.newestFrame );
 		CoopSendMessage( coopGuest.sock, NULL, &msg );
 		coopGuest.lastSend = now;
+		coopGuest.ackSent = coopGuest.newestFrame;
 	}
+}
+
+/*
+=================
+CoopGuestFollowLevel
+
+The host's newest frame is of a level this guest hasn't loaded (it just joined,
+or the host changed level): load that map as a replica (sp_coop 2), which then
+applies the host's frames instead of running its own game.
+=================
+*/
+static void CoopGuestFollowLevel( void )
+{
+	coopFrame_t *f = CoopRingFind( coopGuest.ring, coopGuest.newestFrame );
+
+	if ( !f || f->levelId == coopGuest.loadLevelId || SP_IsLoading() || !f->map[0] )
+		return;
+	for ( const char *p = f->map; *p; p++ )
+	{
+		if ( !isalnum( (unsigned char)*p ) && *p != '_' && *p != '-' && *p != '/' )
+			return;		// not a map name
+	}
+	coopGuest.loadLevelId = f->levelId;
+	Com_Printf( "co-op: the host is on %s; loading it as player 2\n", f->map );
+	Cvar_Set( "sp_coop", "2" );
+	Cbuf_AddText( va( "map %s\n", f->map ) );
+}
+
+int CoopNet_GuestNewestFrame( void )
+{
+	return coopGuest.state == COOP_GUEST_CONNECTED ? coopGuest.newestFrame : 0;
+}
+
+qboolean CoopNet_GuestFrameInfo( int frame, int *levelId, int *levelTime, int *ackCmd )
+{
+	coopFrame_t *f = CoopRingFind( coopGuest.ring, frame );
+
+	if ( !f )
+		return qfalse;
+	*levelId = f->levelId;
+	*levelTime = f->time;
+	*ackCmd = f->ackCmd;
+	return qtrue;
+}
+
+int CoopNet_GuestFrameSlot( int frame, int slot, const unsigned char **data )
+{
+	coopFrame_t *f = CoopRingFind( coopGuest.ring, frame );
+
+	*data = NULL;
+	if ( !f || slot < 0 || slot >= COOP_NUM_SLOTS || !f->len[slot] )
+		return 0;
+	*data = f->data + f->ofs[slot];
+	return f->len[slot];
+}
+
+int CoopNet_GuestLevelId( void )
+{
+	return coopGuest.loadLevelId;
 }
 
 static void CoopStatus_f( void );
@@ -924,7 +1640,7 @@ static void CoopAddCommands( void )
 	if ( coopCommandsAdded )
 		return;
 	coopCommandsAdded = qtrue;
-	Cvar_Get( "coop_guestLoadMap", "1", CVAR_TEMP );
+	Cvar_Get( "coop_netstats", "0", CVAR_TEMP );
 	Cmd_AddCommand( "coop_status", CoopStatus_f );
 	Cmd_AddCommand( "coop_disconnect", CoopDisconnect_f );
 	Cmd_AddCommand( "coop_kick", CoopKick_f );
@@ -982,8 +1698,70 @@ void CoopNet_GuestFrame( void )
 		CoopGuestStop( "lost the connection to the host (nothing heard for 10 seconds)", qtrue );
 		return;
 	}
+	CoopGuestFollowLevel();
 	CoopGuestTakeInput();
 	CoopGuestSend();
+	CoopNetStats();
+}
+
+/*
+=================
+CoopNetStats
+
+What the replica costs since the counts started: bytes and packets a second, frames
+(whole ones), and the time spent on them. coop_status prints it; with coop_netstats 1
+it's printed every 5 seconds (and the counts start over).
+=================
+*/
+static void CoopNetStatsPrint( qboolean reset )
+{
+	int now = Sys_Milliseconds();
+
+	if ( coopHost.active && coopHost.statStart )
+	{
+		float secs = MAX( 0.001f, ( now - coopHost.statStart ) / 1000.0f );
+		int frames = MAX( 1, coopHost.statFrames );
+		Com_Printf( "co-op net: host sent %.0f bytes/s, %.1f packets/s, %d frames (%d whole, %d held back), "
+			"biggest %d bytes; per frame %.2f ms building, %.2f ms encoding+sending\n",
+			coopHost.statBytes / secs, coopHost.statPackets / secs, coopHost.statFrames, coopHost.statFulls,
+			coopHost.statSkipped, coopHost.statMaxBytes, coopHost.statBuildUsec / 1000.0f / frames,
+			coopHost.statSendUsec / 1000.0f / frames );
+		if ( reset )
+		{
+			coopHost.statStart = now;
+			coopHost.statBytes = coopHost.statPackets = coopHost.statFrames = coopHost.statFulls = coopHost.statSkipped = 0;
+			coopHost.statBuildUsec = coopHost.statSendUsec = coopHost.statMaxBytes = 0;
+		}
+	}
+	if ( coopGuest.state == COOP_GUEST_CONNECTED && coopGuest.statStart )
+	{
+		float secs = MAX( 0.001f, ( now - coopGuest.statStart ) / 1000.0f );
+		Com_Printf( "co-op net: guest received %.0f bytes/s, %.1f packets/s, %d frames (%d whole, %d dropped), "
+			"%.2f ms decoding per frame\n", coopGuest.statBytes / secs, coopGuest.statPackets / secs,
+			coopGuest.statFrames, coopGuest.statFulls, coopGuest.statDropped,
+			coopGuest.statDecodeUsec / 1000.0f / MAX( 1, coopGuest.statFrames ) );
+		if ( reset )
+		{
+			coopGuest.statStart = now;
+			coopGuest.statBytes = coopGuest.statPackets = coopGuest.statFrames = coopGuest.statFulls = coopGuest.statDropped = 0;
+			coopGuest.statDecodeUsec = 0;
+		}
+	}
+}
+
+static void CoopNetStats( void )
+{
+	static int last;
+	int now = Sys_Milliseconds();
+
+	if ( !Cvar_VariableIntegerValue( "coop_netstats" ) )
+		return;
+	if ( !last || now - last < 0 )
+		last = now;
+	if ( now - last < 5000 )
+		return;
+	last = now;
+	CoopNetStatsPrint( qtrue );
 }
 
 /* ------------------------------------------------------------------------
@@ -1006,6 +1784,7 @@ static void CoopStatus_f( void )
 		Com_Printf( "co-op: hosting; no player 2 has joined\n" );
 	else
 		Com_Printf( "co-op: not connected (coop_connect <address> joins a host; sp_coop 1 hosts)\n" );
+	CoopNetStatsPrint( qfalse );
 }
 
 static void CoopDisconnect_f( void )

@@ -180,3 +180,7 @@ target_link_libraries(efsp PRIVATE sp_game_bridge PkgConfig::SDL2
 if(EF_BINK)
   target_link_libraries(efsp PRIVATE PkgConfig::FFMPEG)
 endif()
+if(EF_COOP)
+  # the system's Compression library (libcompression), for co-op's replica frames (sys_coop_net.c)
+  target_link_libraries(efsp PRIVATE compression)
+endif()

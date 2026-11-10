@@ -43,6 +43,7 @@ void		COOP_ApplyCarry( gentity_t *ent );
 void		COOP_PublishInfo( void );					// coop_info.cpp
 qboolean	COOP_GuestCmd( usercmd_t *cmd );			// coop_net.cpp
 const char	*COOP_GuestName( void );
-qboolean	COOP_GuestConnected( void );				// a guest is connected, steering or not
+qboolean	COOP_GuestConnected( void );
+void		COOP_ReplicaInit( void );					// coop_replica.cpp				// a guest is connected, steering or not
 
 #endif // COOP_LOCAL_H

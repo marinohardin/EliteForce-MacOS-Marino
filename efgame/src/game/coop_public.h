@@ -13,6 +13,7 @@
 #ifndef EF_COOP
 
 #define COOP_Active()				0
+#define COOP_IsReplica()			0
 #define COOP_IsP2(e)				0
 #define COOP_IsPlayer(e)			((e)->s.number == 0)
 #define COOP_IsPlayerNum(n)			((n) == 0)
@@ -46,6 +47,10 @@
 
 extern int	coop_enabled;		// sp_coop 1 at InitGame
 extern int	coop_p2Num;			// P2's entity number, -1 when there is none
+extern int	coop_replica;		// sp_coop 2 at InitGame: a guest's copy of the host's level
+
+// this level is a guest's replica: no game frames run here, the host's entities are written in
+inline int COOP_IsReplica( void ) { return coop_replica; }
 
 // co-op is on for this level (P2 may not have spawned yet)
 inline int COOP_Active( void ) { return coop_enabled; }
