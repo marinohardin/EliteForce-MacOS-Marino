@@ -110,9 +110,16 @@ static int REP_ReadChunk( unsigned long chid, void *addr, int len, void **pp, qb
 	unsigned	id;
 	int			stored;
 
-	if ( rep_inBad || rep_inPos + 8 > rep_inLen )
+	if ( rep_inBad )
 	{
-		rep_inBad = qtrue;
+		return 0;
+	}
+	if ( rep_inPos + 8 > rep_inLen )
+	{
+		if ( !optional )
+		{
+			rep_inBad = qtrue;		// (an optional chunk may be missing at the end)
+		}
 		return 0;
 	}
 	memcpy( &id, rep_in + rep_inPos, 4 );
