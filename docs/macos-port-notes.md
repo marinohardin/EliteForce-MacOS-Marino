@@ -1187,3 +1187,10 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   where it differs from the plan: `docs/coop-m1-design.md`.
 - `macos/make-app.sh` takes the engine build folder from `ENGINE_BUILD` (default `build-macos`), so a
   co-op test app can be bundled from a separate build.
+- Prediction (protocol 4): the guest makes one command per host frame it takes in, the host applies one a
+  frame in order and names the last in each frame; the guest's cgame predicts from there (it does even at
+  timescale 1 in a replica). The view client in a replica is P2 (`COOP_ViewClientNum`).
+- Direct sounds (script voice lines, `G_SoundOnEnt`) go with the replica's globals; server commands and
+  configstrings already did.
+- Measured with two copies on one Mac: 7 to 27 KB/s from host to guest (quiet map to borg2), about 1 ms per
+  frame on the host; a Holomatch client with 9 bots gets 1.6 to 2.8 KB/s. Table in `docs/coop-m1-design.md`.

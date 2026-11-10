@@ -112,19 +112,40 @@ Configstrings and server commands travel as slots instead, so they need no relia
 - Tested on borg1 (the opening captain's log, voice line 2 heard on a guest that joined during
   line 1) and with host prints (`god`), both showing on the guest.
 
-## Step 6: measure
+## Step 6: measured (2026-11-10, two copies on one Mac, 127.0.0.1)
+`coop_netstats 1` prints, every 5 s, the bytes and packets per second, frames, whole frames, the
+biggest frame and the per-frame cost on each side; `coop_status` prints it once. Both players walking,
+steady state after the join (UDP payload; add 28 bytes a packet for the headers):
+
+| map | host sends | packets/s | whole frame | host build + send per frame | guest decode | CPU host / guest |
+|---|---|---|---|---|---|---|
+| borg1 (busy) | 18.5 KB/s | 20 | 61 KB | 1.2 + 0.35 ms | 0.06 ms | 13-23% / 12-18% |
+| borg2 (start) | 26.7 KB/s | 38 | 44 KB | 0.8 + 0.3 ms | 0.05 ms | |
+| voy1 (many NPCs) | 12.5 KB/s | 20 | 22 KB | 0.4 + 0.2 ms | 0.04 ms | 11-19% / 10-15% |
+| _holodeck_garden (quiet) | 7.3 KB/s | 20 | 12 KB | 0.3 + 0.15 ms | 0.03 ms | 8-14% / 8-12% |
+
+For comparison, a Holomatch client (`rate 25000`, `snaps 20`) on a local dedicated server with 9
+bots receives 1.6 KB/s on hm_voy1 and 2.8 KB/s on hm_blastradius (`cl_shownet 1` message sizes;
+`nettop` agrees). Co-op costs 3 to 10 times that: whole entity images instead of `entityState_t`
+field deltas, and no culling by what P2 can see. Fine on a LAN; for the internet, the next savings
+are masking fields that change every frame without mattering, and leaving out entities P2 can't see
+that the cgame doesn't need. (CPU is the whole process, renderer included, sampled with `ps`.)
+
+## Step 6: the plan
 - Bytes per second on borg1 (busy), voy1 (many NPCs) and a quiet map; CPU of the host's per-frame
   serialization and the guest's apply. Two copies on one Mac, then two Macs on a LAN.
-- `coop_status` prints the numbers; a `coop_netgraph`-like line is enough.
 
-## Order and what can start alone
+## Order (as planned; step 3 was built as slots instead, see above)
 1. The reliable layer and fragmentation in `sys_coop_net.c` (engine only; testable with a probe).
-2. The in-memory save on the host and the load from memory on the guest (bridge + `g_savegame`
-   hooks): testable by writing and reading back on one machine.
+2. The in-memory save on the host and the load from memory on the guest.
 3. Replica mode (`sp_coop 2`) in the bridge: no game frames, snapshot from P2.
 4. Deltas, then the cgame "local client", then forwarded commands.
-Steps 1 and 2 are cleanly separable and come first.
 
-## Open questions
+## Open questions and what's left after M1
 - A host that pauses (menu, console) stops its game frames: the guest should see "paused".
 - The host's game pausing when its window loses focus matters for two copies on one Mac.
+- Cameras and cutscenes are not mirrored (M2): the guest keeps its own view while the host watches one.
+- `EV_BMODEL_SOUND` carries a sound handle, not an index; the guest's handles may differ.
+- Prints aimed at P1 show on the guest too (the bridge ignores a command's client).
+- The guest can't save, load, or change levels itself; a host level change makes it load the new map.
+- Two Macs on a LAN haven't been tried; only two copies on one Mac.
