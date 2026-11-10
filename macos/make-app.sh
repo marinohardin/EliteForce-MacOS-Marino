@@ -25,7 +25,7 @@ BUNDLE_ID="${BUNDLE_ID:-org.voyagersp.macos}"
 BREW="${BREW:-$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ENGINE_BUILD="$ROOT/build-macos"
+ENGINE_BUILD="${ENGINE_BUILD:-$ROOT/build-macos}"
 # EF_COOP=1: build with single-player co-op (experimental; test apps only), in its own game build folder
 EF_COOP="${EF_COOP:-}"
 if [ -n "$EF_COOP" ]; then COOP_FLAG=ON; GAME_BUILD="${GAME_BUILD:-$ROOT/efgame/buildmac-coop}"; else COOP_FLAG=OFF; fi
