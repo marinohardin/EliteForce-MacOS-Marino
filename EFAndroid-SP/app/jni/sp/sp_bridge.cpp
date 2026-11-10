@@ -974,37 +974,52 @@ static void SP_CgameAddCommand(const char *name){
 }
 
 // ---------------------------------------------------------------------------
-// AS_* ambient-sound-set system (sound/sound.txt). In retail these are ENGINE
-// traps (AS_ParseFile, S_UpdateAmbientSet, AS_AddLocalSet, AS_GetBModelSound). The SP port
-// replaced the engine, so they live here. Previously stubbed (return 0/-1) ->
-// every map's ambient bed + randomized atmosphere was SILENT. Grammar is a flat
-// sequence of blocks (3 set types):
-//   <generalSet|localSet|bmodelSet> "<name>" { <keywords> }
-//   loopedWave <f>            -> registers sound/<f>.wav        (looping bed)
-//   subWaves   <pre> <n>...   -> registers sound/<pre>/<n>.wav  (random one-shots)
-//   volRange   <min> <max>    (0..255; advisory, see note)
-//   radius     <n>            (engine spatializes by distance already; advisory)
-//   timeBetweenWaves <min> <max>  seconds between random subwaves
-// Defaults match retail: tbw 10/25 s, volRange 255/255, radius 250. The looped
-// bed is anchored on ENTITYNUM_NONE (MAX_GENTITIES-1) — a sentinel the cgame
-// never uses for a real entity's loopSound, so it can't collide. Re-added every
-// frame because loops are cleared per frame (CG_S_CLEARLOOPINGSOUNDS).
+// Ambient sound sets (sound/sound.txt). The cgame reaches them through engine traps (CG_AS_PARSESETS,
+// CG_AS_ADDENTRY, CG_S_UPDATEAMBIENTSET, CG_S_ADDLOCALSET, CG_AS_GETBMODELSOUND); the SP port has no
+// separate sound module for them, so they live here.
+// The file is line based. A header (type, amsdir, outdir, basedir: settings of the tool that wrote it,
+// ignored here), `;` comment lines, then the sets: a "generalSet|localSet|bmodelSet NAME" line followed by
+// that set's keyword lines, up to the next set or the end of the file. A { } block around the keywords
+// is accepted too.
+//   loopedWave <f>                sound/<f>.wav, the set's looping sound
+//   subWaves <dir> <n1> <n2> ...  sound/<dir>/<n>.wav: random one-shots for general and local sets; for a
+//                                 bmodel set the mover's start, moving (looped) and stop sounds, in order
+//   timeBetweenWaves <min> <max>  seconds between one-shots (none when max is 0)
+//   volRange <min> <max>          one-shot volume, 0..255
+//   radius <n>                    kept but unused: the mixer already fades a sound by distance
+// The three kinds are looked up separately (dntractor is both a localSet and a bmodelSet):
+//   general  the map's ambience: worldspawn's soundSet, switched by triggers through CS_AMBIENT_SET. Its loop
+//            plays at the listener on ENTITYNUM_NONE (MAX_GENTITIES-1, never a real entity's loop slot),
+//            re-added every frame like every loop; its one-shots play on the player.
+//   local    an entity's own loop and one-shots at its origin (target_speaker, fx_bolt, func_usable ...),
+//            silent while the entity is out of view, like the snapshot loops (SP_EntInView).
+//   bmodel   door, plat and lift sounds (g_mover.cpp G_PlayDoorSound / G_PlayDoorLoopSound).
+// A set's sounds are registered when the cgame loads the sets if the map names it (CG_AS_ADDENTRY), and on
+// first use otherwise (the world's own set, which the precache list leaves out).
 // ---------------------------------------------------------------------------
-#define AS_MAX_SETS      512
-#define AS_MAX_SUBWAVES  9
+#define AS_MAX_SETS      256
+#define AS_MAX_SUBWAVES  16
+#define AS_MAX_PRECACHE  128
+enum { AS_GENERAL, AS_LOCAL, AS_BMODEL };
 struct as_set_t {
     char name[64];
-    int  type;                       // 0 general, 1 local, 2 bmodel
+    int  type;                       // AS_GENERAL, AS_LOCAL, AS_BMODEL
     int  tbwMin, tbwMax;             // seconds
     int  volMin, volMax;             // 0..255
     int  radius;
+    char loopPath[MAX_QPATH];
+    char subPaths[AS_MAX_SUBWAVES][MAX_QPATH];
+    int  numSubWaves;
+    bool registered;                 // looped/subWaves hold sound handles
     int  looped;                     // sfxHandle, 0 = none
     int  subWaves[AS_MAX_SUBWAVES];
-    int  numSubWaves;
-    int  nextWave;                   // realtime ms of next general-set subwave
+    int  nextWave;                   // Sys_Milliseconds of a general set's next one-shot
 };
 static as_set_t s_asSets[AS_MAX_SETS];
 static int      s_asNumSets = 0;
+static bool     s_asParsed = false;
+static char     s_asPrecache[AS_MAX_PRECACHE][64];
+static int      s_asNumPrecache = 0;
 static const float s_asZero[3] = {0,0,0};
 
 // Local string helpers — the engine's q_shared funcs are C-linkage and not visible to this C++ TU.
@@ -1014,8 +1029,8 @@ static int  AS_stricmp(const char* a, const char* b){
 }
 static void AS_strcpy(char* d, const char* s, int n){ if(n<=0) return; int i=0; for(; i<n-1 && s[i]; i++) d[i]=s[i]; d[i]=0; }
 // Self-contained tokenizer (avoids C/C++ linkage mismatch vs the engine's C COM_Parse).
-// allowNL=false returns "" at end of line (for the subWaves "<prefix> <name>... EOL" grammar).
-// Handles // and /* */ comments, "quoted" set names, and standalone { } tokens.
+// allowNL=false returns "" at the end of the line (every keyword takes its values from its own line).
+// Handles ; and // line comments, /* */ comments, "quoted" names and standalone { } tokens.
 static char* AS_Tok(char** dp, bool allowNL){
     static char tok[256];
     char* p = *dp; tok[0] = 0;
@@ -1026,7 +1041,7 @@ static char* AS_Tok(char** dp, bool allowNL){
             p++;
         }
         if(!*p){ *dp=p; return tok; }
-        if(p[0]=='/' && p[1]=='/'){ while(*p && *p!='\n') p++; continue; }
+        if(*p==';' || (p[0]=='/' && p[1]=='/')){ while(*p && *p!='\n') p++; continue; }
         if(p[0]=='/' && p[1]=='*'){ p+=2; while(*p && !(p[0]=='*'&&p[1]=='/')) p++; if(*p) p+=2; continue; }
         break;
     }
@@ -1038,117 +1053,163 @@ static char* AS_Tok(char** dp, bool allowNL){
     } else if(*p=='{' || *p=='}'){
         tok[n++]=*p++;
     } else {
-        while(*p && (unsigned char)*p > ' ' && *p!='{' && *p!='}' && *p!='"'){ if(n<255) tok[n++]=*p; p++; }
+        while(*p && (unsigned char)*p > ' ' && *p!='{' && *p!='}' && *p!='"' && *p!=';'){ if(n<255) tok[n++]=*p; p++; }
     }
     tok[n]=0; *dp=p; return tok;
 }
-static as_set_t* AS_FindSet(const char* name){
-    if(!name || !name[0]) return NULL;
+static void AS_SkipLine(char** dp){ while(AS_Tok(dp,false)[0]){} }
+static void AS_Range(char** dp, int* lo, int* hi){
+    *lo = atoi(AS_Tok(dp,false)); *hi = atoi(AS_Tok(dp,false));
+    if(*lo > *hi){ int t=*lo; *lo=*hi; *hi=t; }
+}
+static as_set_t* AS_Lookup(const char* name, int type){
     for(int i=0;i<s_asNumSets;i++)
-        if(!AS_stricmp(s_asSets[i].name, name)) return &s_asSets[i];
+        if(s_asSets[i].type==type && !AS_stricmp(s_asSets[i].name, name)) return &s_asSets[i];
     return NULL;
+}
+static void AS_Register(as_set_t* s){
+    if(s->registered) return;
+    s->registered = true;
+    if(s->loopPath[0]){
+        s->looped = SPR_S_RegisterSound(s->loopPath);
+        if(s->looped < 1) bwarn("AS_ParseSets: ^3Unable to load ambient sound \"%s\"\n", s->loopPath);
+    }
+    for(int i=0;i<s->numSubWaves;i++){
+        s->subWaves[i] = SPR_S_RegisterSound(s->subPaths[i]);
+        if(s->subWaves[i] < 1) bwarn("AS_ParseSets: ^3Unable to load ambient sound \"%s\"\n", s->subPaths[i]);
+    }
+}
+static void SP_AS_ParseSets(void);
+static as_set_t* AS_FindSet(const char* name, int type){
+    if(!name || !name[0]) return NULL;
+    if(!s_asParsed) SP_AS_ParseSets();       // the game can ask for a mover's sounds before the cgame loads the sets
+    as_set_t* s = AS_Lookup(name, type);
+    if(s) AS_Register(s);
+    return s;
 }
 static int AS_RandInterval(const as_set_t* s){
     int span = s->tbwMax - s->tbwMin;
     int secs = s->tbwMin + (span>0 ? (rand()%(span+1)) : 0);
     return secs*1000;
 }
-static int AS_RandVolume(const as_set_t* s){   // 0-255; retail picks a random subwave volume in [volMin,volMax]
+static int AS_RandVolume(const as_set_t* s){   // 0-255, a random one-shot volume in [volMin,volMax]
     int span = s->volMax - s->volMin;
     return s->volMin + (span>0 ? (rand()%(span+1)) : 0);
 }
+static bool AS_HasWaves(const as_set_t* s){ return s->numSubWaves > 0 && s->tbwMax > 0; }
+static void SP_AS_AddPrecache(const char* name){
+    if(!name || !name[0] || s_asNumPrecache >= AS_MAX_PRECACHE) return;
+    AS_strcpy(s_asPrecache[s_asNumPrecache++], name, sizeof(s_asPrecache[0]));
+}
 static void SP_AS_ParseSets(void){
     s_asNumSets = 0;
+    s_asParsed = true;
     void* buf = NULL;
     int len = (int)FS_ReadFile("sound/sound.txt", &buf);
     if(len <= 0 || !buf){
         bwarn("AS_ParseSets: ^1Couldn't load ambient sound sets from sound/sound.txt\n");
+        s_asNumPrecache = 0;
         return;
     }
     char* p = (char*)buf;
+    as_set_t* s = NULL;                                  // the set the keyword lines belong to
     for(;;){
         const char* tok = AS_Tok(&p,true);
         if(!tok[0]) break;                               // EOF
         int type = -1;
-        if(!AS_stricmp(tok,"generalSet"))     type = 0;
-        else if(!AS_stricmp(tok,"localSet"))  type = 1;
-        else if(!AS_stricmp(tok,"bmodelSet")) type = 2;
-        if(type < 0) continue;                           // skip stray token
-        char setName[64];
-        AS_strcpy(setName, AS_Tok(&p,true), sizeof(setName));
-        if(AS_Tok(&p,true)[0] != '{') continue;            // expect '{'
-        if(AS_FindSet(setName) || s_asNumSets >= AS_MAX_SETS){
-            int depth = 1;                               // dup/full: consume the block
-            while(depth){ const char* t=AS_Tok(&p,true); if(!t[0])break; if(t[0]=='{')depth++; else if(t[0]=='}')depth--; }
+        if(!AS_stricmp(tok,"generalSet"))     type = AS_GENERAL;
+        else if(!AS_stricmp(tok,"localSet"))  type = AS_LOCAL;
+        else if(!AS_stricmp(tok,"bmodelSet")) type = AS_BMODEL;
+        if(type >= 0){
+            char setName[64];
+            AS_strcpy(setName, AS_Tok(&p,false), sizeof(setName));
+            AS_SkipLine(&p);
+            s = NULL;                                    // a skipped set's keywords are skipped too
+            if(!setName[0] || !AS_stricmp(setName,"{")) continue;
+            if(AS_Lookup(setName, type)){ bwarn("AS_ParseSets: ^3Duplicate ambient set \"%s\"\n", setName); continue; }
+            if(s_asNumSets >= AS_MAX_SETS){ bwarn("AS_ParseSets: ^3Too many ambient sets, \"%s\" skipped\n", setName); continue; }
+            s = &s_asSets[s_asNumSets++];
+            memset(s, 0, sizeof(*s));
+            AS_strcpy(s->name, setName, sizeof(s->name));
+            s->type=type; s->tbwMin=10; s->tbwMax=25; s->volMin=255; s->volMax=255; s->radius=250;
             continue;
         }
-        as_set_t* s = &s_asSets[s_asNumSets++];
-        memset(s, 0, sizeof(*s));
-        AS_strcpy(s->name, setName, sizeof(s->name));
-        s->type=type; s->tbwMin=10; s->tbwMax=25; s->volMin=255; s->volMax=255; s->radius=250;
-        for(;;){
-            tok = AS_Tok(&p,true);
-            if(!tok[0] || tok[0]=='}') break;
-            if(!AS_stricmp(tok,"loopedWave")){
-                char path[256]; snprintf(path,sizeof(path),"sound/%s.wav",AS_Tok(&p,true));
-                s->looped = SPR_S_RegisterSound(path);
-                if(s->looped < 1) bwarn("AS_ParseSets: ^3Unable to load ambient sound \"%s\"\n", path);
-            } else if(!AS_stricmp(tok,"subWaves")){
-                char prefix[128]; AS_strcpy(prefix, AS_Tok(&p,false), sizeof(prefix));
-                const char* wn;
-                while((wn=AS_Tok(&p,false))[0]){
-                    if(s->numSubWaves >= AS_MAX_SUBWAVES){ bwarn("AS_ParseSets: ^3Too many subwaves on set \"%s\"\n", s->name); break; }
-                    char path[256]; snprintf(path,sizeof(path),"sound/%s/%s.wav",prefix,wn);
-                    s->subWaves[s->numSubWaves++] = SPR_S_RegisterSound(path);
-                }
-            } else if(!AS_stricmp(tok,"volRange")){
-                s->volMin = atoi(AS_Tok(&p,false)); s->volMax = atoi(AS_Tok(&p,false));
-                if(s->volMin > s->volMax){ int t=s->volMin; s->volMin=s->volMax; s->volMax=t; }
-            } else if(!AS_stricmp(tok,"timeBetweenWaves")){
-                s->tbwMin = atoi(AS_Tok(&p,false)); s->tbwMax = atoi(AS_Tok(&p,false));
-                if(s->tbwMin > s->tbwMax){ int t=s->tbwMin; s->tbwMin=s->tbwMax; s->tbwMax=t; }
-            } else if(!AS_stricmp(tok,"radius")){
-                s->radius = atoi(AS_Tok(&p,false));
-            } else {
-                bwarn("AS_ParseSets: ^3Unknown ambient set keyword \"%s\"\n", tok);
+        if(tok[0]=='{' || tok[0]=='}') continue;         // the { } form: the block only groups the keywords
+        if(!s){ AS_SkipLine(&p); continue; }            // header lines
+        if(!AS_stricmp(tok,"loopedWave")){
+            const char* f = AS_Tok(&p,false);
+            if(f[0]) snprintf(s->loopPath,sizeof(s->loopPath),"sound/%s.wav",f);
+        } else if(!AS_stricmp(tok,"subWaves")){
+            char dir[MAX_QPATH]; AS_strcpy(dir, AS_Tok(&p,false), sizeof(dir));
+            const char* wn;
+            while((wn=AS_Tok(&p,false))[0]){
+                if(s->numSubWaves >= AS_MAX_SUBWAVES){ bwarn("AS_ParseSets: ^3Too many subwaves on set \"%s\"\n", s->name); break; }
+                snprintf(s->subPaths[s->numSubWaves++],sizeof(s->subPaths[0]),"sound/%s/%s.wav",dir,wn);
             }
+        } else if(!AS_stricmp(tok,"volRange")){
+            AS_Range(&p, &s->volMin, &s->volMax);
+            if(s->volMin < 0) s->volMin = 0;
+            if(s->volMax > 255) s->volMax = 255;
+        } else if(!AS_stricmp(tok,"timeBetweenWaves")){
+            AS_Range(&p, &s->tbwMin, &s->tbwMax);
+            if(s->tbwMin < 0) s->tbwMin = 0;
+        } else if(!AS_stricmp(tok,"radius")){
+            s->radius = atoi(AS_Tok(&p,false));
+        } else {
+            bwarn("AS_ParseSets: ^3Unknown ambient set keyword \"%s\"\n", tok);
         }
+        AS_SkipLine(&p);
     }
     FS_FreeFile(buf);
-    blog("AS_ParseFile: Parsed %d ambient set(s)\n", s_asNumSets);
+    for(int i=0;i<s_asNumPrecache;i++)                   // the sets this map names
+        for(int j=0;j<s_asNumSets;j++)
+            if(!AS_stricmp(s_asSets[j].name, s_asPrecache[i])) AS_Register(&s_asSets[j]);
+    blog("AS_ParseFile: Parsed %d ambient set(s), %d named by the map\n", s_asNumSets, s_asNumPrecache);
+    s_asNumPrecache = 0;
 }
 static void SP_AS_UpdateAmbientSet(const char* name, const float* origin){
-    as_set_t* s = AS_FindSet(name);
+    as_set_t* s = AS_FindSet(name, AS_GENERAL);
     if(!s) return;
     if(s->looped > 0 && !s_spSoundsBlocked)
-        SPR_S_AddLoopingSound(MAX_GENTITIES-1, origin, s_asZero, s->looped);   // bed on ENTITYNUM_NONE
-    if(s->numSubWaves > 0){
+        SPR_S_AddLoopingSound(MAX_GENTITIES-1, origin, s_asZero, s->looped);   // the loop on ENTITYNUM_NONE
+    if(AS_HasWaves(s)){
         int now = Sys_Milliseconds();
-        if(s->nextWave == 0)        s->nextWave = now + AS_RandInterval(s);     // delay first blip
+        if(s->nextWave == 0)        s->nextWave = now + AS_RandInterval(s);     // delay the first one-shot
         else if(now >= s->nextWave){
             int h = s->subWaves[rand()%s->numSubWaves];
-            if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(NULL, 0, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // non-positional, volRange
+            if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(NULL, 0, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // on the player
             s->nextWave = now + AS_RandInterval(s);
         }
     }
 }
+// Returns the entity's next one-shot time (the cgame keeps it in gent->setTime).
 static int SP_AS_AddLocalSet(const char* name, const float* origin, int entID, int setTime){
-    int now = Sys_Milliseconds();
-    as_set_t* s = AS_FindSet(name);
-    if(!s) return now;                                                          // retail: "retry next frame"
-    if(s->looped > 0 && entID>=0 && entID<MAX_GENTITIES && !s_spSoundsBlocked)
+    as_set_t* s = AS_FindSet(name, AS_LOCAL);
+    if(!s || entID < 0 || entID >= MAX_GENTITIES) return setTime;
+    if(entID != 0 && entID < ge->num_entities){
+        SP_View view; SP_GetView( &view );
+        if( !SP_EntInView( &view, SP_GEntity(entID) ) ) return setTime;           // behind a closed door / out of the PVS
+    }
+    if(s->looped > 0 && !s_spSoundsBlocked)
         SPR_S_AddLoopingSound(entID, origin, s_asZero, s->looped);
-    if(s->numSubWaves > 0 && now >= setTime){
-        int h = s->subWaves[rand()%s->numSubWaves];
-        if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(origin, entID, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // positional, volRange
-        return now + AS_RandInterval(s);
+    if(AS_HasWaves(s)){
+        int now = Sys_Milliseconds();
+        // first time in view, or a time from another run (a loaded save): schedule the first one-shot
+        if(setTime <= 0 || setTime > now + s->tbwMax*1000) return now + AS_RandInterval(s);
+        if(now >= setTime){
+            int h = s->subWaves[rand()%s->numSubWaves];
+            if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(origin, entID, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));
+            return now + AS_RandInterval(s);
+        }
     }
     return setTime;
 }
+// The mover sound for stage 0 start, 1 moving (looped), 2 stop, or -1 for none: G_PlayDoorSound only
+// skips on -1, so a 0 would send EV_BMODEL_SOUND with an empty sound on every door.
 static int SP_AS_GetBModelSound(const char* name, int stage){
-    as_set_t* s = AS_FindSet(name);
+    as_set_t* s = AS_FindSet(name, AS_BMODEL);
     if(s && stage>=0 && stage < s->numSubWaves && s->subWaves[stage] > 0) return s->subWaves[stage];
-    return -1;                                                                  // sentinel: no sound (door early-out; never a stale 0 handle)
+    return -1;
 }
 
 static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
@@ -1300,15 +1361,13 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     case CG_S_STARTBACKGROUNDTRACK: SPR_S_StartBackgroundTrack((const char*)P(0),(const char*)P(1)); return 0;
     // force-feedback (DirectInput joystick rumble; irrelevant on Android) -> no-op
     case CG_FF_STARTFX: case CG_FF_ENSUREFX: case CG_FF_STOPFX: case CG_FF_STOPALLFX: return 0;
-    // ambient-sound sets: real AS_* subsystem (sound/sound.txt), ported from the retail engine (see above).
+    // ambient sound sets (sound/sound.txt, see SP_AS_ParseSets above)
     case CG_AS_PARSESETS:         SP_AS_ParseSets(); return 0;
-    case CG_AS_ADDENTRY:          return 0;   // precache filter; ParseSets already registers every set's sounds
+    case CG_AS_ADDENTRY:          SP_AS_AddPrecache((const char*)P(0)); return 0;   // a set this map uses
     case CG_S_UPDATEAMBIENTSET:   SP_AS_UpdateAmbientSet((const char*)P(0),(const float*)P(1)); return 0;
     // args: 0=name 1=listener_origin 2=origin 3=entID 4=time (listener unused; engine spatializes by origin)
     case CG_S_ADDLOCALSET:        return SP_AS_AddLocalSet((const char*)P(0),(const float*)P(2),(int)A(3),(int)A(4));
-    // CG_AS_GETBMODELSOUND returns the bmodelSet subwave handle for the given stage, or -1 ("no sound") on miss.
-    // -1 (NOT 0) is required: g_mover.cpp G_PlayDoorSound only early-outs on -1; returning 0 would fire
-    // G_AddEvent(EV_BMODEL_SOUND, 0) (bogus sfx-handle-0) on every door. Retail: AS_GetBModelSound.
+    // the bmodel set's sound for a mover stage, or -1 for none (see SP_AS_GetBModelSound)
     case CG_AS_GETBMODELSOUND: return SP_AS_GetBModelSound((const char*)P(0),(int)A(1));
     case CG_R_DRAWSCREENSHOT:
         // EF1 SP 1:1: on a full-save load (g_eSavedGameJustLoaded==eFULL) CG_DrawInformation draws the saved
