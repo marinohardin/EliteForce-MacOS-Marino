@@ -63,6 +63,9 @@ Test hooks (environment variables; the launcher's are in sys_osx_launcher.m):
   VOYAGERSP_TEST_NAT=<a.b.c.d|fail>  (as for the server window) pretend the
                                 router answered that public address, or that
                                 it can't open ports; nothing is asked
+  VOYAGERSP_TEST_COOP_PORT=<n>  host on UDP port n instead of the co-op
+                                port (two test copies next to another copy
+                                that holds it; the guest joins with :n)
 ===========================================================================
 */
 
@@ -203,6 +206,15 @@ static void CoopSetInfo( char *info, const char *key, const char *value )
 	Info_SetValueForKey( info, key, clean );
 }
 
+// the port this host listens on (VOYAGERSP_TEST_COOP_PORT: see the top of this file)
+static int CoopHostPort( void )
+{
+	const char *test = getenv( "VOYAGERSP_TEST_COOP_PORT" );
+	int port = test ? atoi( test ) : 0;
+
+	return ( port > 0 && port < 65536 ) ? port : VSP_COOP_PORT;
+}
+
 static void CoopOpenSocket( void )
 {
 	struct sockaddr_in sa;
@@ -218,13 +230,13 @@ static void CoopOpenSocket( void )
 	}
 	memset( &sa, 0, sizeof( sa ) );
 	sa.sin_family = AF_INET;
-	sa.sin_port = htons( VSP_COOP_PORT );
+	sa.sin_port = htons( CoopHostPort() );
 	sa.sin_addr.s_addr = htonl( INADDR_ANY );
 	if( bind( fd, (struct sockaddr *)&sa, sizeof( sa ) ) < 0 || fcntl( fd, F_SETFL, O_NONBLOCK ) < 0 )
 	{
 		if( !coopBindFailed )
 			Com_Printf( "co-op: can't answer co-op checks, UDP port %d is in use (%s); trying again every 5 s\n",
-				VSP_COOP_PORT, strerror( errno ) );
+				CoopHostPort(), strerror( errno ) );
 		coopBindFailed = qtrue;
 		close( fd );
 		coopRetryTime = Sys_Milliseconds() + 5000;
@@ -237,7 +249,7 @@ static void CoopOpenSocket( void )
 		NSString *name = [[NSHost currentHost] localizedName];
 		Q_strncpyz( coopHostName, [name length] ? [name UTF8String] : "Mac", sizeof( coopHostName ) );
 	}
-	Com_Printf( "co-op: answering co-op checks on UDP port %d\n", VSP_COOP_PORT );
+	Com_Printf( "co-op: answering co-op checks on UDP port %d\n", CoopHostPort() );
 }
 
 static void CoopCloseSocket( void )
