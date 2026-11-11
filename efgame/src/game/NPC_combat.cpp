@@ -965,7 +965,9 @@ gentity_t *NPC_PickEnemy (gentity_t *closestTo, int enemyTeam, qboolean checkVis
 
 	if( findPlayersFirst || enemyTeam == TEAM_PLAYER )
 	{//try to find a player first
-		newenemy = COOP_NearestPlayer( NPC->currentOrigin );
+	  for ( int coopIdx = 0; coopIdx < COOP_NumPlayers(); coopIdx++ )
+	  {//co-op: either player (the closest when findClosest)
+		newenemy = COOP_PlayerByIndex( coopIdx );
 		if( newenemy->client && !(newenemy->flags & FL_NOTARGET) && !(newenemy->s.eFlags & EF_NODRAW))
 		{
 			if( newenemy->health > 0 )
@@ -1071,6 +1073,7 @@ gentity_t *NPC_PickEnemy (gentity_t *closestTo, int enemyTeam, qboolean checkVis
 				}
 			}
 		}
+	  }
 	}
 
 	if (findClosest && closestEnemy)
@@ -1410,6 +1413,9 @@ void NPC_CheckEnemy (qboolean findNew, qboolean tooFarOk)
 			G_ClearEnemy( NPC );
 		}
 	}
+
+	//co-op: fighting one player while the other is the better target
+	COOP_RethinkPlayerEnemy();
 
 	closestTo = NPC;
 	//FIXME: check your defendEnt, if you have one, see if their enemy is different 

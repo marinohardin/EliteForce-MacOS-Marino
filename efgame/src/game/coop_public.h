@@ -51,6 +51,9 @@
 #define COOP_PredictingEvents(p)	((void)0)
 #define COOP_SkipPlayerstateEvent(e)	0
 #define COOP_SkipEntityEvent(n,e)	0
+#define COOP_NoteAttacker(v,a)		((void)0)
+#define COOP_ScriptEnemy(s,e)		(e)
+#define COOP_RethinkPlayerEnemy()	((void)0)
 #define COOP_EVERYONE				NULL
 
 #else // EF_COOP
@@ -124,6 +127,15 @@ void		COOP_NoteViewMuzzle( const vec3_t origin );
 void		COOP_PredictingEvents( qboolean predicting );
 qboolean	COOP_SkipPlayerstateEvent( int event );
 qboolean	COOP_SkipEntityEvent( int num, int event );
+
+// enemies and the two players (coop_ai.cpp): NPC_Pain notes which player hurt an NPC; a script
+// that names player 1 as an NPC's enemy gets the player that provoked it (or the nearer one,
+// Q3_SetEnemy); an NPC fighting one player turns on the other when that one is clearly the
+// better target (NPC_CheckEnemy, NPC_FindEnemy; uses the NPC globals)
+void		COOP_NoteAttacker( gentity_t *victim, gentity_t *attacker );
+gentity_t	*COOP_ScriptEnemy( gentity_t *self, gentity_t *enemy );
+void		COOP_RethinkPlayerEnemy( void );
+void		COOP_TakePlayerEnemy( gentity_t *other );
 
 // the shooter's third-person setting (game code reads the host cgame's cvar for it)
 int			COOP_ThirdPerson( const gentity_t *e );

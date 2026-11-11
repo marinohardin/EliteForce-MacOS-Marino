@@ -25,6 +25,7 @@ void COOP_Init( void )
 	coop_replica = ( sp_coop->integer == 2 );
 	coop_p2Num = -1;
 	COOP_ReplicaInit();
+	COOP_AIInit();
 	memset( &coop_p2, 0, sizeof( coop_p2 ) );
 	coop_p2.follow = qtrue;
 	COOP_ReadCarry();
@@ -40,7 +41,7 @@ void COOP_Init( void )
 
 static const char *coop_commands[] = {
 	"coop_p2", "coop_p2_follow", "coop_p2_move", "coop_p2_turn", "coop_p2_fire", "coop_p2_use",
-	"coop_p2_weapon", "coop_p2_tele", "coop_p2_damage", "coop_p2_target",
+	"coop_p2_weapon", "coop_p2_tele", "coop_p2_damage", "coop_p2_target", "coop_p2_npcs", "coop_p2_npc", "coop_p2_aim",
 };
 
 extern void cgi_AddCommand( const char *cmdName );
@@ -72,6 +73,10 @@ The M0 puppet controls (host console; reached through the game's ClientCommand):
 	coop_p2_damage <n> [fall]        hurt P2 by n (test death and respawn; fall: as falling damage)
 	coop_p2_target <n|npc> [amp] [ms] (tests) put entity n (or the nearest NPC) in front of P2's view, swaying side to side
 	                                 amp units over a period of ms; "coop_p2_target off" lets it go
+	coop_p2_aim <n>                  (tests) turn player 2's view to entity n's chest
+	coop_p2_npcs [radius]            (tests) the NPCs near either player and their enemies
+	coop_p2_npc spawn <type> [name]  (tests) the game's "npc" console command (spawn, kill...),
+	                                 which single player doesn't reach otherwise
 */
 qboolean COOP_ConsoleCommand( const char *cmd )
 {
@@ -85,6 +90,17 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 	{
 		coop_p2.follow = ( gi.argc() < 2 ) ? !coop_p2.follow : ( atoi( gi.argv( 1 ) ) != 0 );
 		gi.Printf( "co-op: player 2 follow %s\n", coop_p2.follow ? "on" : "off" );
+		return qtrue;
+	}
+	if ( !Q_stricmp( cmd, "coop_p2_npcs" ) )
+	{
+		COOP_ListNPCs();
+		return qtrue;
+	}
+	if ( !Q_stricmp( cmd, "coop_p2_npc" ) )
+	{
+		extern void Svcmd_NPC_f( void );
+		Svcmd_NPC_f();	// reads its arguments from 1 on, like "npc"
 		return qtrue;
 	}
 	if ( !ent )
@@ -116,6 +132,21 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 		{
 			coop_p2.haveAngles = qtrue;
 			VectorSet( coop_p2.viewAngles, atof( gi.argv( 2 ) ), atof( gi.argv( 1 ) ), 0 );
+		}
+	}
+	else if ( !Q_stricmp( cmd, "coop_p2_aim" ) )
+	{
+		int n = atoi( gi.argv( 1 ) );
+		if ( n > 0 && n < globals.num_entities && g_entities[n].inuse )
+		{
+			vec3_t eye, spot, dir;
+			VectorCopy( ent->client->ps.origin, eye );
+			eye[2] += ent->client->ps.viewheight;
+			VectorAdd( g_entities[n].absmin, g_entities[n].absmax, spot );
+			VectorScale( spot, 0.5f, spot );
+			VectorSubtract( spot, eye, dir );
+			vectoangles( dir, coop_p2.viewAngles );
+			coop_p2.haveAngles = qtrue;
 		}
 	}
 	else if ( !Q_stricmp( cmd, "coop_p2_fire" ) )

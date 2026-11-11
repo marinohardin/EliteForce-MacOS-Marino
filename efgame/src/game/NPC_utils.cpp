@@ -1103,6 +1103,9 @@ qboolean NPC_FindEnemy( void )
 	if ( ( ValidEnemy( NPC->enemy ) ) && ( NPC->svFlags & SVF_LOCKEDENEMY ) )
 		return qtrue;
 
+	//co-op: fighting one player while the other is the better target
+	COOP_RethinkPlayerEnemy();
+
 	//See if the player is closer than our current enemy
 	if ( NPC_CheckPlayerDistance() )
 		return qtrue;

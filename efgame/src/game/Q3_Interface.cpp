@@ -2475,6 +2475,7 @@ static void Q3_SetEnemy( int entID, const char *name )
 		{
 			if(ent->NPC)
 			{
+				enemy = COOP_ScriptEnemy( ent, enemy );	// co-op: "the player" may be player 2
 				G_SetEnemy( ent, enemy );
 				ent->cantHitEnemyCounter = 0;
 			}

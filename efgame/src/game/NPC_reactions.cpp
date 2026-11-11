@@ -85,6 +85,17 @@ static void NPC_CheckAttacker( gentity_t *other )
 			break;
 		}
 
+#ifdef EF_COOP
+		// co-op: fighting one player and shot by the other: turn on the shooter (same odds)
+		if ( COOP_Active() && COOP_IsPlayer( NPC->enemy ) )
+		{
+			if ( random() > luckThreshold )
+			{
+				COOP_TakePlayerEnemy( other );
+			}
+			return;
+		}
+#endif
 		//Randomly pick up the target
 		if ( random() > luckThreshold )
 		{
@@ -263,6 +274,8 @@ void NPC_Pain( gentity_t *self, gentity_t *other, int damage )
 
 	if ( other == self ) 
 		return;
+
+	COOP_NoteAttacker( self, other );
 
 	//MCG: Ignore damage from your own team for now
 	if ( other->client )

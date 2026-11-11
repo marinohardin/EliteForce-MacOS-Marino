@@ -53,6 +53,8 @@ int			COOP_TakeShotTime( void );					// coop_predict.cpp
 void		COOP_LagRecord( void );						// coop_lagcomp.cpp
 void		COOP_TestTargetFrame( void );
 qboolean	COOP_TestTargetCommand( void );
+void		COOP_AIInit( void );						// coop_ai.cpp
+void		COOP_ListNPCs( void );
 void		COOP_ReplicaInit( void );					// coop_replica.cpp				// a guest is connected, steering or not
 
 #endif // COOP_LOCAL_H
