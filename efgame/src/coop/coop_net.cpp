@@ -31,6 +31,12 @@ const char *COOP_GuestName( void )
 	return name ? name : "";
 }
 
+const char *COOP_GuestSex( void )
+{
+	const char *sex = coop_bridge.GuestSex ? coop_bridge.GuestSex() : NULL;
+	return sex ? sex : "";
+}
+
 qboolean COOP_GuestConnected( void )
 {
 	return coop_bridge.GuestConnected ? coop_bridge.GuestConnected() : qfalse;

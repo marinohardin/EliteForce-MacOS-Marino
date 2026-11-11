@@ -24,6 +24,11 @@ The Single Player card gets a "Co-op…" button. Its sheet has:
     network address); the friend opens it, and the launcher's link handler
     (sys_osx_launcher.m) opens this sheet with the address filled in and
     checked.
+  - "Your name" (both sides): the player's name in co-op messages ("Hold Use
+    to revive ..."), the coop_name cvar; it starts as this Mac's name. Join
+    also has "Munro: Male / Female" for how player 2 looks on both screens
+    (coop_sex). Both are kept in the app's preferences like the sheet's other
+    choices.
   - An optional password: the host's (a guest must give it) on the Host side,
     the one to send on the Join side. It is handed to the engine directly
     (Sys_CoopSetLaunchPassword), never on the command line or in the log.
@@ -37,6 +42,7 @@ answers one connectionless query, polled once a frame from Com_Frame:
      coopProtocol, version (the app's), hostname (the Mac's name), state
      (playing / menu), map, mission (the level's title), skill (g_spskill),
      players, maxPlayers, time (seconds of game time on the level),
+     player (the host player's name, coop_name),
      needPassword (1 when the host set a password), guest (1 while a guest is
      connected) and the challenge (up to 32 letters, digits, - or _ of the
      query; nothing else of a query is ever sent back).
@@ -245,11 +251,16 @@ static void CoopOpenSocket( void )
 	coopSocket = fd;
 	coopRetryTime = 0;
 	coopBindFailed = qfalse;
+	Sys_CoopMacName( coopHostName, sizeof( coopHostName ) );
+	Com_Printf( "co-op: answering co-op checks on UDP port %d\n", CoopHostPort() );
+}
+
+void Sys_CoopMacName( char *out, int size )
+{
 	@autoreleasepool {
 		NSString *name = [[NSHost currentHost] localizedName];
-		Q_strncpyz( coopHostName, [name length] ? [name UTF8String] : "Mac", sizeof( coopHostName ) );
+		Q_strncpyz( out, [name length] ? [name UTF8String] : "Mac", size );
 	}
-	Com_Printf( "co-op: answering co-op checks on UDP port %d\n", CoopHostPort() );
 }
 
 static void CoopCloseSocket( void )
@@ -295,6 +306,8 @@ static BOOL CoopAnswer( const char *packet, int len, const struct sockaddr_in *f
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
 	CoopSetInfo( info, "version", EF_APP_VERSION );
 	CoopSetInfo( info, "hostname", coopHostName );
+	if( Cvar_VariableString( "coop_name" )[0] )
+		CoopSetInfo( info, "player", Cvar_VariableString( "coop_name" ) );
 	CoopSetInfo( info, "state", playing ? "playing" : "menu" );
 	if( playing )
 	{
@@ -383,6 +396,8 @@ void Sys_CoopFrame( void )
 		registered = YES;
 		Cvar_Get( "coop_connect", "", CVAR_TEMP );
 		Cvar_Get( "coop_password", "", CVAR_TEMP );
+		Cvar_Get( "coop_name", "", CVAR_TEMP );		// "Your name" (empty: this Mac's name)
+		Cvar_Get( "coop_sex", "", CVAR_TEMP );		// a guest's Munro: male / female (empty: like the host's)
 		coop_backgroundPlay = Cvar_Get( "coop_backgroundPlay", "1", CVAR_ARCHIVE );
 		CoopNet_AddCommands();
 	}
@@ -786,6 +801,35 @@ static BOOL coopHostChosen;
 static BOOL coopHostBackground = YES;	// Host: "Keep playing in the background" (coop_backgroundPlay)
 #define COOP_BACKGROUND_DEFAULT	@"CoopKeepPlayingInBackground"
 static NSString *coopJoinAddress;	// Connect: the host's "address:port"
+#define COOP_NAME_DEFAULT	@"CoopPlayerName"
+#define COOP_SEX_DEFAULT	@"CoopGuestMunro"		// @"male" / @"female"
+static NSString *coopPlayerName;	// Host / Connect: "Your name" (coop_name), already safe
+static NSString *coopGuestSex;		// Connect: @"male" / @"female" (coop_sex)
+
+// A name the game can show and the command line can carry: letters turned into plain ASCII,
+// without quotes, \ ; % or control characters, spaces squeezed, at most COOP_NAME_MAX characters
+static NSString *CoopSafeName( NSString *name )
+{
+	NSString *ascii = [name stringByApplyingTransform: @"Any-Latin; Latin-ASCII" reverse: NO];
+	NSMutableString *out = [NSMutableString string];
+
+	for( NSUInteger i = 0; i < [ascii length] && [out length] < COOP_NAME_MAX; i++ )
+	{
+		unichar c = [ascii characterAtIndex: i];
+		if( c < ' ' || c > '~' || c == '"' || c == '\\' || c == ';' || c == '%' )
+			continue;
+		if( c == ' ' && ( ![out length] || [out hasSuffix: @" "] ) )
+			continue;
+		[out appendFormat: @"%C", c];
+	}
+	return [out stringByTrimmingCharactersInSet: [NSCharacterSet whitespaceCharacterSet]];
+}
+
+static NSString *CoopMacName( void )
+{
+	NSString *n = CoopSafeName( [[NSHost currentHost] localizedName] ?: @"" );
+	return [n length] ? n : @"Mac";
+}
 
 @interface VSPCoopController : NSObject <NSTextFieldDelegate>
 @property (nonatomic, strong) NSWindow *panel;
@@ -835,6 +879,8 @@ static NSString *CoopSkillName( NSString *skill )
 	NSTextField *internetStatus;
 	NSButton *inviteButton;
 	NSButton *backgroundCheck;
+	NSTextField *nameField;
+	NSSegmentedControl *sexControl;
 }
 
 - (instancetype)initWithLauncher: (id)launcher
@@ -844,6 +890,31 @@ static NSString *CoopSkillName( NSString *skill )
 	_launcher = launcher;
 	[self build];
 	return self;
+}
+
+// "Your name", for both Host and Join
+- (NSView *)nameRow
+{
+	NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey: COOP_NAME_DEFAULT];
+	NSTextField *hint;
+
+	nameField = [NSTextField textFieldWithString: [CoopSafeName( saved ?: @"" ) length] ? CoopSafeName( saved ) : CoopMacName()];
+	[nameField setPlaceholderString: CoopMacName()];
+	[[nameField widthAnchor] constraintEqualToConstant: 220].active = YES;
+	[nameField setToolTip: @"Shown to the other player in co-op messages, such as “Hold Use to revive …”"];
+	hint = VSP_Label( [NSString stringWithFormat: @"up to %d letters", COOP_NAME_MAX], [NSFont systemFontOfSize: 11],
+		[NSColor secondaryLabelColor] );
+	return CoopStack( @[ VSP_Label( @"Your name", [NSFont systemFontOfSize: 12], nil ), nameField, hint ],
+		NSUserInterfaceLayoutOrientationHorizontal, 8 );
+}
+
+// the name to play with (the Mac's when the field is empty), remembered for next time
+- (void)takeName
+{
+	NSString *n = CoopSafeName( [nameField stringValue] );
+
+	[[NSUserDefaults standardUserDefaults] setObject: n forKey: COOP_NAME_DEFAULT];
+	coopPlayerName = [n length] ? n : CoopMacName();
 }
 
 - (NSView *)hostGroup
@@ -919,7 +990,7 @@ static NSString *CoopSkillName( NSString *skill )
 	NSTextField *later = VSP_WrapLabel( @"Connect starts single player and joins the host’s game as player 2: you see "
 		@"it from player 2’s eyes and play player 2 while the host plays the story.",
 		[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
-	NSStackView *line, *result, *texts, *bottom, *col, *pass;
+	NSStackView *line, *result, *texts, *bottom, *col, *pass, *munro;
 
 	[later setPreferredMaxLayoutWidth: 380];
 	_address = [NSTextField textFieldWithString: @""];
@@ -957,6 +1028,13 @@ static NSString *CoopSkillName( NSString *skill )
 	[[joinPassword widthAnchor] constraintEqualToConstant: 160].active = YES;
 	pass = CoopStack( @[ VSP_Label( @"Password", [NSFont systemFontOfSize: 12], nil ), joinPassword ],
 		NSUserInterfaceLayoutOrientationHorizontal, 8 );
+	sexControl = [NSSegmentedControl segmentedControlWithLabels: @[ @"Male", @"Female" ]
+		trackingMode: NSSegmentSwitchTrackingSelectOne target: nil action: nil];
+	[sexControl setSelectedSegment: [[[NSUserDefaults standardUserDefaults] stringForKey: COOP_SEX_DEFAULT]
+		isEqualToString: @"female"] ? 1 : 0];
+	[sexControl setToolTip: @"How player 2 looks on both screens. The story still speaks to the host’s Munro."];
+	munro = CoopStack( @[ VSP_Label( @"Munro", [NSFont systemFontOfSize: 12], nil ), sexControl ],
+		NSUserInterfaceLayoutOrientationHorizontal, 8 );
 
 	connectButton = [NSButton buttonWithTitle: @"Connect" target: self action: @selector(connect:)];
 	[connectButton setEnabled: NO];
@@ -964,7 +1042,8 @@ static NSString *CoopSkillName( NSString *skill )
 	[[connectButton widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
 	bottom = CoopStack( @[ connectButton, later ], NSUserInterfaceLayoutOrientationHorizontal, 10 );
 	[bottom setAlignment: NSLayoutAttributeTop];
-	col = CoopStack( @[ line, pass, result, bottom ], NSUserInterfaceLayoutOrientationVertical, 12 );
+	col = CoopStack( @[ line, CoopStack( @[ pass, munro ], NSUserInterfaceLayoutOrientationHorizontal, 24 ), result, bottom ],
+		NSUserInterfaceLayoutOrientationVertical, 12 );
 	return VSP_Group( @"JOIN", col );
 }
 
@@ -994,14 +1073,14 @@ static NSString *CoopSkillName( NSString *skill )
 	root = CoopStack( @[ head,
 		VSP_WrapLabel( @"Play the campaign with a friend. The host is player 1 and plays the story; the friend joins as player 2.",
 			[NSFont systemFontOfSize: 12], [NSColor secondaryLabelColor] ),
-		[self hostGroup], [self joinGroup], footer ], NSUserInterfaceLayoutOrientationVertical, 12 );
+		[self nameRow], [self hostGroup], [self joinGroup], footer ], NSUserInterfaceLayoutOrientationVertical, 12 );
 	[(NSTextField *)[root views][1] setPreferredMaxLayoutWidth: 520];
 	[root setCustomSpacing: 4 afterView: head];
-	[root setCustomSpacing: 18 afterView: [root views][3]];
+	[root setCustomSpacing: 18 afterView: [root views][4]];
 	[root setEdgeInsets: NSEdgeInsetsMake( 18, 20, 20, 20 )];
 	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
 	[content addSubview: root];
-	for( NSView *v in @[ [root views][2], [root views][3], footer ] )
+	for( NSView *v in @[ [root views][3], [root views][4], footer ] )
 		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -40].active = YES;
 	[NSLayoutConstraint activateConstraints: @[
 		[[root leadingAnchor] constraintEqualToAnchor: [content leadingAnchor]],
@@ -1106,6 +1185,8 @@ static NSString *CoopDescribe( NSDictionary *info )
 	[lines addObject: [NSString stringWithFormat: @"Players: %d of %d%@", MAX( players, 1 ), maxPlayers > 0 ? maxPlayers : 2,
 		[info[@"guest"] isEqualToString: @"1"] ? @" (the host, and a friend as player 2: the game is full)" :
 		players >= 2 ? @" (the host, and player 2 as a stand-in on the host’s Mac until a friend joins)" : @" (the host)"]];
+	if( [info[@"player"] length] )
+		[lines addObject: [NSString stringWithFormat: @"Host: %@", CoopSafeName( info[@"player"] )]];
 	if( [info[@"needPassword"] isEqualToString: @"1"] )
 		[lines addObject: @"The host set a password."];
 	[lines addObject: [NSString stringWithFormat: @"Host’s app: Elite Force for Mac %@ · co-op version %@",
@@ -1179,8 +1260,10 @@ static NSString *CoopDescribe( NSDictionary *info )
 	coopJoinAddress = nil;
 	coopHostBackground = [backgroundCheck state] == NSControlStateValueOn;
 	[[NSUserDefaults standardUserDefaults] setBool: coopHostBackground forKey: COOP_BACKGROUND_DEFAULT];
+	[self takeName];
 	Sys_CoopSetLaunchPassword( [[hostPassword stringValue] UTF8String] );
-	LLog( @"Co-op: hosting (single player with sp_coop 1)%@", [[hostPassword stringValue] length] ? @", with a password" : @"" );
+	LLog( @"Co-op: hosting (single player with sp_coop 1) as %@%@", coopPlayerName,
+		[[hostPassword stringValue] length] ? @", with a password" : @"" );
 	[l selectMode: 0];
 	[l play: nil];
 }
@@ -1213,8 +1296,12 @@ static NSString *CoopDescribe( NSDictionary *info )
 	[[_panel sheetParent] endSheet: _panel returnCode: NSModalResponseOK];
 	coopHostChosen = NO;
 	coopJoinAddress = foundAddress;
+	[self takeName];
+	coopGuestSex = [sexControl selectedSegment] == 1 ? @"female" : @"male";
+	[[NSUserDefaults standardUserDefaults] setObject: coopGuestSex forKey: COOP_SEX_DEFAULT];
 	Sys_CoopSetLaunchPassword( [[joinPassword stringValue] UTF8String] );
-	LLog( @"Co-op: joining %@ as player 2 (single player with coop_connect)", coopJoinAddress );
+	LLog( @"Co-op: joining %@ as player 2 (single player with coop_connect), %@, %@ Munro", coopJoinAddress,
+		coopPlayerName, coopGuestSex );
 	[l selectMode: 0];
 	[l play: nil];
 }
@@ -1363,6 +1450,12 @@ void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch )
 		// "1.2.3.4:29760" from the Check (inet_ntop and a port): nothing to quote, but keep it so
 		NSCharacterSet *bad = [[NSCharacterSet characterSetWithCharactersInString: @"0123456789.:"] invertedSet];
 		if( [coopJoinAddress rangeOfCharacterFromSet: bad].location == NSNotFound )
-			[args appendFormat: @"+set coop_connect \"%@\" ", coopJoinAddress];
+			[args appendFormat: @"+set coop_connect \"%@\" +set coop_sex %@ ", coopJoinAddress,
+				[coopGuestSex isEqualToString: @"female"] ? @"female" : @"male"];
 	}
+	else
+		return;
+	// (CoopSafeName: no quotes or anything else that could end the argument)
+	if( [coopPlayerName length] )
+		[args appendFormat: @"+set coop_name \"%@\" ", CoopSafeName( coopPlayerName )];
 }

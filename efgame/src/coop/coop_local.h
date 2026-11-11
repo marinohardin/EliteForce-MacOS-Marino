@@ -39,6 +39,9 @@ gentity_t	*COOP_P2( void );						// P2's entity or NULL
 qboolean	COOP_FindSpotNear( gentity_t *p1, vec3_t out );
 void		COOP_PlaceP2( gentity_t *ent, const vec3_t org );	// move without a lerp
 void		COOP_SpawnP2( void );
+void		COOP_UpdateP2Look( gentity_t *ent );		// the guest's Munro and name (coop_look.cpp)
+void		COOP_RegisterP2Sounds( clientInfo_t *ci );	// its own voice, whatever the host's sex
+const char	*COOP_HostName( void );					// P1's name in co-op messages
 void		COOP_ApplyHidden( gentity_t *ent, qboolean hidden );
 void		COOP_CameraRejoin( gentity_t *ent );		// coop_cutscene.cpp
 void		COOP_ReadCarry( void );						// coop_inventory.cpp
@@ -47,6 +50,7 @@ void		COOP_CacheForSave( void );
 void		COOP_PublishInfo( void );					// coop_info.cpp
 qboolean	COOP_GuestCmd( usercmd_t *cmd );			// coop_net.cpp
 const char	*COOP_GuestName( void );
+const char	*COOP_GuestSex( void );					// "male", "female", or "" (look like P1)
 qboolean	COOP_GuestConnected( void );
 int			COOP_GuestViewTime( void );
 int			COOP_TakeShotTime( void );					// coop_predict.cpp

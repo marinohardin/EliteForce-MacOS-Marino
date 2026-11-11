@@ -109,8 +109,7 @@ static const char *COOP_PlayerName( int idx )
 		const char *g = COOP_GuestConnected() ? COOP_GuestName() : "";
 		return g[0] ? g : "Player 2";
 	}
-	gentity_t *p1 = &g_entities[0];
-	return ( p1->client && p1->client->pers.netname[0] ) ? p1->client->pers.netname : "Player 1";
+	return COOP_HostName();
 }
 
 // a status line on one player's screen (coop_hud.cpp) (player 2's only while a guest shows it)

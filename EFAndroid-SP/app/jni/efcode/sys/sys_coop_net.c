@@ -15,8 +15,10 @@ Connecting (out-of-band text packets, "\xff\xff\xff\xff" then a word, a
 newline and an infostring or a sentence):
   guest -> host  coopConnect   coopProtocol, version, paks (the loaded .pk3
                                files single player reads, as count-hash), name, password,
-                               nonce (the guest's, echoed back)
-  host -> guest  coopAccept    session, nonce, hostname, map, state
+                               nonce (the guest's, echoed back), and optionally sex
+                               (male / female: how player 2 looks; without it, like
+                               player 1)
+  host -> guest  coopAccept    session, nonce, hostName (the host player's name), map, state
                  coopReject    a sentence for the guest's console
 The host takes one guest. The app version, co-op protocol and .pk3 files must
 match, and the password too when the host set one (coop_password, or the
@@ -225,6 +227,50 @@ static void CoopSetInfo( char *info, const char *key, const char *value )
 static void CoopGetInfo( const char *info, const char *key, char *out, int size )
 {
 	Q_strncpyz( out, Info_ValueForKey( info, key ), size );
+}
+
+// A player's name as the game shows it: printable ASCII without \ ; " or %, no spaces at
+// either end, at most size - 1 (COOP_NAME_MAX) characters
+static void CoopCleanName( const char *in, char *out, int size )
+{
+	int n = 0;
+
+	for ( ; *in && n < size - 1; in++ )
+	{
+		unsigned char c = (unsigned char)*in;
+		if ( c < ' ' || c > '~' || c == '\\' || c == ';' || c == '"' || c == '%' )
+			continue;
+		if ( c == ' ' && ( !n || out[n - 1] == ' ' ) )
+			continue;
+		out[n++] = (char)c;
+	}
+	while ( n && out[n - 1] == ' ' )
+		n--;
+	out[n] = 0;
+}
+
+// this player's name for the other side: coop_name, else the Mac's name
+static void CoopOwnName( char *out, int size )
+{
+	char raw[128];
+
+	Q_strncpyz( raw, Cvar_VariableString( "coop_name" ), sizeof( raw ) );
+	CoopCleanName( raw, out, size );
+	if ( !out[0] )
+	{
+		Sys_CoopMacName( raw, sizeof( raw ) );
+		CoopCleanName( raw, out, size );
+	}
+}
+
+// "male" / "female" from what a player chose (coop_sex), "" for anything else
+static const char *CoopSexValue( const char *s )
+{
+	if ( !Q_stricmp( s, "female" ) || !Q_stricmp( s, "f" ) )
+		return "female";
+	if ( !Q_stricmp( s, "male" ) || !Q_stricmp( s, "m" ) )
+		return "male";
+	return "";
 }
 
 // a sentence received from the other side, made printable
@@ -828,6 +874,7 @@ static struct {
 	struct sockaddr_in	addr;
 	unsigned			session;
 	char				name[32];
+	char				sex[8];			// "male", "female", or "" (look like player 1)
 	char				nonce[24];
 	int					lastHeard;		// Sys_Milliseconds of the guest's last packet
 	int					lastStatus;
@@ -871,7 +918,11 @@ static qboolean CoopSameAddress( const struct sockaddr_in *a, const struct socka
 
 static void CoopHostStateInfo( char *info )
 {
-	qboolean playing = SP_IsActive() && SP_CurMap()[0];
+	qboolean	playing = SP_IsActive() && SP_CurMap()[0];
+	char		hostName[COOP_NAME_MAX + 1];
+
+	CoopOwnName( hostName, sizeof( hostName ) );
+	CoopSetInfo( info, "hostName", hostName );
 
 	CoopSetInfo( info, "state", playing ? "playing" : "menu" );
 	if ( playing )
@@ -904,6 +955,7 @@ static void CoopHostDrop( int sock, const char *reason, qboolean tell )
 	coopHost.appliedSeq = 0;
 	coopHost.viewTime = 0;
 	coopHost.name[0] = 0;
+	coopHost.sex[0] = 0;
 	CoopRingFree( &coopHost.ring );
 	coopHost.building = NULL;
 }
@@ -916,7 +968,8 @@ static void CoopHostReject( int sock, const struct sockaddr_in *from, const char
 
 static void CoopHostConnect( int sock, const char *request, const struct sockaddr_in *from )
 {
-	char	protocol[16], version[64], paks[64], ourPaks[64], name[32], password[128], ourPassword[128], nonce[24];
+	char	protocol[16], version[64], paks[64], ourPaks[64], rawName[128], name[32], password[128], ourPassword[128], nonce[24];
+	char	sex[16];
 	char	info[MAX_INFO_STRING];
 	int		now = Sys_Milliseconds();
 
@@ -932,7 +985,9 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	CoopGetInfo( request, "coopProtocol", protocol, sizeof( protocol ) );
 	CoopGetInfo( request, "version", version, sizeof( version ) );
 	CoopGetInfo( request, "paks", paks, sizeof( paks ) );
-	CoopGetInfo( request, "name", name, sizeof( name ) );
+	CoopGetInfo( request, "name", rawName, sizeof( rawName ) );
+	CoopCleanName( rawName, name, sizeof( name ) );
+	CoopGetInfo( request, "sex", sex, sizeof( sex ) );		// (optional: a guest without it looks like player 1)
 	CoopGetInfo( request, "password", password, sizeof( password ) );
 	CoopGetInfo( request, "nonce", nonce, sizeof( nonce ) );
 	if ( !name[0] )
@@ -986,6 +1041,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	coopHost.active = qtrue;
 	coopHost.session = CoopNewSession();
 	Q_strncpyz( coopHost.name, name, sizeof( coopHost.name ) );
+	Q_strncpyz( coopHost.sex, CoopSexValue( sex ), sizeof( coopHost.sex ) );
 	Q_strncpyz( coopHost.nonce, nonce, sizeof( coopHost.nonce ) );
 	coopHost.lastHeard = now;
 	coopHost.lastStatus = now;
@@ -1010,7 +1066,8 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	CoopSetInfo( info, "nonce", nonce );
 	CoopHostStateInfo( info );
 	CoopSendOOB( sock, from, COOP_ACCEPT, info );
-	Com_Printf( "co-op: %s joined from %s as player 2\n", coopHost.name, CoopAddressString( from ) );
+	Com_Printf( "co-op: %s joined from %s as player 2%s\n", coopHost.name, CoopAddressString( from ),
+		coopHost.sex[0] ? va( " (%s)", coopHost.sex ) : "" );
 }
 
 static void CoopHostInput( msg_t *msg )
@@ -1221,6 +1278,12 @@ int CoopNet_GuestViewTime( void )
 const char *CoopNet_GuestName( void )
 {
 	return coopHost.active ? coopHost.name : "";
+}
+
+// how the guest wants player 2 to look: "male", "female", or "" (like player 1, or no guest)
+const char *CoopNet_GuestSex( void )
+{
+	return coopHost.active ? coopHost.sex : "";
 }
 
 /*
@@ -1497,22 +1560,18 @@ static void CoopGuestStop( const char *why, qboolean tell )
 
 static void CoopGuestSendConnect( void )
 {
-	char	info[MAX_INFO_STRING], paks[64], name[64];
+	char	info[MAX_INFO_STRING], paks[64], name[COOP_NAME_MAX + 1];
+	const char *sex = CoopSexValue( Cvar_VariableString( "coop_sex" ) );
 
 	CoopPakSignature( paks, sizeof( paks ) );
-	Q_strncpyz( name, Cvar_VariableString( "coop_name" ), sizeof( name ) );
-	if ( !name[0] && gethostname( name, sizeof( name ) ) == 0 )
-	{
-		char *dot = strstr( name, ".local" );
-		if ( dot )
-			*dot = 0;
-	}
-	name[sizeof( name ) - 1] = 0;
+	CoopOwnName( name, sizeof( name ) );
 	info[0] = 0;
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
 	CoopSetInfo( info, "version", EF_APP_VERSION );
 	CoopSetInfo( info, "paks", paks );
 	CoopSetInfo( info, "name", name[0] ? name : "Player 2" );
+	if ( sex[0] )
+		CoopSetInfo( info, "sex", sex );
 	CoopSetInfo( info, "nonce", coopGuest.nonce );
 	if ( Sys_CoopPassword()[0] )
 		CoopSetInfo( info, "password", Sys_CoopPassword() );
@@ -1707,7 +1766,7 @@ static void CoopGuestReceive( void )
 
 		if ( ( rest = CoopOOBText( data, (int)n, COOP_ACCEPT, text, sizeof( text ) ) ) != NULL )
 		{
-			char nonce[24], sessionText[16];
+			char nonce[24], sessionText[16], rawName[128], hostName[COOP_NAME_MAX + 1];
 
 			if ( coopGuest.state != COOP_GUEST_CONNECTING )
 				continue;
@@ -1719,7 +1778,10 @@ static void CoopGuestReceive( void )
 			coopGuest.state = COOP_GUEST_CONNECTED;
 			coopGuest.lastHeard = Sys_Milliseconds();
 			coopGuest.statStart = coopGuest.lastHeard;
-			Com_Printf( "co-op: joined %s as player 2\n", CoopAddressString( &coopGuest.host ) );
+			CoopGetInfo( rest, "hostName", rawName, sizeof( rawName ) );
+			CoopCleanName( rawName, hostName, sizeof( hostName ) );
+			Com_Printf( "co-op: joined %s%s%s as player 2\n", hostName[0] ? hostName : "", hostName[0] ? " at " : "",
+				CoopAddressString( &coopGuest.host ) );
 			CoopGuestHostState( rest );
 			continue;
 		}

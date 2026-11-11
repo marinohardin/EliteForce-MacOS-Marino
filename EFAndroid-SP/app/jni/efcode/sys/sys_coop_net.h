@@ -27,6 +27,9 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 // looking at, for its shots)
 #define VSP_COOP_PROTOCOL	6
 
+// the longest player name co-op sends (coop_name; the launcher's "Your name")
+#define COOP_NAME_MAX		31
+
 // the biggest co-op packet (fits a usual Ethernet/Wi-Fi MTU with room to spare)
 #define COOP_MAX_PACKET		1400
 
@@ -64,6 +67,8 @@ int			CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *f
 int			CoopNet_GuestViewTime( void );
 // the guest's name, "" without a guest
 const char	*CoopNet_GuestName( void );
+// how the guest wants player 2 to look: "male", "female", or "" (like player 1, or no guest)
+const char	*CoopNet_GuestSex( void );
 
 // The host's replica frames (sp/sp_bridge.cpp, after every game frame while a guest is here):
 // Begin returns 0 when no guest wants one; then every slot that isn't empty, then End sends it.
@@ -103,6 +108,8 @@ int			CoopNet_GuestActive( void );
 // stay out of the command line and the launcher's log). The coop_password cvar wins when set.
 void		Sys_CoopSetLaunchPassword( const char *password );
 const char	*Sys_CoopPassword( void );
+// this Mac's name as the Finder shows it ("Mac" when there is none), for a player without coop_name
+void		Sys_CoopMacName( char *out, int size );
 
 #endif // EF_COOP
 

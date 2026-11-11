@@ -154,7 +154,8 @@ void COOP_ApplyHidden( gentity_t *ent, qboolean hidden )
 /*
 COOP_SetupP2
 
-Fresh client state for P2 at org, facing yaw. Looks like P1 (same models). Weapons are shared
+Fresh client state for P2 at org, facing yaw. Looks like P1 (same models), or the guest's
+choice of Munro (COOP_UpdateP2Look). Weapons are shared
 (P1's plus whatever P2 had); a respawn keeps P2's ammo, a first spawn copies P1's.
 */
 static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean respawn )
@@ -186,7 +187,6 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	cl->pers.localClient = qtrue;			// never dropped for inactivity
 	cl->pers.maxHealth = COOP_P2_HEALTH;
 	cl->pers.enterTime = level.time;
-	Q_strncpyz( cl->pers.netname, "Player 2", sizeof( cl->pers.netname ) );
 	cl->playerTeam = TEAM_STARFLEET;
 	cl->crouchheight = CROUCH_MAXS_2;
 	cl->standheight = DEFAULT_MAXS_2;
@@ -238,6 +238,7 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	VectorSet( angles, 0, yaw, 0 );
 	SetClientViewAngle( ent, angles );
 
+	COOP_UpdateP2Look( ent );			// (the netname too: the guest's, or "Player 2")
 	G_InitBoltOnData( ent );
 	PlayerStateToEntityState( &cl->ps, &ent->s );
 	gi.linkentity( ent );
@@ -468,6 +469,7 @@ void COOP_RunFrame( void )
 		}
 		return;
 	}
+	COOP_UpdateP2Look( ent );		// a guest came or went, or P1 changed clothes
 	// the cgame sets the eye point only while it draws P2; weapons fire from it
 	VectorCopy( ent->client->ps.origin, ent->client->renderInfo.eyePoint );
 	ent->client->renderInfo.eyePoint[2] += ent->client->ps.viewheight;

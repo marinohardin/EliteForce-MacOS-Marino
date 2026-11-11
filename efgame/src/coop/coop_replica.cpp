@@ -394,6 +394,7 @@ static gNPC_t		*rep_npcs[MAX_GENTITIES];
 static parms_t		*rep_parms[MAX_GENTITIES];
 static byte			rep_needMedia[MAX_GENTITIES];	// a client whose models this cgame hasn't registered
 static int			rep_weapon[MAX_GENTITIES];		// the weapon last registered for a client
+static qboolean		rep_p2Voice;	// player 2's own voice is registered (not the cgame's NPC way)
 
 static gclient_t *REP_Client( int num )
 {
@@ -657,6 +658,7 @@ static void REP_ApplyDone( qboolean cgameUp )
 {
 	if ( !cgameUp )
 	{
+		rep_p2Voice = qfalse;
 		rep_soundPendingCount = 0;
 		return;		// CG_Init registers every client's media itself
 	}
@@ -677,6 +679,18 @@ static void REP_ApplyDone( qboolean cgameUp )
 				CG_RegisterNPCCustomSounds( &ent->client->clientInfo );
 				CG_RegisterNPCEffects( ent->client->playerTeam );
 			}
+			if ( i == coop_p2Num )
+			{
+				rep_p2Voice = qfalse;
+			}
+		}
+		// player 2 (the guest's Munro, male or female): its voice's own sounds, also after the
+		// cgame's start registered them the NPC way (that follows this copy's own sex setting)
+		if ( i == coop_p2Num && !rep_p2Voice && ent->client->clientInfo.customBasicSoundDir &&
+			ent->client->clientInfo.customBasicSoundDir[0] )
+		{
+			rep_p2Voice = qtrue;
+			COOP_RegisterP2Sounds( &ent->client->clientInfo );
 		}
 		if ( ent->client->ps.weapon != rep_weapon[i] )
 		{

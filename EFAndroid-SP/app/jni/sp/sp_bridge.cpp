@@ -136,6 +136,7 @@ extern "C" {
     int         CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *forwardmove,
                                     signed char *rightmove, signed char *upmove );
     const char *CoopNet_GuestName( void );
+    const char *CoopNet_GuestSex( void );
     int         CoopNet_HostHasGuest( void );
     int         CoopNet_GuestViewTime( void );
 }
@@ -151,7 +152,7 @@ static qboolean SP_CoopGuestConnected( void ){ return CoopNet_HostHasGuest() ? q
 static void SP_CoopSetBridge( void ){
     typedef void (*coopSetBridge_t)( const coopBridge_t * );
     static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName, SP_CoopGuestConnected,
-                                   CoopNet_GuestViewTime };
+                                   CoopNet_GuestViewTime, CoopNet_GuestSex };
     coopSetBridge_t set = (coopSetBridge_t)dlsym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
     if( set ) set( &bridge );
 }

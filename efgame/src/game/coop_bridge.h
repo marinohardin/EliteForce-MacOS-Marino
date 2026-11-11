@@ -7,7 +7,7 @@
 #ifndef COOP_BRIDGE_H
 #define COOP_BRIDGE_H
 
-#define COOP_BRIDGE_VERSION	3
+#define COOP_BRIDGE_VERSION	4
 
 typedef struct
 {
@@ -22,6 +22,8 @@ typedef struct
 	// the host level time the guest's screen showed when it made the command GuestCmd returned
 	// last (player 2's shots are checked against the world as it was then); 0 when unknown
 	int			(*GuestViewTime)( void );
+	// how the guest wants player 2 to look: "male", "female", or "" (like player 1, or no guest)
+	const char	*(*GuestSex)( void );
 } coopBridge_t;
 
 extern "C" void COOP_SetBridge( const coopBridge_t *bridge );
