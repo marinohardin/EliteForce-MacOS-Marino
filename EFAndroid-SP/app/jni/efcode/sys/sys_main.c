@@ -225,11 +225,39 @@ static char *Sys_PIDFileName( const char *gamedir )
 Sys_RemovePIDFile
 =================
 */
+// The PID file belongs to the copy that wrote it. A second copy running at the
+// same time on the same data folder (a co-op guest next to its host, single
+// player next to Holomatch) leaves it alone: before, it overwrote the file, and
+// whichever copy quit first deleted the other's, so a later start could find a
+// dead copy's PID and ask about an abnormal exit that never happened.
+static qboolean sys_pidFileOwned = qfalse;
+
+// the PID in the file, 0 if there's none (no file, empty, unreadable)
+static int Sys_ReadPIDFile( const char *pidFile, qboolean *exists )
+{
+	char	pidBuffer[ 64 ] = { 0 };
+	FILE	*f;
+	int		n;
+
+	*exists = qfalse;
+	if( pidFile == NULL || ( f = Sys_FOpen( pidFile, "r" ) ) == NULL )
+		return 0;
+	*exists = qtrue;
+	n = fread( pidBuffer, sizeof( char ), sizeof( pidBuffer ) - 1, f );
+	fclose( f );
+	return n > 0 ? atoi( pidBuffer ) : 0;
+}
+
 void Sys_RemovePIDFile( const char *gamedir )
 {
-	char *pidFile = Sys_PIDFileName( gamedir );
+	char		*pidFile = Sys_PIDFileName( gamedir );
+	qboolean	exists;
 
-	if( pidFile != NULL )
+	if( pidFile == NULL || !sys_pidFileOwned )
+		return;
+	sys_pidFileOwned = qfalse;
+	// only our own: another copy may have taken it over since (it saw ours gone)
+	if( Sys_ReadPIDFile( pidFile, &exists ) == Sys_PID() )
 		Sys_Remove( pidFile );
 }
 
@@ -244,27 +272,19 @@ static qboolean Sys_WritePIDFile( const char *gamedir )
 {
 	char      *pidFile = Sys_PIDFileName( gamedir );
 	FILE      *f;
-	qboolean  stale = qfalse;
+	qboolean  stale = qfalse, exists;
+	int       pid;
 
 	if( pidFile == NULL )
 		return qfalse;
 
 	// First, check if the pid file is already there
-	if( ( f = Sys_FOpen( pidFile, "r" ) ) != NULL )
+	pid = Sys_ReadPIDFile( pidFile, &exists );
+	if( exists )
 	{
-		char  pidBuffer[ 64 ] = { 0 };
-		int   pid;
-
-		pid = fread( pidBuffer, sizeof( char ), sizeof( pidBuffer ) - 1, f );
-		fclose( f );
-
-		if(pid > 0)
-		{
-			pid = atoi( pidBuffer );
-			if( !Sys_PIDIsRunning( pid ) )
-				stale = qtrue;
-		}
-		else
+		if( pid > 0 && pid != Sys_PID() && Sys_PIDIsRunning( pid ) )
+			return qfalse;	// another running copy's: leave it to that copy
+		if( pid != Sys_PID() )
 			stale = qtrue;
 	}
 
@@ -276,6 +296,7 @@ static qboolean Sys_WritePIDFile( const char *gamedir )
 	{
 		fprintf( f, "%d", Sys_PID( ) );
 		fclose( f );
+		sys_pidFileOwned = qtrue;
 	}
 	else
 		Com_Printf( S_COLOR_YELLOW "Couldn't write %s.\n", pidFile );
