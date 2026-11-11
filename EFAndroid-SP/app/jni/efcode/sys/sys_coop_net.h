@@ -23,8 +23,9 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 // bumped whenever co-op's network messages change; host and guest must match
 // (1: the M0 check only; 2: M1, a guest can connect; 3: the guest mirrors the host's world;
 // 4: one guest command per host frame, acknowledged for prediction; 5: the guest says which host
-// level it has up, movies, cutscene skips)
-#define VSP_COOP_PROTOCOL	5
+// level it has up, movies, cutscene skips; 6: each guest command says what host time the guest was
+// looking at, for its shots)
+#define VSP_COOP_PROTOCOL	6
 
 // the biggest co-op packet (fits a usual Ethernet/Wi-Fi MTU with room to spare)
 #define COOP_MAX_PACKET		1400
@@ -58,6 +59,9 @@ void		CoopNet_AddCommands( void );
 // like a usercmd's.
 int			CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *forwardmove,
 				signed char *rightmove, signed char *upmove );
+// the host level time the guest's screen showed when it made the command CoopNet_GuestInput
+// returned last (its shots are checked against the world as it was then); 0 when unknown
+int			CoopNet_GuestViewTime( void );
 // the guest's name, "" without a guest
 const char	*CoopNet_GuestName( void );
 
@@ -65,6 +69,8 @@ const char	*CoopNet_GuestName( void );
 // Begin returns 0 when no guest wants one; then every slot that isn't empty, then End sends it.
 int			CoopNet_HostFrameBegin( int levelId, int levelTime, const char *map );
 void		CoopNet_HostFrameSlot( int slot, const void *data, int len );
+// ...or the slot as it was in the frame before (qfalse: there it was empty, or there is none)
+qboolean	CoopNet_HostFrameSlotKeep( int slot );
 void		CoopNet_HostFrameEnd( void );
 
 // The guest's replica frames, for sp/sp_bridge.cpp: the newest one put together (0: none yet),
@@ -81,9 +87,10 @@ void		CoopNet_GuestLevelReady( int levelId );
 // coming for another reason (a load, the network); 0 it plays
 int			CoopNet_GuestHostPaused( void );
 // this player's command for one host frame, numbered by the bridge (a frame's ackCmd is the
-// newest of these the host applied); sent at once; 0 when this player has no input now
+// newest of these the host applied), with the host level time its screen showed (viewTime); sent
+// at once; 0 when this player has no input now
 int			CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
-				int forwardmove, int rightmove, int upmove );
+				int forwardmove, int rightmove, int upmove, int viewTime );
 
 // The guest. Once a frame (sys_osx_coop.m, before anything of the host): connects when
 // the coop_connect cvar names a host, sends this player's input, disconnects when the

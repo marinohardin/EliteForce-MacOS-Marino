@@ -526,6 +526,7 @@ gentity_t *G_TempEntity( vec3_t origin, int event ) {
 	e->classname = "tempEntity";
 	e->eventTime = level.time;
 	e->freeAfterEvent = qtrue;
+	COOP_TagTempEntity( e );
 
 	VectorCopy( origin, snapped );
 	SnapVector( snapped );		// save network bandwidth

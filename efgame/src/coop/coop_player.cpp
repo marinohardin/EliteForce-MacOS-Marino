@@ -327,6 +327,7 @@ static qboolean COOP_GuestBuildCmd( gentity_t *ent, usercmd_t *cmd )
 	}
 	*cmd = g;
 	cmd->serverTime = level.time;
+	coop_p2.shotViewTime = COOP_GuestViewTime();
 	// a weapon P2 doesn't have (or none: the guest isn't in a level) keeps P2's
 	if ( g.weapon <= WP_NONE || g.weapon >= WP_NUM_WEAPONS || !( cl->ps.stats[STAT_WEAPONS] & ( 1 << g.weapon ) ) )
 	{
@@ -353,6 +354,7 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 		coop_p2.weapon = 0;
 		return;
 	}
+	coop_p2.shotViewTime = 0;
 	if ( coop_p2.moveFrames > 0 )
 	{
 		coop_p2.guestSteering = qfalse;	// the console moved P2's view: re-base when the guest is back
@@ -484,11 +486,16 @@ void COOP_EndFrame( void )
 {
 	gentity_t *ent;
 
-	if ( !coop_enabled || ( ent = COOP_P2() ) == NULL )
+	if ( !coop_enabled )
 	{
 		return;
 	}
-	ClientEndFrame( ent );
+	if ( ( ent = COOP_P2() ) != NULL )
+	{
+		ClientEndFrame( ent );
+	}
+	COOP_TestTargetFrame();
+	COOP_LagRecord();
 }
 
 qboolean COOP_P2ThinkGate( gentity_t *ent, usercmd_t *ucmd )

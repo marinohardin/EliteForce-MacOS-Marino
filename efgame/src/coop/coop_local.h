@@ -30,6 +30,7 @@ typedef struct
 
 	// the guest's input (coop_net.cpp) steers P2; its view angles were re-based on the guest's
 	qboolean	guestSteering;
+	int			shotViewTime;		// the host time the guest's screen showed for this command (0: not the guest's)
 } coopP2State_t;
 
 extern coopP2State_t	coop_p2;
@@ -47,6 +48,11 @@ void		COOP_PublishInfo( void );					// coop_info.cpp
 qboolean	COOP_GuestCmd( usercmd_t *cmd );			// coop_net.cpp
 const char	*COOP_GuestName( void );
 qboolean	COOP_GuestConnected( void );
+int			COOP_GuestViewTime( void );
+int			COOP_TakeShotTime( void );					// coop_predict.cpp
+void		COOP_LagRecord( void );						// coop_lagcomp.cpp
+void		COOP_TestTargetFrame( void );
+qboolean	COOP_TestTargetCommand( void );
 void		COOP_ReplicaInit( void );					// coop_replica.cpp				// a guest is connected, steering or not
 
 #endif // COOP_LOCAL_H

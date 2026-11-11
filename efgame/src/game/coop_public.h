@@ -42,6 +42,15 @@
 #define COOP_OnPickup(i,p)			((void)0)
 #define COOP_OnScriptWeapon(e,w)	((void)0)
 #define COOP_CacheForNextLevel()	((void)0)
+#define COOP_ShotStart(e,a)			((void)0)
+#define COOP_ShotEnd()				((void)0)
+#define COOP_TagTempEntity(e)		((void)0)
+#define COOP_PredictShot(c,a)		((void)0)
+#define COOP_SkipHostShot(s,e)		0
+#define COOP_NoteViewMuzzle(o)		((void)0)
+#define COOP_PredictingEvents(p)	((void)0)
+#define COOP_SkipPlayerstateEvent(e)	0
+#define COOP_SkipEntityEvent(n,e)	0
 #define COOP_EVERYONE				NULL
 
 #else // EF_COOP
@@ -98,6 +107,23 @@ void		COOP_OnDirectSound( int entNum, int channel, const char *path );
 void		COOP_OnScriptWeapon( gentity_t *ent, int wp );
 // G_ChangeMap: keep P2's health, armor and ammo for the next level
 void		COOP_CacheForNextLevel( void );
+
+// FireWeapon (coop_lagcomp.cpp): player 2's instant-hit shots, steered by a guest, are traced against
+// the world as the guest saw it; its temp entities name it (COOP_TagTempEntity, from G_TempEntity)
+void		COOP_ShotStart( gentity_t *ent, qboolean alt );
+void		COOP_ShotEnd( void );
+void		COOP_TagTempEntity( gentity_t *tent );
+
+// the guest's cgame (coop_predict.cpp): player 2's shots drawn when the guest fires
+// (CG_FireWeapon), the host's effects of them left out (CG_EntityEvent), and where the view
+// weapon's flash is (CG_AddViewWeapon)
+void		COOP_PredictShot( centity_t *cent, qboolean alt );
+qboolean	COOP_SkipHostShot( const entityState_t *es, int event );
+void		COOP_NoteViewMuzzle( const vec3_t origin );
+// a replica's player events: the ones its own moves make come from its prediction, the rest from the host
+void		COOP_PredictingEvents( qboolean predicting );
+qboolean	COOP_SkipPlayerstateEvent( int event );
+qboolean	COOP_SkipEntityEvent( int num, int event );
 
 // the shooter's third-person setting (game code reads the host cgame's cvar for it)
 int			COOP_ThirdPerson( const gentity_t *e );

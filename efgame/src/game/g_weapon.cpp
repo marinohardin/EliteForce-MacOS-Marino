@@ -3012,6 +3012,7 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 
 	ent->alt_fire = alt_fire;
 	CalcMuzzlePoint ( ent, _forward, vright, up, muzzle , 0);
+	COOP_ShotStart( ent, alt_fire );
 
 	// fire the specific weapon
 	switch( ent->s.weapon ) 
@@ -3159,6 +3160,7 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 	default:
 		break;
 	}
+	COOP_ShotEnd();
 }
 
 //DETPACK

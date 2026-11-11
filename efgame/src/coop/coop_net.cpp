@@ -35,3 +35,8 @@ qboolean COOP_GuestConnected( void )
 {
 	return coop_bridge.GuestConnected ? coop_bridge.GuestConnected() : qfalse;
 }
+
+int COOP_GuestViewTime( void )
+{
+	return coop_bridge.GuestViewTime ? coop_bridge.GuestViewTime() : 0;
+}

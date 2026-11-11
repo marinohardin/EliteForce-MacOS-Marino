@@ -242,6 +242,38 @@ Host
 ==============================================================================
 */
 
+// Fields that change every game frame without mattering to the guest, left out of the images
+// (measured with coop_netstats 2): an idle NPC's images otherwise differ every frame only in its
+// command and think times and in the points its cgame works out when it draws the model. The
+// guest runs no game frames, and its cgame works the drawing points out again itself, so it keeps
+// its own (REP_KeepDrawn).
+static void REP_MaskClient( gclient_t *cl, qboolean viewer )
+{
+	renderInfo_t *ri = &cl->renderInfo;
+
+	if ( !viewer )
+	{
+		cl->ps.commandTime = 0;		// (player 2's: the guest's snapshot sets it from its own commands)
+	}
+	memset( &cl->pers.lastCommand, 0, sizeof( cl->pers.lastCommand ) );
+	memset( &cl->usercmd, 0, sizeof( cl->usercmd ) );
+	VectorClear( cl->pers.cmd_angles );
+	cl->lastCmdTime = 0;
+	cl->inactivityTime = 0;
+	cl->airOutTime = 0;
+	VectorClear( ri->muzzlePoint );
+	ri->mPCalcTime = 0;
+	VectorClear( ri->headPoint );
+	VectorClear( ri->headAngles );
+	VectorClear( ri->torsoPoint );
+	VectorClear( ri->torsoAngles );
+	VectorClear( ri->eyePoint );
+	VectorClear( ri->eyeAngles );
+	VectorClear( ri->lastHeadAngles );
+	ri->legsFrame = 0;
+	ri->torsoFrame = 0;
+}
+
 static int REP_WriteEntity( int num, unsigned char *buf, int size )
 {
 	gentity_t	*ent;
@@ -265,16 +297,28 @@ static int REP_WriteEntity( int num, unsigned char *buf, int size )
 	{
 		gentity_t temp = *ent;
 		temp.client = NULL;		// the client goes in a chunk of its own (P1's, P2's and NPCs' alike)
+		// game-only times and bounds (the guest links the entity again, which works out absmin/absmax)
+		temp.eventTime = 0;
+		VectorClear( temp.absmin );
+		VectorClear( temp.absmax );
+		VectorClear( temp.lastOrigin );
+		if ( ent->client )
+		{
+			temp.nextthink = 0;	// (players and NPCs think every frame; a few effects' events read it)
+		}
 		EnumerateFields( savefields_gEntity, (byte *)&temp, 'GENT', sizeof( temp ) );
 	}
 	if ( ent->NPC )
 	{
 		gNPC_t npc = *ent->NPC;
+		memset( &npc.last_ucmd, 0, sizeof( npc.last_ucmd ) );
+		npc.nextBStateThink = 0;
 		EnumerateFields( savefields_gNPC, (byte *)&npc, 'GNPC', sizeof( npc ) );
 	}
 	if ( ent->client )
 	{
 		gclient_t client = *ent->client;
+		REP_MaskClient( &client, COOP_IsP2( ent ) );
 		EnumerateFields( savefields_gClient, (byte *)&client, 'GCLI', sizeof( client ) );
 	}
 	if ( ent->parms )
@@ -365,6 +409,23 @@ static gclient_t *REP_Client( int num )
 	return rep_clients[num];
 }
 
+// the points and angles the cgame works out when it draws a client (the host leaves them out:
+// REP_MaskClient); the guest's own from its last drawing stay
+static void REP_KeepDrawn( renderInfo_t *to, const renderInfo_t *from )
+{
+	VectorCopy( from->muzzlePoint, to->muzzlePoint );
+	to->mPCalcTime = from->mPCalcTime;
+	VectorCopy( from->headPoint, to->headPoint );
+	VectorCopy( from->headAngles, to->headAngles );
+	VectorCopy( from->torsoPoint, to->torsoPoint );
+	VectorCopy( from->torsoAngles, to->torsoAngles );
+	VectorCopy( from->eyePoint, to->eyePoint );
+	VectorCopy( from->eyeAngles, to->eyeAngles );
+	VectorCopy( from->lastHeadAngles, to->lastHeadAngles );
+	to->legsFrame = from->legsFrame;
+	to->torsoFrame = from->torsoFrame;
+}
+
 // the guest's registered media for a client, kept while its models stay the same
 static void REP_KeepMedia( clientInfo_t *to, const clientInfo_t *from )
 {
@@ -437,6 +498,10 @@ static void REP_ApplyEntity( int num, const unsigned char *data, int len )
 		gclient_t	*fresh = (gclient_t *)gi.Malloc( sizeof( gclient_t ) );		// big: not on the stack
 
 		EvaluateFields( savefields_gClient, (byte *)fresh, (byte *)cl, 'GCLI', sizeof( gclient_t ), qtrue );
+		if ( ent->inuse && ent->client == cl )
+		{
+			REP_KeepDrawn( &fresh->renderInfo, &cl->renderInfo );
+		}
 		if ( cl->clientInfo.infoValid && ent->inuse && ent->client == cl && REP_SameModels( &fresh->renderInfo, &cl->renderInfo ) )
 		{
 			REP_KeepMedia( &fresh->clientInfo, &cl->clientInfo );
@@ -674,6 +739,51 @@ void COOP_ReplicaInit( void )
 	rep_soundSynced = qfalse;
 }
 
+// An entity player 2 can't see (outside the potentially visible set from its eyes) and is far
+// enough not to hear goes every REP_FAR_EVERY frames; the guest keeps its last image meanwhile and
+// draws nothing of it anyway. The players, everything during a camera (the view is elsewhere), and
+// anything player 2 may see or hear go every frame. A new entity, or one that went away, always goes
+// at once (the engine sends a slot that appeared or emptied in any case).
+#define REP_FAR_EVERY		10		// frames (half a second)
+#define REP_HEAR_DIST		1024
+
+static int REP_SendEvery( int num )
+{
+	gentity_t	*ent, *p2 = COOP_P2();
+	vec3_t		eye, center;
+
+	if ( num <= 0 || num >= globals.num_entities || !p2 || p2->s.number == num || in_camera ||
+		( g_skippingcin && g_skippingcin->integer ) )
+	{
+		return 1;
+	}
+	ent = &g_entities[num];
+	if ( !ent->inuse )
+	{
+		return 1;
+	}
+	if ( !ent->client && !ent->linked )
+	{
+		return REP_FAR_EVERY;	// not in the world: nothing to see
+	}
+	VectorCopy( p2->currentOrigin, eye );
+	eye[2] += p2->client ? p2->client->ps.viewheight : 0;
+	if ( ent->bmodel )
+	{
+		VectorAdd( ent->absmin, ent->absmax, center );
+		VectorScale( center, 0.5f, center );
+	}
+	else
+	{
+		VectorCopy( ent->currentOrigin, center );
+	}
+	if ( DistanceSquared( eye, center ) < REP_HEAR_DIST * REP_HEAR_DIST || gi.inPVS( eye, center ) )
+	{
+		return 1;
+	}
+	return REP_FAR_EVERY;
+}
+
 static const coopReplica_t coop_replicaExport = {
 	COOP_REPLICA_VERSION,
 	REP_WriteEntity,
@@ -682,6 +792,8 @@ static const coopReplica_t coop_replicaExport = {
 	REP_ApplyEntity,
 	REP_ApplyDone,
 	REP_ViewEntity,
+	REP_SendEvery,
+	COOP_TakeShotTime,
 };
 
 extern "C" __attribute__((visibility("default"))) const coopReplica_t *COOP_GetReplica( void )

@@ -137,6 +137,7 @@ extern "C" {
                                     signed char *rightmove, signed char *upmove );
     const char *CoopNet_GuestName( void );
     int         CoopNet_HostHasGuest( void );
+    int         CoopNet_GuestViewTime( void );
 }
 static qboolean SP_CoopGuestCmd( usercmd_t *cmd ){
     int angles[3], buttons = 0, weapon = 0; signed char fwd = 0, side = 0, up = 0;
@@ -149,7 +150,8 @@ static qboolean SP_CoopGuestCmd( usercmd_t *cmd ){
 static qboolean SP_CoopGuestConnected( void ){ return CoopNet_HostHasGuest() ? qtrue : qfalse; }
 static void SP_CoopSetBridge( void ){
     typedef void (*coopSetBridge_t)( const coopBridge_t * );
-    static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName, SP_CoopGuestConnected };
+    static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName, SP_CoopGuestConnected,
+                                   CoopNet_GuestViewTime };
     coopSetBridge_t set = (coopSetBridge_t)dlsym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
     if( set ) set( &bridge );
 }
@@ -2306,7 +2308,12 @@ static void SP_CoopHostFrame( void ){
     static int warned;
     if( !g_coopRep || g_coopReplica || !g_spActive ) return;
     if( !CoopNet_HostFrameBegin( g_coopLevelId, g_levelTime, g_curMap ) ) return;
+    static unsigned frameCount = 0;
+    frameCount++;
     for( int i = 0; i < ge->num_entities && i < COOP_SLOT_CS; i++ ){
+        // one player 2 can't see or hear: its last image again, but a fresh one now and then
+        int every = g_coopRep->SendEvery( i );
+        if( every > 1 && ( frameCount + i ) % every && CoopNet_HostFrameSlotKeep( i ) ) continue;
         int n = g_coopRep->WriteEntity( i, buf, sizeof(buf) );
         if( n > 0 ) CoopNet_HostFrameSlot( i, buf, n );
         else if( n < 0 && !warned ){ warned = 1; bwarn("co-op: entity %d's image is too big; not sent\n", i); }
@@ -2437,14 +2444,23 @@ static int       g_coopSeqAt = 0;   // when the last command was made (Sys_Milli
 static int       g_coopHostPaused = 0;  // the host's game isn't going on (CoopNet_GuestHostPaused)
 static int       g_coopPausedSince = 0; // ...and how far into its frame the guest's command was then
 static usercmd_t g_coopCmds[COOP_CMDS];
+// What the guest's screen showed, in the host's level time, for the host's check of its shots
+// (co-op lag compensation): the frame the cgame's predicted shot was aimed in, if that came after
+// the last command went; else the newest drawn (a shot of this command that the cgame predicts once
+// it has gone is aimed in that one).
+static int       g_coopDrawnTime = 0;   // the cgame time of the last drawn frame
+static int       g_coopSentView = 0;    // ...as sent with the last command
 static void SP_CoopMakeCmd( void ){
     usercmd_t c = g_lastcmd;
     c.buttons |= g_coopBtn;
     int an[3] = { c.angles[0], c.angles[1], c.angles[2] };
+    int shotTime = g_coopRep ? g_coopRep->TakeShotTime() : 0;
+    int viewTime = ( shotTime > g_coopSentView || ( shotTime && g_coopSentView - shotTime > 1000 ) ) ? shotTime : g_coopDrawnTime;   // (or a new level)
     g_coopSeqAt = Sys_Milliseconds();
-    if( !CoopNet_GuestQueueCmd( g_coopSeq + 1, an, c.buttons, c.weapon, c.forwardmove, c.rightmove, c.upmove ) ) return;
+    if( !CoopNet_GuestQueueCmd( g_coopSeq + 1, an, c.buttons, c.weapon, c.forwardmove, c.rightmove, c.upmove, viewTime ) ) return;
     g_coopSeq++;
     g_coopBtn = 0;
+    g_coopSentView = viewTime;
     c.serverTime = g_coopSeq * SP_SV_FRAMEMSEC;
     g_coopCmds[g_coopSeq & (COOP_CMDS-1)] = c;
 }
@@ -2525,6 +2541,7 @@ static void SP_CoopReplicaDrawFrame( int stereo ){
     s_spSoundsBlocked = ( paused || skipping ) ? 1 : 0; s_spSkipDraw = skipping;
     SP_UpdateVisemes();
     SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+    g_coopDrawnTime = cgTime;
     s_spSkipDraw = 0;
     if( skipping ){
         SP_DrawSkipProgress();

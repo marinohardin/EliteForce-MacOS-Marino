@@ -7,7 +7,7 @@
 #ifndef COOP_BRIDGE_H
 #define COOP_BRIDGE_H
 
-#define COOP_BRIDGE_VERSION	2
+#define COOP_BRIDGE_VERSION	3
 
 typedef struct
 {
@@ -19,6 +19,9 @@ typedef struct
 	const char	*(*GuestName)( void );
 	// a guest is connected (it may still have no fresh input: menu, console, loading)
 	qboolean	(*GuestConnected)( void );
+	// the host level time the guest's screen showed when it made the command GuestCmd returned
+	// last (player 2's shots are checked against the world as it was then); 0 when unknown
+	int			(*GuestViewTime)( void );
 } coopBridge_t;
 
 extern "C" void COOP_SetBridge( const coopBridge_t *bridge );
@@ -27,7 +30,7 @@ extern "C" void COOP_SetBridge( const coopBridge_t *bridge );
 // guest (sp_coop 2) writes the host's images into its own entities. The engine moves the images
 // (efcode/sys/sys_coop_net.c: changes against what the guest acknowledged, compressed). The bridge
 // looks up COOP_GetReplica in the game module; a game without co-op has none.
-#define COOP_REPLICA_VERSION	1
+#define COOP_REPLICA_VERSION	3
 
 typedef struct
 {
@@ -44,6 +47,12 @@ typedef struct
 	void		(*ApplyDone)( qboolean cgameUp );
 	// guest: the entity this machine views from (player 2), -1 while there is none
 	int			(*ViewEntity)( void );
+	// host: how often entity num's image is worth sending, in frames (1: every frame; more for one
+	// player 2 can neither see nor hear, whose last image the guest keeps meanwhile)
+	int			(*SendEvery)( int num );
+	// guest: the time of the drawn frame player 2's newest shot was aimed in (the positions its
+	// cgame traced it against), once; 0 when it fired none since the last call
+	int			(*TakeShotTime)( void );
 } coopReplica_t;
 
 extern "C" const coopReplica_t *COOP_GetReplica( void );

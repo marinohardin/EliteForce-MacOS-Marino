@@ -680,6 +680,7 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 		VectorCopy(flash.origin, cent->gent->client->renderInfo.muzzlePoint);
 		cent->gent->client->renderInfo.mPCalcTime = cg.time;
 	}
+	COOP_NoteViewMuzzle( flash.origin );
 }
 
 /*
@@ -1179,6 +1180,7 @@ void CG_FireWeapon( centity_t *cent, qboolean alt_fire )
 			cgi_S_StartSound( NULL, ent->number, CHAN_WEAPON, weap->flashSound );
 		}
 	}
+	COOP_PredictShot( cent, alt_fire );
 }
 
 /*

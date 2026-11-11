@@ -502,7 +502,9 @@ void CG_PredictPlayerState( void ) {
 		cg.time, cg.predicted_player_state.origin );
 
 	// fire events and other transition triggered things
+	COOP_PredictingEvents( qtrue );
 	CG_TransitionPlayerState( &cg.predicted_player_state, &oldPlayerState );
+	COOP_PredictingEvents( qfalse );
 }
 
 

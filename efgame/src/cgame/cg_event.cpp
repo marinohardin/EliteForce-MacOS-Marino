@@ -2,6 +2,7 @@
 
 #include "cg_local.h"
 #include "cg_media.h"
+#include "../game/coop_public.h"
 #include "../game/anims.h"
 
 extern void CG_TryPlayCustomSound( vec3_t origin, int entityNum, soundChannel_t channel, const char *soundName, int customSoundSet );
@@ -144,6 +145,10 @@ void CG_EntityEvent( centity_t *cent, vec3_t position ) {
 	if ( !cent->gent )//|| !cent->gent->client )
 	{
 		return;
+	}
+	if ( COOP_SkipHostShot( es, event ) )
+	{
+		return;		// a co-op guest showed this shot of its own already
 	}
 
 	//ci = &cent->gent->client->clientInfo;
@@ -1172,6 +1177,10 @@ void CG_CheckEvents( centity_t *cent ) {
 		if ( ( cent->currentState.event & ~EV_EVENT_BITS ) == 0 ) {
 			return;
 		}
+	}
+
+	if ( COOP_SkipEntityEvent( cent->currentState.number, cent->currentState.event & ~EV_EVENT_BITS ) ) {
+		return;
 	}
 
 	// calculate the position at exactly the frame time

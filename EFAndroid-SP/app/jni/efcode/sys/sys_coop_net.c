@@ -65,6 +65,8 @@ Console:
   coop_kick                       (host) drop the guest
   coop_status                     what co-op's connection is doing
   coop_password                   (a cvar) the host's password / the one sent
+  coop_netstats 1 / 2             bytes and time every 5 s / and what changes most
+  coop_simlatency <ms>, coop_simloss <percent>   (cvars, tests) a slow or lossy network
 ===========================================================================
 */
 
@@ -134,6 +136,7 @@ typedef struct {
 	int				buttons;
 	int				weapon;
 	signed char		forwardmove, rightmove, upmove;
+	int				viewTime;			// the host level time the guest's screen showed (its shots)
 } coopCmd_t;
 
 typedef struct {
@@ -237,14 +240,78 @@ static void CoopCleanText( const char *in, char *out, int size )
 	out[n] = 0;
 }
 
-static void CoopSendTo( int sock, const struct sockaddr_in *to, const void *data, int len )
+static void CoopSendNow( int sock, const struct sockaddr_in *to, const void *data, int len )
 {
-	if ( sock < 0 || len <= 0 )
-		return;
 	if ( to )
 		sendto( sock, data, len, 0, (const struct sockaddr *)to, sizeof( *to ) );
 	else
 		send( sock, data, len, 0 );		// a connected socket (the guest's)
+}
+
+/*
+A bad network, for tests: coop_simlatency <ms> holds every packet this copy sends that long
+(set it on both copies for a round trip of twice that), and coop_simloss <percent> drops that
+share of them. Both are 0 (off) unless set.
+*/
+#define COOP_SIM_QUEUE	1024
+
+typedef struct {
+	int					due;			// Sys_Milliseconds
+	int					sock;
+	qboolean			haveTo;
+	struct sockaddr_in	to;
+	int					len;
+	byte				data[COOP_MAX_PACKET];
+} coopSimPacket_t;
+
+static coopSimPacket_t	*coopSim;		// a ring, allocated when first used
+static int				coopSimHead, coopSimCount;
+
+static void CoopSimFlush( void )
+{
+	int now = Sys_Milliseconds();
+
+	while ( coopSimCount )
+	{
+		coopSimPacket_t *p = &coopSim[coopSimHead];
+		if ( p->due - now > 0 )
+			break;
+		CoopSendNow( p->sock, p->haveTo ? &p->to : NULL, p->data, p->len );
+		coopSimHead = ( coopSimHead + 1 ) % COOP_SIM_QUEUE;
+		coopSimCount--;
+	}
+}
+
+static void CoopSendTo( int sock, const struct sockaddr_in *to, const void *data, int len )
+{
+	int delay, loss;
+
+	if ( sock < 0 || len <= 0 )
+		return;
+	delay = Cvar_VariableIntegerValue( "coop_simlatency" );
+	loss = Cvar_VariableIntegerValue( "coop_simloss" );
+	if ( loss > 0 && (int)( arc4random() % 100 ) < loss )
+		return;
+	if ( delay <= 0 || len > COOP_MAX_PACKET )
+	{
+		CoopSendNow( sock, to, data, len );
+		return;
+	}
+	if ( !coopSim && !( coopSim = calloc( COOP_SIM_QUEUE, sizeof( *coopSim ) ) ) )
+		return;
+	if ( coopSimCount == COOP_SIM_QUEUE )
+		return;		// a full queue loses the packet, as a full router would
+	{
+		coopSimPacket_t *p = &coopSim[( coopSimHead + coopSimCount ) % COOP_SIM_QUEUE];
+		p->due = Sys_Milliseconds() + MIN( delay, 2000 );
+		p->sock = sock;
+		p->haveTo = to != NULL;
+		if ( to )
+			p->to = *to;
+		p->len = len;
+		memcpy( p->data, data, len );
+		coopSimCount++;
+	}
 }
 
 static void CoopSendOOB( int sock, const struct sockaddr_in *to, const char *word, const char *text )
@@ -531,6 +598,113 @@ static void CoopEncodeFrame( coopBuf_t *out, const coopFrame_t *f, const coopFra
 	CoopBufByte( out, 0xff );
 }
 
+/*
+=================
+CoopChangeStats
+
+coop_netstats 2 (host): which parts of the images change from one frame to the next, to
+find what costs bytes. An entity's or the globals' image is the game's chunks back to back
+([id][length][data], the save format); each changed 4-byte word is counted under its chunk and
+offset (the struct's own offset: the chunks are the structs the save code writes). Printed
+with the other numbers every 5 seconds, the 24 most often changed words first.
+=================
+*/
+#define COOP_STAT_CHUNKS	12
+#define COOP_STAT_WORDS		8192
+static unsigned	coopStatIds[COOP_STAT_CHUNKS];
+static int		(*coopStatWord)[COOP_STAT_WORDS];		// [COOP_STAT_CHUNKS], allocated when first used
+static int		coopStatChunkBytes[COOP_STAT_CHUNKS + 1];	// + other slots (configstrings, commands)
+
+static void CoopChangeStats( const coopFrame_t *f, const coopFrame_t *prev )
+{
+	if ( !coopStatWord && !( coopStatWord = calloc( COOP_STAT_CHUNKS, sizeof( *coopStatWord ) ) ) )
+		return;
+	for ( int slot = 0; slot < COOP_NUM_SLOTS; slot++ )
+	{
+		const byte	*nb = f->data + f->ofs[slot], *pb = prev->data + prev->ofs[slot];
+		int			nl = f->len[slot], pl = prev->len[slot], pos = 0;
+
+		if ( !nl || !pl || ( nl == pl && !memcmp( nb, pb, nl ) ) )
+			continue;
+		if ( slot >= COOP_SLOT_CS && slot != COOP_SLOT_GLOBALS )
+		{
+			coopStatChunkBytes[COOP_STAT_CHUNKS] += nl;
+			continue;
+		}
+		while ( pos + 8 <= nl && pos + 8 <= pl )
+		{
+			unsigned	id, pid;
+			int			len, plen, c;
+
+			memcpy( &id, nb + pos, 4 );
+			memcpy( &len, nb + pos + 4, 4 );
+			memcpy( &pid, pb + pos, 4 );
+			memcpy( &plen, pb + pos + 4, 4 );
+			if ( id != pid || len != plen || len < 0 || pos + 8 + len > nl || pos + 8 + len > pl )
+				break;		// the two images have different chunks from here on
+			for ( c = 0; c < COOP_STAT_CHUNKS && coopStatIds[c] && coopStatIds[c] != id; c++ )
+				;
+			if ( c < COOP_STAT_CHUNKS )
+			{
+				coopStatIds[c] = id;
+				for ( int w = 0; w < len && w / 4 < COOP_STAT_WORDS; w += 4 )
+				{
+					int n = MIN( 4, len - w );
+					if ( memcmp( nb + pos + 8 + w, pb + pos + 8 + w, n ) )
+					{
+						coopStatWord[c][w / 4]++;
+						coopStatChunkBytes[c] += n;
+					}
+				}
+			}
+			pos += 8 + len;
+		}
+	}
+}
+
+static void CoopChangeStatsPrint( void )
+{
+	char	name[5];
+	int		best[24][2], nbest = 0;
+
+	if ( !coopStatWord )
+		return;
+	for ( int c = 0; c < COOP_STAT_CHUNKS && coopStatIds[c]; c++ )
+	{
+		for ( int k = 0; k < 4; k++ )
+			name[k] = (char)( coopStatIds[c] >> ( 24 - 8 * k ) );
+		name[4] = 0;
+		Com_Printf( "co-op changes: %s %d bytes\n", name, coopStatChunkBytes[c] );
+		for ( int w = 0; w < COOP_STAT_WORDS; w++ )
+		{
+			int n = coopStatWord[c][w], i;
+			if ( !n )
+				continue;
+			for ( i = nbest; i > 0 && coopStatWord[best[i - 1][0]][best[i - 1][1]] < n; i-- )
+				if ( i < 24 )
+					memcpy( best[i], best[i - 1], sizeof( best[i] ) );
+			if ( i < 24 )
+			{
+				best[i][0] = c;
+				best[i][1] = w;
+				if ( nbest < 24 )
+					nbest++;
+			}
+		}
+	}
+	Com_Printf( "co-op changes: configstrings and commands %d bytes\n", coopStatChunkBytes[COOP_STAT_CHUNKS] );
+	for ( int i = 0; i < nbest; i++ )
+	{
+		unsigned id = coopStatIds[best[i][0]];
+		for ( int k = 0; k < 4; k++ )
+			name[k] = (char)( id >> ( 24 - 8 * k ) );
+		name[4] = 0;
+		Com_Printf( "co-op changes: %s +%d: %d\n", name, best[i][1] * 4, coopStatWord[best[i][0]][best[i][1]] );
+	}
+	memset( coopStatWord, 0, COOP_STAT_CHUNKS * sizeof( *coopStatWord ) );
+	memset( coopStatChunkBytes, 0, sizeof( coopStatChunkBytes ) );
+}
+
 // a decompressed frame into f (base: the frame it's a delta from, NULL when from nothing);
 // qfalse when it doesn't parse
 static qboolean CoopDecodeFrame( const byte *data, int len, coopFrame_t *f, const coopFrame_t *base )
@@ -669,6 +843,7 @@ static struct {
 	int					queued;
 	int					appliedSeq;		// the newest command the game applied (the frames' ackCmd)
 	int					heldButtons;	// buttons of commands dropped from a full queue
+	int					viewTime;		// the applied command's (CoopNet_GuestViewTime)
 
 	// replica frames
 	coopFrame_t			*ring;
@@ -727,6 +902,7 @@ static void CoopHostDrop( int sock, const char *reason, qboolean tell )
 	coopHost.heldButtons = 0;
 	coopHost.queued = 0;
 	coopHost.appliedSeq = 0;
+	coopHost.viewTime = 0;
 	coopHost.name[0] = 0;
 	CoopRingFree( &coopHost.ring );
 	coopHost.building = NULL;
@@ -818,6 +994,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	coopHost.heldButtons = 0;
 	coopHost.queued = 0;
 	coopHost.appliedSeq = 0;
+	coopHost.viewTime = 0;
 	memset( &coopHost.cmd, 0, sizeof( coopHost.cmd ) );
 	CoopRingClear( coopHost.ring );
 	coopHost.ackFrame = 0;
@@ -854,6 +1031,7 @@ static void CoopHostInput( msg_t *msg )
 		c.forwardmove = (signed char)MSG_ReadByte( msg );
 		c.rightmove = (signed char)MSG_ReadByte( msg );
 		c.upmove = (signed char)MSG_ReadByte( msg );
+		c.viewTime = MSG_ReadLong( msg );
 		if ( msg->readcount > msg->cursize )
 			return;
 		// oldest first; only commands newer than the newest one seen count
@@ -1014,6 +1192,7 @@ int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *for
 		memmove( &coopHost.queue[0], &coopHost.queue[1], sizeof( coopHost.queue[0] ) * ( COOP_CMD_QUEUE - 1 ) );
 		coopHost.queued--;
 		coopHost.appliedSeq = c.seq;
+		coopHost.viewTime = c.viewTime;
 	}
 	else
 	{
@@ -1031,6 +1210,11 @@ int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *for
 	*upmove = c.upmove;
 	coopHost.heldButtons = 0;
 	return 1;
+}
+
+int CoopNet_GuestViewTime( void )
+{
+	return coopHost.active ? coopHost.viewTime : 0;
 }
 
 // the guest's name, "" without a guest
@@ -1087,6 +1271,17 @@ void CoopNet_HostFrameSlot( int slot, const void *data, int len )
 		CoopFrameAdd( coopHost.building, slot, data, len );
 }
 
+qboolean CoopNet_HostFrameSlotKeep( int slot )
+{
+	coopFrame_t *f = coopHost.building, *prev;
+
+	if ( !f || slot < 0 || slot >= COOP_NUM_SLOTS || !( prev = CoopRingFind( coopHost.ring, f->num - 1 ) ) ||
+		prev->levelId != f->levelId || !prev->len[slot] )
+		return qfalse;
+	CoopFrameAdd( f, slot, prev->data + prev->ofs[slot], prev->len[slot] );
+	return qtrue;
+}
+
 void CoopNet_HostFrameEnd( void )
 {
 	static coopBuf_t	enc, zbuf;
@@ -1099,6 +1294,9 @@ void CoopNet_HostFrameEnd( void )
 		return;
 	coopHost.statBuildUsec += (int)( t0 - coopHostBuildStart );
 	coopHost.statFrames++;
+	if ( Cvar_VariableIntegerValue( "coop_netstats" ) == 2 && ( base = CoopRingFind( coopHost.ring, f->num - 1 ) ) != NULL &&
+		base->levelId == f->levelId )
+		CoopChangeStats( f, base );
 
 	base = CoopRingFind( coopHost.ring, coopHost.ackFrame );
 	if ( base && ( base == f || base->levelId != f->levelId ) )
@@ -1579,7 +1777,7 @@ Returns 0 when this player has no input now (a menu, the console, a load).
 =================
 */
 int CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
-	int forwardmove, int rightmove, int upmove )
+	int forwardmove, int rightmove, int upmove, int viewTime )
 {
 	coopCmd_t *c;
 
@@ -1600,6 +1798,7 @@ int CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
 	c->forwardmove = (signed char)forwardmove;
 	c->rightmove = (signed char)rightmove;
 	c->upmove = (signed char)upmove;
+	c->viewTime = viewTime;
 	coopGuest.unsent = qtrue;
 	CoopGuestSend();
 	return 1;
@@ -1626,6 +1825,7 @@ static void CoopGuestSend( void )
 			MSG_WriteByte( &msg, (byte)c->forwardmove );
 			MSG_WriteByte( &msg, (byte)c->rightmove );
 			MSG_WriteByte( &msg, (byte)c->upmove );
+			MSG_WriteLong( &msg, c->viewTime );
 		}
 		MSG_WriteLong( &msg, coopGuest.newestFrame );
 		MSG_WriteLong( &msg, coopGuest.readyLevel );
@@ -1738,6 +1938,8 @@ static void CoopAddCommands( void )
 		return;
 	coopCommandsAdded = qtrue;
 	Cvar_Get( "coop_netstats", "0", CVAR_TEMP );
+	Cvar_Get( "coop_simlatency", "0", CVAR_TEMP );
+	Cvar_Get( "coop_simloss", "0", CVAR_TEMP );
 	Cmd_AddCommand( "coop_status", CoopStatus_f );
 	Cmd_AddCommand( "coop_disconnect", CoopDisconnect_f );
 	Cmd_AddCommand( "coop_kick", CoopKick_f );
@@ -1747,6 +1949,9 @@ void CoopNet_GuestFrame( void )
 {
 	const char	*want = Cvar_VariableString( "coop_connect" );
 	int			now;
+
+	if ( coopSimCount )
+		CoopSimFlush();		// (both sides: this runs every frame, host or guest)
 
 	if ( !want[0] )
 	{
@@ -1822,6 +2027,8 @@ static void CoopNetStatsPrint( qboolean reset )
 			coopHost.statBytes / secs, coopHost.statPackets / secs, coopHost.statFrames, coopHost.statFulls,
 			coopHost.statSkipped, coopHost.statMaxBytes, coopHost.statBuildUsec / 1000.0f / frames,
 			coopHost.statSendUsec / 1000.0f / frames );
+		if ( reset && Cvar_VariableIntegerValue( "coop_netstats" ) == 2 )
+			CoopChangeStatsPrint();
 		if ( reset )
 		{
 			coopHost.statStart = now;

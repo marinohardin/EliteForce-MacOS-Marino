@@ -40,7 +40,7 @@ void COOP_Init( void )
 
 static const char *coop_commands[] = {
 	"coop_p2", "coop_p2_follow", "coop_p2_move", "coop_p2_turn", "coop_p2_fire", "coop_p2_use",
-	"coop_p2_weapon", "coop_p2_tele", "coop_p2_damage",
+	"coop_p2_weapon", "coop_p2_tele", "coop_p2_damage", "coop_p2_target",
 };
 
 extern void cgi_AddCommand( const char *cmdName );
@@ -70,6 +70,8 @@ The M0 puppet controls (host console; reached through the game's ClientCommand):
 	coop_p2_weapon <n>               switch to weapon n (if P2 has it)
 	coop_p2_tele [x y z]             move P2 next to P1 (or to x y z)
 	coop_p2_damage <n> [fall]        hurt P2 by n (test death and respawn; fall: as falling damage)
+	coop_p2_target <n|npc> [amp] [ms] (tests) put entity n (or the nearest NPC) in front of P2's view, swaying side to side
+	                                 amp units over a period of ms; "coop_p2_target off" lets it go
 */
 qboolean COOP_ConsoleCommand( const char *cmd )
 {
@@ -146,6 +148,10 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 		{
 			gi.Printf( "co-op: no clear spot next to player 1\n" );
 		}
+	}
+	else if ( !Q_stricmp( cmd, "coop_p2_target" ) )
+	{
+		COOP_TestTargetCommand();
 	}
 	else if ( !Q_stricmp( cmd, "coop_p2_damage" ) )
 	{
