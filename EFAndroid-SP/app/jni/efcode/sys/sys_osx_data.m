@@ -43,6 +43,8 @@ Delete Saves & Settings only ever moves ~/Library/Application Support/
 touches a user-chosen game folder or anything outside that directory.
 
 Test hooks (environment variables, for automated tests without clicking):
+  VOYAGERSP_TEST_BACKGROUND=1  the quiet background mode (sys_osx.m): the panels
+                               and alerts here never activate the app
   VOYAGERSP_TEST_CHOOSE=<dir>  use <dir> instead of showing the open panel
   VOYAGERSP_TEST_INPLACE=1     ...with the "in place" checkbox ticked
   VOYAGERSP_TEST_CONFIRM=1     answer confirmation alerts with the first button
@@ -97,6 +99,11 @@ void SNDDMA_PauseOutput( qboolean pause );	// sdl_snd.c
 #define MSG_PAK0_ON_CD	@"pak0.pk3 is missing — minimum CD installs leave it on the CD; copy it from BaseEF on the CD into this BaseEF folder, or choose a full installation."
 
 extern NSString *Sys_MacAppBundlePath( void );
+// sys_osx.m: VOYAGERSP_TEST_BACKGROUND, the quiet test mode
+extern qboolean Sys_MacTestBackground( void );
+extern void Sys_MacTestBackgroundApp( void );
+extern void VSP_ActivateApp( void );
+extern void VSP_KeepBehindWhenModal( NSWindow *window );
 
 static NSMutableString *earlyLog;	// messages from before Com_Init, replayed into the console
 static qboolean pendingDelete;
@@ -212,7 +219,7 @@ static NSInteger Alert( NSAlertStyle style, NSString *title, NSString *text, NSA
 		[a addButtonWithTitle: b];
 	if( destructiveFirst && [[[a buttons] objectAtIndex: 0] respondsToSelector: @selector(setHasDestructiveAction:)] )
 		[[[a buttons] objectAtIndex: 0] setHasDestructiveAction: YES];
-	[NSApp activateIgnoringOtherApps: YES];
+	VSP_ActivateApp( );
 	r = [a runModal] - NSAlertFirstButtonReturn;
 	return r;
 }
@@ -399,7 +406,8 @@ static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NS
 	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
 		CopyWorker( job );
 	} );
-	[NSApp activateIgnoringOtherApps: YES];
+	VSP_ActivateApp( );
+	VSP_KeepBehindWhenModal( panel );
 	session = [NSApp beginModalSessionForWindow: panel];
 	while( !job->done )
 	{
@@ -721,7 +729,7 @@ static BOOL RunChooser( NSString **outBasepath )
 				[op setAccessoryViewDisclosed: YES];
 			MacLog( @"[dialog] Choose your Elite Force folder (open panel, options %.0fx%.0f pt)",
 				[[opts view] frame].size.width, [[opts view] frame].size.height );
-			[NSApp activateIgnoringOtherApps: YES];
+			VSP_ActivateApp( );
 			if( getenv( "VOYAGERSP_TEST_PANEL_TIMEOUT" ) )
 			{
 				NSTimer *t = [NSTimer timerWithTimeInterval: atof( getenv( "VOYAGERSP_TEST_PANEL_TIMEOUT" ) ) repeats: NO block: ^( NSTimer *timer ) {
@@ -945,7 +953,7 @@ int VSP_AddGameFiles( void )
 		[op setPrompt: @"Add"];
 		[op setMessage: @"Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), "
 			"or GOG's installer (setup_….exe)"];
-		[NSApp activateIgnoringOtherApps: YES];
+		VSP_ActivateApp( );
 		if( [op runModal] != NSModalResponseOK )
 			return 0;
 		for( NSURL *u in [op URLs] )
@@ -1156,6 +1164,7 @@ const char *Sys_MacResolveGameData( int argc, char **argv )
 		MacLog( @"Game data not found (no %s/pak0.pk3 in the remembered folder, \"%@\" or next to the app)",
 			BASEGAME, HomeBase() );
 		SDL_InitSubSystem( SDL_INIT_VIDEO );
+		Sys_MacTestBackgroundApp( );
 		if( !RunChooser( &chosen ) )
 		{
 			SDL_Quit( );
@@ -1725,8 +1734,11 @@ static void TestQuitPress( void )
 			( [win styleMask] & NSWindowStyleMaskFullScreen ) != 0, [win isKeyWindow], [NSApp isActive] );
 		if( [what isEqualToString: @"front"] )
 		{
-			[NSApp activateIgnoringOtherApps: YES];
-			[win makeKeyAndOrderFront: nil];
+			VSP_ActivateApp( );
+			if( Sys_MacTestBackground( ) )
+				[win makeKeyWindow];		// the quiet test mode: not brought forward
+			else
+				[win makeKeyAndOrderFront: nil];
 			return;
 		}
 		if( [what isEqualToString: @"close"] )

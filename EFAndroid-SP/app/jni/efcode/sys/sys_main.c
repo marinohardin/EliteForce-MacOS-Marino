@@ -886,7 +886,17 @@ int main( int argc, char **argv )
 		extern void Sys_DisablePressAndHold( void );
 		extern qboolean Sys_MacSetupBundleEnv( void );
 		extern qboolean Sys_MacPrepareHomepath( int argc, char **argv );
+		extern void Sys_MacTestBackgroundInit( void );
+		extern qboolean Sys_MacTestBackground( void );
 
+		// VOYAGERSP_TEST_BACKGROUND: SDL's hints for the quiet test mode (sys_osx.m),
+		// in the environment and as overrides
+		Sys_MacTestBackgroundInit( );
+		if ( Sys_MacTestBackground( ) ) {
+			SDL_SetHintWithPriority( "SDL_MAC_BACKGROUND_APP", "1", SDL_HINT_OVERRIDE );
+			SDL_SetHintWithPriority( "SDL_WINDOW_ACTIVATE_WHEN_SHOWN", "0", SDL_HINT_OVERRIDE );
+			SDL_SetHintWithPriority( "SDL_WINDOW_ACTIVATE_WHEN_RAISED", "0", SDL_HINT_OVERRIDE );
+		}
 		Sys_DisablePressAndHold( );
 		// Inside the .app: use the bundled Vulkan loader + MoltenVK ICD.
 		Sys_MacSetupBundleEnv( );

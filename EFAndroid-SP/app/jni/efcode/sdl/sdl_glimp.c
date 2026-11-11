@@ -1324,6 +1324,17 @@ transition is under way, the renderer swaps it in without restarting
 #include <objc/message.h>
 #endif
 
+// VOYAGERSP_TEST_BACKGROUND (sys_osx.m), the quiet test mode for automated runs:
+// always windowed, and the window goes behind every other window instead of
+// coming forward (Sys_MacTestBackgroundWindow), so a test never takes the focus.
+#ifdef __APPLE__
+qboolean Sys_MacTestBackground( void );
+void Sys_MacTestBackgroundWindow( void *window );
+#define VKimp_TestBackground( ) Sys_MacTestBackground( )
+#else
+#define VKimp_TestBackground( ) qfalse
+#endif
+
 typedef struct {
 	qboolean	fullscreen;		// target state (reached, or a transition is under way)
 	int			width, height;	// requested windowed size, points (before fitting)
@@ -1352,7 +1363,7 @@ static void VKimp_DesiredWindow( vkimpWindow_t *win )
 	cvar_t *r_highdpi = ri.Cvar_Get( "r_highdpi", "0", CVAR_ARCHIVE );
 
 	win->highdpi = r_highdpi->integer != 0;
-	win->fullscreen = ri.Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
+	win->fullscreen = ri.Cvar_VariableIntegerValue( "r_fullscreen" ) != 0 && !VKimp_TestBackground( );
 	win->width = 1920;
 	win->height = 1080;
 	if ( ri.Cvar_VariableIntegerValue( "r_mode" ) == -1 ) {
@@ -1758,6 +1769,11 @@ qboolean VKimp_ReplaceWindow( glconfig_t *config )
 	ri.IN_Shutdown();	// releases the mouse grab / text input of the old window
 	SDL_DestroyWindow( oldWindow );
 	SDL_window = newWindow;
+#ifdef __APPLE__
+	if ( VKimp_TestBackground( ) )
+		Sys_MacTestBackgroundWindow( VKimp_NSWindow() );
+	else
+#endif
 	SDL_RaiseWindow( SDL_window );
 
 	vkimp_window.highdpi = want.highdpi;
@@ -1860,6 +1876,9 @@ void VKimp_Init( glconfig_t *config )
 				VKimp_SetWindowedSize( want.width, want.height );
 			VKimp_NoteWindowedSize();
 			SDL_SetWindowMinimumSize( SDL_window, 640, 360 );
+#ifdef __APPLE__
+			Sys_MacTestBackgroundWindow( VKimp_NSWindow() );	// only in that mode
+#endif
 			if ( want.fullscreen ) {
 				vkimp_window.fullscreen = qtrue;
 				VKimp_RequestFullscreen( qtrue );

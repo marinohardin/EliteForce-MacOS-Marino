@@ -58,6 +58,8 @@ cMod tab (cMod's game modules, by Noah Metzger, bundled in Contents/Resources/cm
   compensation. The server never sends the cMod pk3 to anyone.
 
 Test hooks (environment variables, see also sys_osx_launcher.m):
+  VOYAGERSP_TEST_BACKGROUND=1             the quiet background mode (sys_osx.m): the
+                                          server window and Browse… stay behind other apps
   VOYAGERSP_TEST_SERVER_CONFIG_SNAPSHOT=<file.png>  render the Config… sheet
   VOYAGERSP_TEST_SERVER_CONFIG_TAB=maps|game|server|cmod  its tab
   VOYAGERSP_TEST_SERVER_TICKRATE=20|40    pick this Tick Rate in that sheet and press OK
@@ -3713,8 +3715,8 @@ static NSString *MasterLabelsWithNames( NSArray<NSString *> *masters )
 	if( test )
 		[_window setFrameOrigin: NSMakePoint( -20000, -20000 )];		// off screen
 	else
-		[NSApp activateIgnoringOtherApps: YES];
-	[_window makeKeyAndOrderFront: nil];
+		VSP_ActivateApp( );
+	VSP_ShowWindow( _window );
 
 	monitor = [NSEvent addLocalMonitorForEventsMatchingMask: NSEventMaskKeyDown handler: ^NSEvent *( NSEvent *e ) {
 		if( ( [e modifierFlags] & NSEventModifierFlagCommand ) && [[e charactersIgnoringModifiers] isEqualToString: @"q"] )
@@ -3763,6 +3765,7 @@ static NSString *MasterLabelsWithNames( NSArray<NSString *> *masters )
 	} );
 	dispatch_resume( termSource );
 	[self start];
+	VSP_KeepBehindWhenModal( _window );
 	r = [NSApp runModalForWindow: _window];
 	dispatch_source_cancel( termSource );
 	VSP_EndModalMenu( menu );
@@ -6011,8 +6014,8 @@ BOOL VSP_SnapshotServerBrowser( const char *path, const char *tab, int join, NSS
 		ok = VSP_SnapshotWindow( [c panel], path );
 	if( getenv( "VOYAGERSP_TEST_BROWSER_HOLD" ) )		// show it a while, to look at
 	{
-		[NSApp activateIgnoringOtherApps: YES];
-		[[c panel] makeKeyAndOrderFront: nil];
+		VSP_ActivateApp( );
+		VSP_ShowWindow( [c panel] );
 		LLog( @"[test] holding Browse… on screen (window %ld)", (long)[[c panel] windowNumber] );
 		[[NSRunLoop currentRunLoop] runMode: NSDefaultRunLoopMode beforeDate:
 			[NSDate dateWithTimeIntervalSinceNow: atoi( getenv( "VOYAGERSP_TEST_BROWSER_HOLD" ) )]];

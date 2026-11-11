@@ -43,6 +43,39 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define KMOD_SCROLL KMOD_RESERVED
 #endif
 
+/*
+VOYAGERSP_TEST_BACKGROUND (macOS, see sys_osx.m): the quiet test mode for
+automated runs. IN_Frame never captures the mouse or hides the cursor, keyboard,
+mouse, wheel and controller input from the system is dropped (console commands
+on stdin, +exec and the test hooks still work), and losing the focus or being
+minimized doesn't set com_unfocused / com_minimized, so the game runs as if
+focused. Without it, nothing changes.
+*/
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+qboolean Sys_MacTestBackground( void );
+#define IN_TestBackground( ) Sys_MacTestBackground( )
+#else
+#define IN_TestBackground( ) qfalse
+#endif
+
+static qboolean IN_TestBackgroundDrops( const SDL_Event *e )
+{
+	switch( e->type )
+	{
+		case SDL_KEYDOWN: case SDL_KEYUP: case SDL_TEXTINPUT: case SDL_TEXTEDITING:
+		case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: case SDL_MOUSEWHEEL:
+		case SDL_JOYAXISMOTION: case SDL_JOYBALLMOTION: case SDL_JOYHATMOTION:
+		case SDL_JOYBUTTONDOWN: case SDL_JOYBUTTONUP:
+		case SDL_CONTROLLERAXISMOTION: case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP:
+		case SDL_FINGERDOWN: case SDL_FINGERUP: case SDL_FINGERMOTION:
+			return qtrue;
+		case SDL_WINDOWEVENT:
+			return e->window.event == SDL_WINDOWEVENT_FOCUS_LOST || e->window.event == SDL_WINDOWEVENT_MINIMIZED;
+		default:
+			return qfalse;
+	}
+}
+
 static cvar_t *in_keyboardDebug     = NULL;
 static cvar_t *in_utf8              = NULL;
 
@@ -1908,6 +1941,9 @@ static void IN_ProcessEvents( void )
 
 	while( SDL_PollEvent( &e ) )
 	{
+		if( IN_TestBackground( ) && IN_TestBackgroundDrops( &e ) )
+			continue;
+
 		switch( e.type )
 		{
 			case SDL_KEYDOWN:
@@ -2374,7 +2410,8 @@ void IN_Frame( void )
 	}
 #endif
 
-	IN_JoyMove( );
+	if( !IN_TestBackground( ) )
+		IN_JoyMove( );
 
 	// If not DISCONNECTED (main menu) or ACTIVE (in game), we're loading
 	loading = ( clc.state != CA_DISCONNECTED && clc.state != CA_ACTIVE );
@@ -2382,7 +2419,12 @@ void IN_Frame( void )
 	// update isFullscreen since it might of changed since the last vid_restart
 	cls.glconfig.isFullscreen = Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
 
-	if( ( !cls.glconfig.isFullscreen || IN_FULLSCREEN_IS_DESKTOP ) && ( Key_GetCatcher( ) & KEYCATCH_CONSOLE ) )
+	if( IN_TestBackground( ) )
+	{
+		// the quiet test mode: never take the pointer (always windowed, sdl_glimp.c)
+		IN_DeactivateMouse( qfalse, qtrue );
+	}
+	else if( ( !cls.glconfig.isFullscreen || IN_FULLSCREEN_IS_DESKTOP ) && ( Key_GetCatcher( ) & KEYCATCH_CONSOLE ) )
 	{
 		// Console is down in windowed mode (or macOS fullscreen)
 		IN_DeactivateMouse( cls.glconfig.isFullscreen, qtrue );
@@ -2511,6 +2553,8 @@ void IN_Init( void *windowData )
 #endif
 
 	appState = SDL_GetWindowFlags( SDL_window );
+	if( IN_TestBackground( ) )
+		appState = SDL_WINDOW_INPUT_FOCUS;		// runs as if focused
 	Cvar_SetValue( "com_unfocused",	!( appState & SDL_WINDOW_INPUT_FOCUS ) );
 	Cvar_SetValue( "com_minimized", appState & SDL_WINDOW_MINIMIZED );
 

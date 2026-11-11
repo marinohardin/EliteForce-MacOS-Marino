@@ -38,9 +38,12 @@
 #                      different game code, so record a baseline of its own for it
 #   TMPDIR=<dir>       where the scratch folder goes (default: your private temp folder; use one only
 #                      this run uses: it holds the scratch HOMEs while the game runs)
+#   VOYAGERSP_TEST_BACKGROUND=0  show the game window the usual way. By default the runs use the quiet
+#                      background mode (sys_osx.m): the window opens behind your other windows, the app
+#                      never comes forward or takes the mouse/keyboard, and system input is ignored
 #
-# Runtime: about 2 minutes for all five on an M-series Mac. A window opens for the SP and listen-server
-# runs: leave it alone (keys/mouse are ignored, but Esc or the console would pause single player).
+# Runtime: about 2 minutes for all five on an M-series Mac. A window opens (behind the others) for the SP
+# and listen-server runs; it doesn't take keys or the mouse, so you can keep working.
 #
 # What it can't catch: rendering, sound, music, UI/menus, input handling, network timing and anything
 # the fingerprint doesn't include (game-private state outside the logged fields, client-side cgame
@@ -167,8 +170,10 @@ run_scenario() {
 	*) echo "regress: unknown scenario $sc" >&2; return 1 ;;
 	esac
 	eval "set -- $args"
-	# VOYAGERSP_TEST_NODIALOG: an error prints and exits instead of showing an alert (sys_osx.m)
-	env HOME="$H" VOYAGERSP_TEST_NODIALOG=1 "$EXE" "$@" >"$SCRATCH/$sc.out" 2>&1 </dev/null &
+	# VOYAGERSP_TEST_NODIALOG: an error prints and exits instead of showing an alert (sys_osx.m);
+	# VOYAGERSP_TEST_BACKGROUND: the quiet background mode, unless set to 0
+	env HOME="$H" VOYAGERSP_TEST_NODIALOG=1 VOYAGERSP_TEST_BACKGROUND="${VOYAGERSP_TEST_BACKGROUND-1}" \
+		"$EXE" "$@" >"$SCRATCH/$sc.out" 2>&1 </dev/null &
 	PID=$!
 	t=0
 	while kill -0 "$PID" 2>/dev/null; do

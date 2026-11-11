@@ -99,6 +99,116 @@ void Sys_DisablePressAndHold( void )
 
 /*
 ==============
+Quiet background test mode
+
+VOYAGERSP_TEST_BACKGROUND=1 (any value but empty or 0) keeps an automated test
+run from ever taking the user's keyboard, mouse or focus. macos/regress.sh sets
+it unless told otherwise. For the launcher and the game, single player and
+Holomatch (a dedicated server has no window anyway):
+  - the app never activates itself or brings a window forward: it runs as an
+    accessory app (no Dock icon, so no Dock bounce or attention request either;
+    no menu bar of its own), SDL is told not to activate on start, show or raise
+    (its SDL_MAC_BACKGROUND_APP and SDL_WINDOW_ACTIVATE_WHEN_* hints, set in
+    the environment, which wins over SDL_SetHint), and windows are shown one
+    level below normal windows, behind every other app's windows, without
+    becoming key (Sys_MacTestBackgroundWindow, VSP_KeepBehindWhenModal);
+  - the game is always windowed and never captures the mouse or hides the
+    cursor (sdl_glimp.c VKimp_DesiredWindow, sdl_input.c IN_Frame);
+  - keyboard, mouse, wheel and controller input from the system is dropped
+    (sdl_input.c), so nothing stray reaches the game; console commands on stdin,
+    +exec and the other VOYAGERSP_TEST_* hooks still work;
+  - the game runs at full rate as if focused: focus loss and minimizing don't
+    set com_unfocused / com_minimized, and App Nap is held off;
+  - error and question alerts print on stderr and take the default, as with
+    VOYAGERSP_TEST_NODIALOG.
+The window is still drawn and can be captured with `screencapture -l <id>`.
+Without the variable nothing here does anything.
+==============
+*/
+qboolean Sys_MacTestBackground( void )
+{
+	static int on = -1;
+
+	if( on < 0 )
+	{
+		const char *v = getenv( "VOYAGERSP_TEST_BACKGROUND" );
+		on = v && *v && strcmp( v, "0" );
+	}
+	return on ? qtrue : qfalse;
+}
+
+// From main(), before SDL starts: SDL reads its hints from the environment too.
+void Sys_MacTestBackgroundInit( void )
+{
+	if( !Sys_MacTestBackground( ) )
+		return;
+	setenv( "SDL_MAC_BACKGROUND_APP", "1", 1 );
+	setenv( "SDL_WINDOW_ACTIVATE_WHEN_SHOWN", "0", 1 );
+	setenv( "SDL_WINDOW_ACTIVATE_WHEN_RAISED", "0", 1 );
+}
+
+// Once NSApp exists (SDL's video init made it): an accessory app, and no App
+// Nap while the game runs unseen behind other windows. Safe to call again.
+void Sys_MacTestBackgroundApp( void )
+{
+	static id activity;
+
+	if( !Sys_MacTestBackground( ) || !NSApp )
+		return;
+	@autoreleasepool {
+		if( [NSApp activationPolicy] != NSApplicationActivationPolicyAccessory )
+			[NSApp setActivationPolicy: NSApplicationActivationPolicyAccessory];
+		if( !activity )
+			activity = [[[NSProcessInfo processInfo] beginActivityWithOptions:
+				NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical
+				reason: @"VOYAGERSP_TEST_BACKGROUND test run"] retain];
+	}
+}
+
+// Show a window (an NSWindow *) behind every other app's windows, without
+// making it key. Ordering alone doesn't do it (the window server keeps a modal
+// or just shown window of an inactive app in front), so it goes one level
+// below normal windows, where it is still drawn and can be captured.
+void Sys_MacTestBackgroundWindow( void *window )
+{
+	NSWindow *w = (NSWindow *)window;
+
+	if( !Sys_MacTestBackground( ) || !w )
+		return;
+	Sys_MacTestBackgroundApp( );
+	if( [w level] != NSNormalWindowLevel - 1 )
+		[w setLevel: NSNormalWindowLevel - 1];
+	[w orderBack: nil];
+}
+
+// The launcher's and data helpers' way to come forward: not in that mode.
+void VSP_ActivateApp( void )
+{
+	if( !Sys_MacTestBackground( ) )
+		[NSApp activateIgnoringOtherApps: YES];
+}
+
+void VSP_ShowWindow( NSWindow *window )
+{
+	if( Sys_MacTestBackground( ) )
+		Sys_MacTestBackgroundWindow( window );
+	else
+		[window makeKeyAndOrderFront: nil];
+}
+
+// Before a modal run of window: in that mode, once the modal loop has lifted it
+// to the modal panel level (above other apps' windows), put it back behind them.
+void VSP_KeepBehindWhenModal( NSWindow *window )
+{
+	if( !Sys_MacTestBackground( ) )
+		return;
+	[[NSRunLoop currentRunLoop] addTimer: [NSTimer timerWithTimeInterval: 0 repeats: NO block: ^( NSTimer *timer ) {
+		Sys_MacTestBackgroundWindow( window );
+	}] forMode: NSModalPanelRunLoopMode];
+}
+
+/*
+==============
 Sys_Dialog
 
 Display an OS X dialog box
@@ -112,8 +222,8 @@ dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *t
 	// a dedicated server has no UI: say it on stderr and take the default
 	// (No for a question). VOYAGERSP_TEST_NODIALOG=1 does the same for test runs
 	// (macos/regress.sh), so an error ends the run with a log line and exit code
-	// instead of waiting on a modal alert.
-	if( sys_headless || getenv( "VOYAGERSP_TEST_NODIALOG" ) )
+	// instead of waiting on a modal alert. So does VOYAGERSP_TEST_BACKGROUND.
+	if( sys_headless || getenv( "VOYAGERSP_TEST_NODIALOG" ) || Sys_MacTestBackground( ) )
 	{
 		fprintf( stderr, "%s: %s\n", title, message );
 		return type == DT_YES_NO ? DR_NO : type == DT_OK_CANCEL ? DR_CANCEL : DR_OK;

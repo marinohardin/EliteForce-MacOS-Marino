@@ -1000,3 +1000,44 @@ app menu's Quit still send SDL_QUIT and quit at once, as before.
   (front, close, cmdw, cmdq, key), see the top of sys_osx_data.m.
 
 Regression harness: all five scenarios identical.
+
+## Quiet background mode for automated test runs (2026-11-11)
+
+`VOYAGERSP_TEST_BACKGROUND=1` (any value but empty or `0`) keeps a test run from taking the user's
+focus, keyboard or mouse, so tests can run while someone works. It covers the launcher and the game
+(single player and Holomatch); a dedicated server has no window anyway. Without it nothing changes:
+every new branch is behind the variable. Details at the top of `sys/sys_osx.m`.
+
+- **No activation.** The app becomes an accessory app (`NSApplicationActivationPolicyAccessory`: no
+  Dock icon, so no Dock bounce or attention request). SDL's `SDL_MAC_BACKGROUND_APP` and
+  `SDL_WINDOW_ACTIVATE_WHEN_SHOWN` / `_RAISED` hints are set in `main()` (in the environment and as
+  overrides). Every `activateIgnoringOtherApps` in the launcher, data and server code goes through
+  `VSP_ActivateApp`, which does nothing in this mode.
+- **Windows behind.** `VSP_ShowWindow` / `Sys_MacTestBackgroundWindow` put a window one level below
+  normal windows (`NSNormalWindowLevel - 1`), behind every other app's windows, without making it
+  key. Plain `orderBack:` wasn't enough: the window server kept a just-shown or modal window of the
+  inactive app in front, and `runModalForWindow` lifts the launcher to the modal panel level, so
+  `VSP_KeepBehindWhenModal` puts it back once the modal loop runs. The game window is placed the same
+  way when it's created (`VKimp_Init`, and `VKimp_ReplaceWindow` instead of `SDL_RaiseWindow`). The
+  windows are still drawn: `screencapture -l <window id>` captures them.
+- **No pointer capture.** The game is always windowed (`VKimp_DesiredWindow` ignores `r_fullscreen`,
+  without changing the cvar), and `IN_Frame` never captures the mouse or hides the cursor.
+- **No stray input.** Keyboard, text, mouse, wheel, joystick/controller and touch events from the
+  system are dropped in `IN_ProcessEvents`, and the controller isn't polled. Console commands on
+  stdin, `+exec` and the other `VOYAGERSP_TEST_*` hooks still work (`VOYAGERSP_TEST_QUIT_PRESS`'s
+  `key` step is a synthetic key event, so it is dropped too).
+- **Full rate.** Focus loss and minimizing don't set `com_unfocused` / `com_minimized` (the game
+  runs as if focused, including `com_maxfpsUnfocused` and `s_muteWhenUnfocused`), and App Nap is held
+  off with an `NSProcessInfo` activity.
+- **No alerts.** `Sys_Dialog` prints and takes the default, as with `VOYAGERSP_TEST_NODIALOG`.
+- `macos/regress.sh` sets it by default; `VOYAGERSP_TEST_BACKGROUND=0` shows the window the usual way.
+
+Checked with a test bundle and a scratch HOME while another app was frontmost: the frontmost app
+stayed frontmost through the launcher (autoplay), single player and Holomatch; the windows sat behind
+all other windows (layer -1); `in_mousestate` showed no grab or relative mode; about 91 frames per
+5 s at `com_maxfps 85` while unfocused; SP level time grew in step with the clock (saves 5 s apart:
+t=107000, then 112000), and the Holomatch timer went 0:19 to 0:29 in 10 s; `screencapture -l`
+captured the launcher and the game window.
+
+Regression harness (in background mode): all five scenarios identical to a baseline recorded at
+2e80964 before the change.

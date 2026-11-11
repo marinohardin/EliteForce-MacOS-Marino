@@ -21,6 +21,15 @@ NSArray<NSString *> *VSP_MissingPatchPaks( NSString *base );	// of pak1.pk3, pak
 
 #define LLog( ... ) VSP_Log( [NSString stringWithFormat: __VA_ARGS__] )
 
+// sys_osx.m: VOYAGERSP_TEST_BACKGROUND, the quiet test mode (see there).
+// VSP_ActivateApp and VSP_ShowWindow come forward (activate the app;
+// makeKeyAndOrderFront) except in that mode, where the window goes behind.
+qboolean Sys_MacTestBackground( void );
+void Sys_MacTestBackgroundApp( void );
+void VSP_ActivateApp( void );
+void VSP_ShowWindow( NSWindow *window );
+void VSP_KeepBehindWhenModal( NSWindow *window );	// call before runModalForWindow
+
 // sys_osx_launcher.m: the look of the launcher, reused by the server windows
 BOOL VSP_TestEnvIs( const char *name, const char *value );
 NSString *VSP_CleanName( NSString *name );

@@ -33,6 +33,9 @@ what the launcher shows next time is what the game last used, including
 changes made in the game's own Video menu.
 
 Test hooks (environment variables):
+  VOYAGERSP_TEST_BACKGROUND=1  the quiet background mode for automated runs:
+                                the launcher and the game never come forward or
+                                take the mouse/keyboard (see sys_osx.m)
   VOYAGERSP_TEST_LAUNCHER_SNAPSHOT=<file.png>  render the window to a PNG and
                                 quit (or go on with ..._PLAY)
   VOYAGERSP_TEST_LAUNCHER_APPEARANCE=dark|light
@@ -1335,7 +1338,7 @@ static NSStackView *HStackOf( NSArray *views )
 	if( VSP_AddGameFiles() > 0 )
 		LLog( @"Launcher: game files added" );
 	[self refreshData];
-	[window makeKeyAndOrderFront: nil];
+	VSP_ShowWindow( window );
 }
 
 - (void)changeFolder: (id)sender
@@ -1345,7 +1348,7 @@ static NSStackView *HStackOf( NSArray *views )
 	if( VSP_ChooseGameData( &chosen ) )
 		LLog( @"Launcher: game folder changed" );
 	[self refreshData];
-	[window makeKeyAndOrderFront: nil];
+	VSP_ShowWindow( window );
 }
 
 - (void)quit: (id)sender
@@ -1409,7 +1412,8 @@ static NSStackView *HStackOf( NSArray *views )
 			NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:
 				[last[@"pid"] intValue]];
 			LLog( @"Launcher: showing the running server (pid %@)", last[@"pid"] );
-			[app activateWithOptions: NSApplicationActivateAllWindows];
+			if( !Sys_MacTestBackground( ) )
+				[app activateWithOptions: NSApplicationActivateAllWindows];
 			return;
 		}
 		if( r != NSAlertSecondButtonReturn )
@@ -1941,7 +1945,7 @@ static BOOL UpdateCheckEnabled( void )
 			if( [w isKindOfClass: [NSPanel class]] )
 				[(NSPanel *)w setWorksWhenModal: YES];
 			[w setLevel: NSModalPanelWindowLevel];
-			[w makeKeyAndOrderFront: nil];
+			VSP_ShowWindow( w );
 			LLog( @"Launcher: About panel (%@)", NSStringFromClass( [w class] ) );
 		}
 }
@@ -2055,7 +2059,7 @@ static NSString *LinkAddress( NSString *link )
 	NSString *addr = LinkAddress( link );
 
 	LLog( @"Link: %@ -> %@", link, addr ? addr : @"not a server address" );
-	[NSApp activateIgnoringOtherApps: YES];
+	VSP_ActivateApp( );
 	if( linkLauncher )
 	{
 		NSWindow *sheet = [[linkLauncher window] attachedSheet];
@@ -2222,6 +2226,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 		// SDL's video init sets up NSApp (SDL's NSApplication subclass), as
 		// for the game folder chooser
 		SDL_InitSubSystem( SDL_INIT_VIDEO );
+		Sys_MacTestBackgroundApp( );	// VOYAGERSP_TEST_BACKGROUND (sys_osx.m)
 		l = [[VSPLauncher alloc] initWithOverridden: VSP_DataOverridden( argc, argv )];
 
 		if( getenv( "VOYAGERSP_TEST_ADD" ) )
@@ -2369,8 +2374,9 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 					[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
 				}
 				[[l window] center];
-				[NSApp activateIgnoringOtherApps: YES];
-				[[l window] makeKeyAndOrderFront: nil];
+				VSP_ActivateApp( );
+				VSP_ShowWindow( [l window] );
+				VSP_KeepBehindWhenModal( [l window] );
 				r = [NSApp runModalForWindow: [l window]];
 				[l removeUpdateMenu];
 				VSP_EndModalMenu( menu );
