@@ -2015,6 +2015,7 @@ void VSP_EndModalMenu( id token )
    stvef:// links: "Join" links on efservers.com and the like
    ------------------------------------------------------------------------ */
 
+// (co-op builds: stvef://coop/<host>:<port> is a co-op invite, sys_osx_coop.m)
 // stvef://connect/<host>:<port>[?...][#<name>/<map>/...] (what efservers.com
 // uses; see github.com/stefansundin/stvef-protocol) and the older
 // stvef:<ip>;<port>;<name>;<map>;... Only the address is used. With the
@@ -2061,7 +2062,31 @@ static NSString *LinkAddress( NSString *link )
 - (void)handleURLEvent: (NSAppleEventDescriptor *)event withReplyEvent: (NSAppleEventDescriptor *)reply
 {
 	NSString *link = [[event paramDescriptorForKeyword: keyDirectObject] stringValue];
-	NSString *addr = LinkAddress( link );
+	NSString *addr;
+
+#ifdef EF_COOP
+	// a co-op invite (Copy Invite in the Co-op… sheet): the sheet, its address filled in and checked
+	if( ( addr = VSP_CoopLinkAddress( link ) ) )
+	{
+		LLog( @"Link: %@ -> co-op %@", link, [addr length] ? addr : @"without an address" );
+		[NSApp activateIgnoringOtherApps: YES];
+		if( linkLauncher && [addr length] )
+		{
+			NSWindow *sheet = [[linkLauncher window] attachedSheet];
+			if( sheet )
+				[[linkLauncher window] endSheet: sheet returnCode: NSModalResponseCancel];
+			[linkLauncher selectMode: 0];
+			VSP_CoopOpenJoin( addr );
+		}
+		else if( ![addr length] )
+			Sys_Dialog( DT_INFO, va( "The co-op invite %s has no address in it.", [link UTF8String] ), "Join co-op" );
+		else
+			Sys_Dialog( DT_INFO, va( "To join the co-op game at %s, quit and open the invite again: it opens "
+				"Co-op in the launcher with the address filled in.", [addr UTF8String] ), "Join co-op" );
+		return;
+	}
+#endif
+	addr = LinkAddress( link );
 
 	LLog( @"Link: %@ -> %@", link, addr ? addr : @"not a server address" );
 	VSP_ActivateApp( );

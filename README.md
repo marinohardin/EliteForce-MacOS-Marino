@@ -57,7 +57,9 @@ simplifying hosting servers compared to the original game.
   modules** by Noah Metzger, with his permission: a **widescreen HUD** and menus, and weapon fire
   prediction on servers that offer it (see [cMod's game modules](#cmods-game-modules)).
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
-  single player never opens a network connection.
+  single player never opens a network connection, except co-op (experimental, in builds that have
+  it): Host and Connect open one on UDP port 29760, and **Open the port on my router** asks your
+  router to forward that port.
 - **Dedicated server.** **Host a Server** runs a standalone server with a status window
   (players with Kick, console, map and bot controls), **Play on This Mac**, and automatic
   router port opening (NAT-PMP / UPnP). See [Hosting a server](#hosting-a-server).

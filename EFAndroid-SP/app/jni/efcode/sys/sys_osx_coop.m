@@ -14,6 +14,16 @@ The Single Player card gets a "Co-op…" button. Its sheet has:
     co-op game runs there and shows what the host answers. Connect (after a
     Check found a game) plays single player with +set coop_connect <address>:
     the engine joins that host as player 2 (sys_coop_net.c).
+  - Internet play (Host side): "Open the port on my router" asks the router
+    to forward UDP VSP_COOP_PORT to this Mac (NAT-PMP / PCP / UPnP through
+    mDNSResponder, as the server window does: DNSServiceNATPortMappingCreate)
+    and shows the public address it answers, or why it didn't. The mapping is
+    kept while the app runs once Host is pressed (Cancel removes it; quitting
+    removes it). Copy Invite puts stvef://coop/<address>:<port> on the
+    clipboard (the public address when the port is open, else this Mac's
+    network address); the friend opens it, and the launcher's link handler
+    (sys_osx_launcher.m) opens this sheet with the address filled in and
+    checked.
   - An optional password: the host's (a guest must give it) on the Host side,
     the one to send on the Join side. It is handed to the engine directly
     (Sys_CoopSetLaunchPassword), never on the command line or in the log.
@@ -45,6 +55,14 @@ Test hooks (environment variables; the launcher's are in sys_osx_launcher.m):
                                 snapshot (the window numbers are logged)
   VOYAGERSP_TEST_COOP_HOST=1    once the launcher is up, open the sheet and
                                 press Host
+  VOYAGERSP_TEST_COOP_INTERNET=1  ...tick "Open the port on my router", wait
+                                for the router's answer (logged, with the
+                                invite the Copy Invite button would copy; the
+                                clipboard is left alone), then snapshot as
+                                above and Cancel, which removes the mapping
+  VOYAGERSP_TEST_NAT=<a.b.c.d|fail>  (as for the server window) pretend the
+                                router answered that public address, or that
+                                it can't open ports; nothing is asked
 ===========================================================================
 */
 
@@ -65,6 +83,7 @@ Test hooks (environment variables; the launcher's are in sys_osx_launcher.m):
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
+#include <dns_sd.h>
 
 #include "sys_osx_launcher.h"
 #include "sys_osx_coop.h"
@@ -511,6 +530,185 @@ static NSArray<NSDictionary *> *CoopLANAddresses( void )
 }
 
 /* ------------------------------------------------------------------------
+   Internet play: the router port mapping and the invite link
+   ------------------------------------------------------------------------ */
+
+// One mapping for the process: asked for from the sheet, kept once Host is pressed (the game opens
+// its socket on the same port), removed on Cancel or when the app quits (mDNSResponder drops a
+// mapping whose owner is gone)
+static DNSServiceRef	coopNatRef;
+static BOOL				coopNatOpening;
+static NSTimer			*coopNatTimer;
+static NSString			*coopNatPublic;		// "1.2.3.4:29760" once the router answered
+static NSString			*coopNatProblem;	// why not, for the sheet
+static void				( ^coopNatChanged )( void );	// the open sheet's update
+
+static void CoopNatNotify( void )
+{
+	if( coopNatChanged )
+		coopNatChanged();
+}
+
+static void CoopNatFailed( NSString *why )
+{
+	coopNatOpening = NO;
+	[coopNatTimer invalidate];
+	coopNatTimer = nil;
+	coopNatProblem = why;
+	coopNatPublic = nil;
+	LLog( @"Co-op: router port not opened: %@", why );
+	CoopNatNotify();
+}
+
+// 10/8, 172.16/12, 192.168/16, 100.64/10 (carrier-grade NAT): not reachable from the internet
+static BOOL CoopPrivateIPv4( uint32_t a )
+{
+	return ( a >> 24 ) == 10 || ( a >> 20 ) == ( ( 172 << 4 ) | 1 ) || ( a >> 16 ) == ( ( 192 << 8 ) | 168 ) ||
+		( a >> 22 ) == ( ( 100 << 2 ) | 1 );
+}
+
+static void CoopNatResult( DNSServiceErrorType err, uint32_t externalAddress, uint16_t externalPort )
+{
+	uint32_t a = ntohl( externalAddress );
+	char buf[INET_ADDRSTRLEN];
+
+	if( err == kDNSServiceErr_NATPortMappingUnsupported )
+		CoopNatFailed( @"Your router doesn’t support automatic port opening (NAT-PMP / UPnP), or has it turned off." );
+	else if( err == kDNSServiceErr_NATPortMappingDisabled )
+		CoopNatFailed( @"Automatic port opening (NAT-PMP / UPnP) is turned off in your router’s settings." );
+	else if( err == kDNSServiceErr_DoubleNAT )
+		CoopNatFailed( @"Your network has two routers in a row (double NAT), so the outer one still blocks the port." );
+	else if( err != kDNSServiceErr_NoError )
+		CoopNatFailed( [NSString stringWithFormat: @"The router didn’t open the port (error %d).", (int)err] );
+	else if( !a )
+		return;		// no answer yet (mDNSResponder reports again); the timer gives up
+	else if( CoopPrivateIPv4( a ) )
+		CoopNatFailed( [NSString stringWithFormat: @"Your router opened the port, but its own internet address (%s) is "
+			@"private: your provider or another router puts it behind a second NAT, which nobody outside can get through.",
+			inet_ntop( AF_INET, &externalAddress, buf, sizeof( buf ) )] );
+	else
+	{
+		coopNatOpening = NO;
+		[coopNatTimer invalidate];
+		coopNatTimer = nil;
+		coopNatProblem = nil;
+		coopNatPublic = [NSString stringWithFormat: @"%s:%d", inet_ntop( AF_INET, &externalAddress, buf, sizeof( buf ) ),
+			externalPort ? externalPort : VSP_COOP_PORT];
+		LLog( @"Co-op: the router forwards %@ to this Mac", coopNatPublic );
+		CoopNatNotify();
+	}
+}
+
+static void CoopNatCallback( DNSServiceRef ref, DNSServiceFlags flags, uint32_t ifIndex, DNSServiceErrorType err,
+	uint32_t externalAddress, DNSServiceProtocol protocol, uint16_t internalPort, uint16_t externalPort,
+	uint32_t ttl, void *context )
+{
+	CoopNatResult( err, externalAddress, ntohs( externalPort ) );
+}
+
+static void CoopNatOpen( void )
+{
+	DNSServiceErrorType err;
+
+	if( coopNatRef || coopNatOpening || coopNatPublic )
+		return;
+	coopNatOpening = YES;
+	coopNatProblem = nil;
+	LLog( @"Co-op: asking the router to forward UDP %d", VSP_COOP_PORT );
+	if( getenv( "VOYAGERSP_TEST_NAT" ) )
+	{
+		NSString *fake = @( getenv( "VOYAGERSP_TEST_NAT" ) );
+		dispatch_after( dispatch_time( DISPATCH_TIME_NOW, NSEC_PER_SEC ), dispatch_get_main_queue(), ^{
+			struct in_addr in;
+			if( !coopNatOpening )
+				return;
+			if( inet_pton( AF_INET, [fake UTF8String], &in ) == 1 )
+				CoopNatResult( kDNSServiceErr_NoError, in.s_addr, VSP_COOP_PORT );
+			else
+				CoopNatResult( kDNSServiceErr_NATPortMappingUnsupported, 0, 0 );
+		} );
+		CoopNatNotify();
+		return;
+	}
+	// ttl 0: the default lease, renewed by mDNSResponder until deallocated
+	err = DNSServiceNATPortMappingCreate( &coopNatRef, 0, 0, kDNSServiceProtocol_UDP, htons( VSP_COOP_PORT ),
+		htons( VSP_COOP_PORT ), 0, CoopNatCallback, NULL );
+	if( err == kDNSServiceErr_NoError )
+		err = DNSServiceSetDispatchQueue( coopNatRef, dispatch_get_main_queue() );
+	if( err != kDNSServiceErr_NoError )
+	{
+		if( coopNatRef )
+			DNSServiceRefDeallocate( coopNatRef );
+		coopNatRef = NULL;
+		CoopNatResult( err, 0, 0 );
+		return;
+	}
+	coopNatTimer = [NSTimer timerWithTimeInterval: 15 repeats: NO block: ^( NSTimer *t ) {
+		if( coopNatOpening )
+			CoopNatFailed( @"Your router didn’t answer the request to open the port: it may not support automatic "
+				@"port opening (NAT-PMP / UPnP), or has it turned off." );
+	}];
+	[[NSRunLoop currentRunLoop] addTimer: coopNatTimer forMode: NSRunLoopCommonModes];
+	CoopNatNotify();
+}
+
+static void CoopNatClose( void )
+{
+	[coopNatTimer invalidate];
+	coopNatTimer = nil;
+	coopNatOpening = NO;
+	if( coopNatRef )
+	{
+		DNSServiceRefDeallocate( coopNatRef );		// removes the mapping
+		coopNatRef = NULL;
+		LLog( @"Co-op: router port mapping removed" );
+	}
+	coopNatPublic = nil;
+	coopNatProblem = nil;
+	CoopNatNotify();
+}
+
+// the link a friend opens to join: the public address when the router forwards the port, else
+// this Mac's network address; nil without either
+static NSString *CoopInviteLink( void )
+{
+	NSString *where = coopNatPublic;
+
+	if( !where )
+	{
+		NSArray<NSDictionary *> *addrs = CoopLANAddresses();
+		if( ![addrs count] )
+			return nil;
+		where = [NSString stringWithFormat: @"%@:%d", addrs[0][@"address"], VSP_COOP_PORT];
+	}
+	return [@"stvef://coop/" stringByAppendingString: where];
+}
+
+// stvef://coop/<host>[:<port>] (an invite, above): the address, or nil; strict, since it's
+// typed into the sheet and checked
+NSString *VSP_CoopLinkAddress( NSString *link )
+{
+	NSString *rest;
+	NSRange r;
+
+	if( [link length] < 7 || [[link substringToIndex: 6] caseInsensitiveCompare: @"stvef:"] != NSOrderedSame )
+		return nil;
+	rest = [link substringFromIndex: 6];
+	while( [rest hasPrefix: @"/"] )
+		rest = [rest substringFromIndex: 1];
+	if( ![[rest lowercaseString] hasPrefix: @"coop/"] )
+		return nil;
+	rest = [rest substringFromIndex: 5];
+	if( ( r = [rest rangeOfCharacterFromSet: [NSCharacterSet characterSetWithCharactersInString: @"?#/"]] ).location != NSNotFound )
+		rest = [rest substringToIndex: r.location];
+	rest = [rest stringByRemovingPercentEncoding];
+	if( ![rest length] || [rest length] > 255 || [rest rangeOfString: @"^([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\])(:[0-9]{1,5})?$"
+		options: NSRegularExpressionSearch].location == NSNotFound )
+		return @"";		// a co-op link, but no address in it
+	return rest;
+}
+
+/* ------------------------------------------------------------------------
    The Co-op… sheet
    ------------------------------------------------------------------------ */
 
@@ -532,7 +730,10 @@ static NSString *coopJoinAddress;	// Connect: the host's "address:port"
 - (void)host: (id)sender;
 - (void)connect: (id)sender;
 - (void)cancel: (id)sender;
+- (void)internet: (id)sender;
+- (void)copyInvite: (id)sender;
 @property (nonatomic, readonly) NSTextField *address;
+@property (nonatomic, readonly) NSButton *internetCheck;
 @property (nonatomic, copy) void ( ^checked )( NSDictionary *result );	// tests
 @end
 
@@ -567,6 +768,8 @@ static NSString *CoopSkillName( NSString *skill )
 	NSString *foundAddress;		// the last Check found a game there ("address:port"); Connect joins it
 	NSDictionary *foundInfo;
 	BOOL checking;
+	NSTextField *internetStatus;
+	NSButton *inviteButton;
 }
 
 - (instancetype)initWithLauncher: (id)launcher
@@ -600,11 +803,21 @@ static NSString *CoopSkillName( NSString *skill )
 		list = VSP_Label( @"No network found. Connect this Mac to Wi-Fi or Ethernet first.",
 			[NSFont systemFontOfSize: 12], [NSColor systemOrangeColor] );
 	note = VSP_WrapLabel( [NSString stringWithFormat: @"Co-op uses UDP port %d. macOS may ask whether Elite Force can "
-		@"find devices on your local network: allow it. Player 2 follows you until your friend joins, then your friend "
-		@"steers player 2. (Your friend doesn’t see your game yet: that comes with the next co-op update.)", VSP_COOP_PORT],
+		@"find devices on your local network: allow it. Player 2 follows you until your friend joins; then your friend "
+		@"plays player 2 and sees your game from player 2’s eyes.", VSP_COOP_PORT],
 		[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
 	for( NSTextField *t in @[ intro, note ] )
 		[t setPreferredMaxLayoutWidth: 400];
+	_internetCheck = [NSButton checkboxWithTitle: @"Open the port on my router (for a friend on the internet)"
+		target: self action: @selector(internet:)];
+	[_internetCheck setState: ( coopNatOpening || coopNatPublic ) ? NSControlStateValueOn : NSControlStateValueOff];
+	internetStatus = VSP_WrapLabel( @"", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+	[internetStatus setPreferredMaxLayoutWidth: 400];
+	[internetStatus setSelectable: YES];
+	inviteButton = [NSButton buttonWithTitle: @"Copy Invite" target: self action: @selector(copyInvite:)];
+	[inviteButton setControlSize: NSControlSizeSmall];
+	[inviteButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+	[inviteButton setToolTip: @"Copy a stvef://coop/ link for your friend: opening it shows Co-op with your address filled in"];
 	hostButton = [NSButton buttonWithTitle: @"Host" target: self action: @selector(host:)];
 	[hostButton setEnabled: canPlay];
 	[hostButton setToolTip: canPlay ? @"Play single player with co-op on" : @"Add the game files first"];
@@ -615,7 +828,13 @@ static NSString *CoopSkillName( NSString *skill )
 	col = CoopStack( @[ intro, list,
 		CoopStack( @[ VSP_Label( @"Password (optional)", [NSFont systemFontOfSize: 12], nil ), hostPassword ],
 			NSUserInterfaceLayoutOrientationHorizontal, 8 ),
+		_internetCheck, internetStatus, inviteButton,
 		note ], NSUserInterfaceLayoutOrientationVertical, 8 );
+	{
+		__weak VSPCoopController *weakSelf = self;
+		coopNatChanged = ^{ [weakSelf showInternet]; };
+	}
+	[self showInternet];
 	row = CoopStack( @[ col, hostButton ], NSUserInterfaceLayoutOrientationHorizontal, 16 );
 	[row setAlignment: NSLayoutAttributeTop];
 	[hostButton setContentHuggingPriority: NSLayoutPriorityRequired forOrientation: NSLayoutConstraintOrientationHorizontal];
@@ -625,9 +844,9 @@ static NSString *CoopSkillName( NSString *skill )
 - (NSView *)joinGroup
 {
 	NSTextField *label = VSP_Label( @"Host’s address", [NSFont systemFontOfSize: 12], nil );
-	NSTextField *later = VSP_WrapLabel( @"Connect starts single player and joins the game as player 2. For now you "
-		@"steer player 2 in the host’s game while you see your own copy of the level; seeing the host’s game comes with "
-		@"the next co-op update.", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+	NSTextField *later = VSP_WrapLabel( @"Connect starts single player and joins the host’s game as player 2: you see "
+		@"it from player 2’s eyes and play player 2 while the host plays the story.",
+		[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
 	NSStackView *line, *result, *texts, *bottom, *col, *pass;
 
 	[later setPreferredMaxLayoutWidth: 380];
@@ -720,6 +939,57 @@ static NSString *CoopSkillName( NSString *skill )
 		[[root widthAnchor] constraintEqualToConstant: 560],
 	]];
 	[_panel setInitialFirstResponder: _address];
+}
+
+// the router's answer, under the checkbox
+- (void)showInternet
+{
+	NSString *lan = [CoopLANAddresses() count] ? CoopLANAddresses()[0][@"address"] : @"this Mac’s address";
+	NSString *text;
+	NSColor *color = [NSColor secondaryLabelColor];
+
+	if( coopNatPublic )
+	{
+		text = [NSString stringWithFormat: @"Port open: a friend on the internet joins %@. Copy Invite and send it "
+			@"to them. The port stays open while Elite Force runs.", coopNatPublic];
+		color = [NSColor systemGreenColor];
+	}
+	else if( coopNatOpening )
+		text = @"Asking your router to open the port…";
+	else if( coopNatProblem )
+	{
+		text = [NSString stringWithFormat: @"Port not opened. %@ Forward UDP port %d to this Mac (%@) in your router’s "
+			@"settings instead, or use Tailscale (see the README).", coopNatProblem, VSP_COOP_PORT, lan];
+		color = [NSColor systemOrangeColor];
+	}
+	else
+		text = @"Not needed on the same network. Copy Invite gives your friend a link to this Mac’s address.";
+	[internetStatus setStringValue: text];
+	[internetStatus setTextColor: color];
+	[_internetCheck setState: ( coopNatOpening || coopNatPublic ) ? NSControlStateValueOn : NSControlStateValueOff];
+	[inviteButton setEnabled: CoopInviteLink() != nil && !coopNatOpening];
+}
+
+- (void)internet: (id)sender
+{
+	if( [_internetCheck state] == NSControlStateValueOn )
+		CoopNatOpen();
+	else
+		CoopNatClose();
+	[self showInternet];
+}
+
+- (void)copyInvite: (id)sender
+{
+	NSString *link = CoopInviteLink();
+
+	if( !link )
+		return;
+	LLog( @"Co-op: invite %@", link );
+	[[NSPasteboard generalPasteboard] clearContents];
+	[[NSPasteboard generalPasteboard] setString: link forType: NSPasteboardTypeString];
+	[internetStatus setStringValue: [NSString stringWithFormat: @"Copied %@. Your friend opens it (Elite Force for Mac "
+		@"with co-op) to check your game and join.", link]];
 }
 
 - (void)showIcon: (NSString *)symbol color: (NSColor *)color title: (NSString *)title text: (NSString *)text
@@ -832,6 +1102,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 	if( ![l canPlay] )
 		return;
 	[[_panel sheetParent] endSheet: _panel returnCode: NSModalResponseOK];
+	coopNatChanged = nil;		// (the router's mapping stays while the app runs)
 	coopHostChosen = YES;
 	coopJoinAddress = nil;
 	Sys_CoopSetLaunchPassword( [[hostPassword stringValue] UTF8String] );
@@ -864,6 +1135,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 		[_panel makeFirstResponder: joinPassword];
 		return;
 	}
+	CoopNatClose();		// (a guest needs no open port)
 	[[_panel sheetParent] endSheet: _panel returnCode: NSModalResponseOK];
 	coopHostChosen = NO;
 	coopJoinAddress = foundAddress;
@@ -902,6 +1174,9 @@ static NSString *CoopDescribe( NSDictionary *info )
 	// the block keeps the controller alive until the sheet ends
 	[parent beginSheet: [c panel] completionHandler: ^( NSModalResponse r ) {
 		[[c panel] orderOut: nil];
+		coopNatChanged = nil;
+		if( r != NSModalResponseOK )
+			CoopNatClose();		// not hosting after all
 	}];
 	return c;
 }
@@ -936,7 +1211,23 @@ static NSString *CoopDescribe( NSDictionary *info )
 		}];
 		[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
 	};
-	if( query )
+	if( getenv( "VOYAGERSP_TEST_COOP_INTERNET" ) )
+	{
+		__block NSTimer *poll;
+		__block int waited = 0;
+		[[c internetCheck] setState: NSControlStateValueOn];
+		[c internet: nil];
+		poll = [NSTimer timerWithTimeInterval: 0.5 repeats: YES block: ^( NSTimer *t ) {
+			if( coopNatOpening && ++waited < 40 )
+				return;
+			[t invalidate];
+			LLog( @"[test] co-op internet: %@; invite %@", coopNatPublic ? [@"router forwards " stringByAppendingString: coopNatPublic] :
+				coopNatProblem ? coopNatProblem : @"no answer", CoopInviteLink() );
+			finish();
+		}];
+		[[NSRunLoop currentRunLoop] addTimer: poll forMode: NSModalPanelRunLoopMode];
+	}
+	else if( query )
 	{
 		c.checked = ^( NSDictionary *r ) {
 			LLog( @"[test] co-op check %s: %@", query, r[@"status"] );
@@ -951,12 +1242,26 @@ static NSString *CoopDescribe( NSDictionary *info )
 
 @end
 
+static VSPCoopButtonTarget *coopTarget;		// lives as long as the launcher's button
+
+// a co-op invite opened while the launcher is up: the sheet, its address filled in and checked
+BOOL VSP_CoopOpenJoin( NSString *address )
+{
+	VSPCoopController *c = [coopTarget open];
+
+	if( !c )
+		return NO;
+	[[c address] setStringValue: address];
+	[c check: nil];
+	return YES;
+}
+
 NSButton *VSP_CoopButton( id launcher )
 {
-	static VSPCoopButtonTarget *target;		// lives as long as the launcher's button
+	VSPCoopButtonTarget *target;
 	NSButton *b;
 
-	target = [[VSPCoopButtonTarget alloc] init];
+	target = coopTarget = [[VSPCoopButtonTarget alloc] init];
 	target.launcher = launcher;
 	b = [NSButton buttonWithTitle: @"Co-op…" target: target action: @selector(openCoop:)];
 	[b setControlSize: NSControlSizeSmall];
@@ -964,7 +1269,7 @@ NSButton *VSP_CoopButton( id launcher )
 	[b setToolTip: @"Play the campaign with a friend: host a co-op game, or check for one to join (experimental)"];
 
 	if( getenv( "VOYAGERSP_TEST_COOP_SHEET" ) || getenv( "VOYAGERSP_TEST_COOP_HOST" ) ||
-		getenv( "VOYAGERSP_TEST_COOP_QUERY" ) )
+		getenv( "VOYAGERSP_TEST_COOP_QUERY" ) || getenv( "VOYAGERSP_TEST_COOP_INTERNET" ) )
 	{
 		VSPCoopButtonTarget *t = target;
 		NSTimer *timer = [NSTimer timerWithTimeInterval: 1 repeats: NO block: ^( NSTimer *tm ) { [t runTests]; }];

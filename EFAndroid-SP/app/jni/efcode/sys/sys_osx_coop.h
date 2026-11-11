@@ -33,10 +33,18 @@ void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch );
 //   error    a sentence for "bad" and "mismatch"
 NSDictionary *VSP_CoopQuery( NSString *address, double timeout );
 
+// stvef://coop/<host>[:<port>] (Copy Invite's link): the address; @"" for a co-op link without a
+// usable one; nil for any other link
+NSString *VSP_CoopLinkAddress( NSString *link );
+// with the launcher up: open the Co-op… sheet with that address filled in and checked (NO when a
+// sheet is already open)
+BOOL VSP_CoopOpenJoin( NSString *address );
+
 #else
 
 #define VSP_CoopButton( launcher )			nil
 #define VSP_CoopAppendArgs( args, holomatch )	( (void)0 )
+#define VSP_CoopLinkAddress( link )			( (NSString *)nil )
 
 #endif
 
