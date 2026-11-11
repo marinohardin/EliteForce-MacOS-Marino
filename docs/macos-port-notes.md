@@ -981,3 +981,22 @@ Other changes there:
 Regression harness: Holomatch and sp-borg1, sp-transition identical. sp-save differs only in
 `event` of voy1's func_door 127 (voyagerdoors) from frame 361: the door now sends its
 EV_BMODEL_SOUND start and stop events. No other field changes.
+
+## Cmd+W and the close button ask before quitting (2026-11-11)
+
+Closing the game window (its close button, or Cmd+W, the Window menu's Close) used to quit at
+once: SDL turns the last window's close request into SDL_QUIT, which runs `quit Closed window`.
+`IN_Init` now sets `SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE` to 0, so a close comes only as
+SDL_WINDOWEVENT_CLOSE, and `Sys_MacConfirmQuit` (sys_osx_data.m) shows a "Quit Elite Force?"
+sheet on the window (the app's display name; Quit on Return, Cancel on Escape). Cmd+Q and the
+app menu's Quit still send SDL_QUIT and quit at once, as before.
+
+- Single player waits for the answer (game stopped, sound paused); Holomatch keeps running.
+- The pointer is released while the sheet is up and captured again after Cancel; the sheet has
+  the keyboard, and the game window is made key again after Cancel.
+- Works in fullscreen (the sheet sits on the fullscreen window). Dedicated servers (no window)
+  and the launcher window are unchanged. With `VOYAGERSP_TEST_NODIALOG` a close quits at once.
+- Test hooks: `VOYAGERSP_TEST_QUIT_ANSWER=quit|cancel`, `VOYAGERSP_TEST_QUIT_PRESS=<s>:<what>,...`
+  (front, close, cmdw, cmdq, key), see the top of sys_osx_data.m.
+
+Regression harness: all five scenarios identical.

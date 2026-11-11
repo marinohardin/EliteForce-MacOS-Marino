@@ -539,15 +539,21 @@ listener, IN_CocoaMovePending reports the state (in_mousestate) and
 IN_CocoaClearStalePointerState clears it once no mouse button is down, with
 SDL's own methods, so relative mode and the grab apply again.
 */
-static id IN_CocoaListener( void )
+// the game window's NSWindow (NULL when there is none), also for sys_osx_data.m
+void *IN_CocoaWindow( void )
 {
 	Uint32 ( *props3 )( void * ) = IN_SDL3Symbol( "SDL_GetWindowProperties" );
 	void *( *ptr3 )( Uint32, const char *, void * ) = IN_SDL3Symbol( "SDL_GetPointerProperty" );
-	id nswindow;
 
 	if ( !SDL_window || !props3 || !ptr3 )
-		return nil;
-	nswindow = (id)ptr3( props3( SDL_window ), "SDL.window.cocoa.window", NULL );
+		return NULL;
+	return ptr3( props3( SDL_window ), "SDL.window.cocoa.window", NULL );
+}
+
+static id IN_CocoaListener( void )
+{
+	id nswindow = (id)IN_CocoaWindow( );
+
 	if ( !nswindow )
 		return nil;
 	return ( (id (*)( id, SEL ))objc_msgSend )( nswindow, sel_registerName( "delegate" ) );
@@ -596,14 +602,9 @@ static qboolean IN_CocoaClearStalePointerState( void )
 // the window's mouseConfinementRect width (the grab), -1 when unknown
 static int IN_CocoaConfinementWidth( void )
 {
-	Uint32 ( *props3 )( void * ) = IN_SDL3Symbol( "SDL_GetWindowProperties" );
-	void *( *ptr3 )( Uint32, const char *, void * ) = IN_SDL3Symbol( "SDL_GetPointerProperty" );
-	id nswindow;
+	id nswindow = (id)IN_CocoaWindow( );
 	CGRect r;
 
-	if ( !SDL_window || !props3 || !ptr3 )
-		return -1;
-	nswindow = (id)ptr3( props3( SDL_window ), "SDL.window.cocoa.window", NULL );
 	if ( !IN_CocoaResponds( nswindow, "mouseConfinementRect" ) )
 		return -1;
 	r = ( (CGRect (*)( id, SEL ))objc_msgSend )( nswindow, sel_registerName( "mouseConfinementRect" ) );
@@ -2266,6 +2267,18 @@ static void IN_ProcessEvents( void )
 						break;
 #endif
 
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+					// The close button and Cmd+W (the Window menu's Close) ask
+					// before quitting (sys_osx_data.m); IN_Init keeps SDL from
+					// turning them into SDL_QUIT. Cmd+Q still quits at once.
+					case SDL_WINDOWEVENT_CLOSE:
+						{
+							extern void Sys_MacConfirmQuit( void );
+							IN_DeactivateMouse( cls.glconfig.isFullscreen, qtrue );
+							Sys_MacConfirmQuit( );
+						}
+						break;
+#endif
 					case SDL_WINDOWEVENT_MINIMIZED:    Cvar_SetValue( "com_minimized", 1 ); break;
 					case SDL_WINDOWEVENT_RESTORED:
 					case SDL_WINDOWEVENT_MAXIMIZED:    Cvar_SetValue( "com_minimized", 0 ); break;
@@ -2464,6 +2477,11 @@ void IN_Init( void *windowData )
 		touchControl.deviceW = ( dw > 0 ) ? (float)dw : 0.0f;
 		touchControl.deviceH = ( dh > 0 ) ? (float)dh : 0.0f;
 	}
+#endif
+
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+	// closing the game window comes as SDL_WINDOWEVENT_CLOSE only (asks first)
+	SDL_SetHint( SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0" );
 #endif
 
 #if defined(PROTOCOL_HANDLER) && defined(__APPLE__)

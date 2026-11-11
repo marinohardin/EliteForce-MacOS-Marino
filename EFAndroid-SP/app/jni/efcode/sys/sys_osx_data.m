@@ -34,6 +34,10 @@ The same actions are console commands (macos_launcher, macos_switchmode,
 macos_showsaves, macos_showgamefolder, macos_changegamefolder,
 macos_deletesettings).
 
+The game window's close button and Cmd+W (the Window menu's Close) ask
+"Quit <app>?" first (Sys_MacConfirmQuit); Cmd+Q and the app menu's Quit
+still quit at once.
+
 Delete Saves & Settings only ever moves ~/Library/Application Support/
 <MACOS_HOMEPATH_NAME> to the Trash, after the engine has shut down. It never
 touches a user-chosen game folder or anything outside that directory.
@@ -45,6 +49,12 @@ Test hooks (environment variables, for automated tests without clicking):
   VOYAGERSP_TEST_NOTRASH=1     log instead of moving to the Trash
   VOYAGERSP_TEST_NORELAUNCH=1  log instead of relaunching the app
   VOYAGERSP_TEST_PANEL_TIMEOUT=<s>  log the open panel's size and cancel it after <s> s
+  VOYAGERSP_TEST_QUIT_ANSWER=quit|cancel  answer the "Quit?" sheet after 2 s
+  VOYAGERSP_TEST_QUIT_PRESS=<s>:<what>,...  at <s> s after the first frame, do
+                               <what> to the game window: front (make the app
+                               active, the window key), close (its close
+                               button), cmdw, cmdq (those keys) or key (a plain
+                               K, for in_keyboardDebug); each is logged
 ===========================================================================
 */
 
@@ -1541,6 +1551,8 @@ our File menu (right after the application menu) and add it if not: once at
 startup, and again should SDL ever rebuild the menu bar (bundle only).
 =================
 */
+static void TestQuitPress( void );
+
 void Sys_MacFrame( void )
 {
 	static VSPMenuTarget *target;
@@ -1560,6 +1572,8 @@ void Sys_MacFrame( void )
 		Com_Printf( "[pointer] catcher 0x%x r_fullscreen %d ", Key_GetCatcher(), Cvar_VariableIntegerValue( "r_fullscreen" ) );
 		Cmd_WindowState();
 	}
+
+	TestQuitPress();
 
 	if( notBundle || ( ++checks & 15 ) )
 		return;
@@ -1587,5 +1601,151 @@ void Sys_MacFrame( void )
 		Com_Printf( "[skipnotify]macOS: %s the File menu (%s)\n", logged ? "re-added" : "added",
 			[[[[bar itemArray] valueForKey: @"title"] componentsJoinedByString: @" | "] UTF8String] );
 		logged = qtrue;
+	}
+}
+
+/*
+=================
+Sys_MacConfirmQuit
+
+The game window's close button or Cmd+W (SDL_WINDOWEVENT_CLOSE, sdl_input.c):
+ask before quitting, as a sheet on the window. Cmd+Q and the app menu's Quit
+come as SDL_QUIT and don't ask. Single player waits for the answer (the game
+stops and the sound pauses, as while a menu-bar menu is open); Holomatch
+keeps running underneath. The sheet has the keyboard while it is up, so no
+keys reach the game, and IN_Frame frees the pointer since the game window
+lost the input focus; after Cancel both come back to the game.
+=================
+*/
+static NSAlert *quitAlert;
+
+static void QuitAnswered( NSWindow *win, NSModalResponse r )
+{
+	BOOL quit = ( r == NSAlertFirstButtonReturn );
+
+	MacLog( @"[quit] answered %@", quit ? @"Quit" : @"Cancel" );
+	if( quit )
+		Cbuf_ExecuteText( EXEC_APPEND, "quit Closed window\n" );
+	else if( [NSApp isActive] )
+		[win makeKeyWindow];	// the keyboard back to the game (not always so after the sheet)
+}
+
+void Sys_MacConfirmQuit( void )
+{
+	extern void *IN_CocoaWindow( void );	// sdl_input.c
+
+	@autoreleasepool {
+		NSWindow *win = (NSWindow *)IN_CocoaWindow();
+		NSString *name = [[NSRunningApplication currentApplication] localizedName];
+		const char *answer = getenv( "VOYAGERSP_TEST_QUIT_ANSWER" );
+		BOOL wait = !Com_Holomatch();
+		NSAlert *a;
+
+		if( quitAlert )
+			return;		// already asking
+		if( !win || TestEnv( "VOYAGERSP_TEST_NODIALOG" ) )
+		{
+			QuitAnswered( win, NSAlertFirstButtonReturn );
+			return;
+		}
+
+		a = [[[NSAlert alloc] init] autorelease];
+		[a setMessageText: [NSString stringWithFormat: @"Quit %@?", [name length] ? name : @"Elite Force"]];
+		if( wait )
+			[a setInformativeText: @"Progress since your last save is lost."];
+		[a addButtonWithTitle: @"Quit"];		// Return
+		[a addButtonWithTitle: @"Cancel"];		// Escape
+		quitAlert = [a retain];
+		MacLog( @"[quit] asking \"%@\" (%@, fullscreen %d)", [a messageText],
+			wait ? @"single player, paused" : @"Holomatch, running",
+			( [win styleMask] & NSWindowStyleMaskFullScreen ) != 0 );
+
+		[a beginSheetModalForWindow: win completionHandler: ^( NSModalResponse r ) {
+			[quitAlert release];
+			quitAlert = nil;
+			if( wait )
+				[NSApp stopModalWithCode: r];
+			else
+				QuitAnswered( win, r );
+		}];
+		if( answer && *answer )
+		{
+			NSModalResponse r = !strcmp( answer, "quit" ) ? NSAlertFirstButtonReturn : NSAlertSecondButtonReturn;
+			dispatch_after( dispatch_time( DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC ), dispatch_get_main_queue(), ^{
+				if( quitAlert == a )
+					[win endSheet: [a window] returnCode: r];
+			} );
+		}
+		if( wait )
+		{
+			NSModalResponse r;
+
+			SNDDMA_PauseOutput( qtrue );
+			r = [NSApp runModalForWindow: [a window]];
+			SNDDMA_PauseOutput( qfalse );
+			QuitAnswered( win, r );
+		}
+	}
+}
+
+// VOYAGERSP_TEST_QUIT_PRESS (see the top of this file)
+static void TestQuitPress( void )
+{
+	extern void *IN_CocoaWindow( void );
+	static NSMutableArray *steps;
+	static int start;
+	static qboolean parsed;
+
+	if( !parsed )
+	{
+		const char *v = getenv( "VOYAGERSP_TEST_QUIT_PRESS" );
+
+		parsed = qtrue;
+		if( !v || !*v )
+			return;
+		steps = [[@( v ) componentsSeparatedByString: @","] mutableCopy];
+		start = Sys_Milliseconds();
+	}
+	if( ![steps count] )
+		return;
+
+	@autoreleasepool {
+		NSArray *step = [[steps objectAtIndex: 0] componentsSeparatedByString: @":"];
+		NSWindow *win = (NSWindow *)IN_CocoaWindow();
+		NSString *what;
+		unsigned short code = 0;
+		NSString *chars = nil;
+		NSEventModifierFlags mods = 0;
+
+		if( [step count] != 2 || !win || Sys_Milliseconds() - start < [[step objectAtIndex: 0] intValue] * 1000 )
+			return;
+		[steps removeObjectAtIndex: 0];
+		what = [step objectAtIndex: 1];
+		MacLog( @"[quit] test: %@ (window %ld, fullscreen %d, key %d, active %d)", what, (long)[win windowNumber],
+			( [win styleMask] & NSWindowStyleMaskFullScreen ) != 0, [win isKeyWindow], [NSApp isActive] );
+		if( [what isEqualToString: @"front"] )
+		{
+			[NSApp activateIgnoringOtherApps: YES];
+			[win makeKeyAndOrderFront: nil];
+			return;
+		}
+		if( [what isEqualToString: @"close"] )
+		{
+			[[win standardWindowButton: NSWindowCloseButton] performClick: nil];
+			return;
+		}
+		if( [what isEqualToString: @"cmdw"] )
+			code = 13, chars = @"w", mods = NSEventModifierFlagCommand;
+		else if( [what isEqualToString: @"cmdq"] )
+			code = 12, chars = @"q", mods = NSEventModifierFlagCommand;
+		else if( [what isEqualToString: @"key"] )
+			code = 40, chars = @"k";
+		else
+			return;
+		for( int up = 0; up < 2; up++ )
+			[NSApp postEvent: [NSEvent keyEventWithType: up ? NSEventTypeKeyUp : NSEventTypeKeyDown
+				location: NSZeroPoint modifierFlags: mods timestamp: [[NSProcessInfo processInfo] systemUptime]
+				windowNumber: [win windowNumber] context: nil characters: chars
+				charactersIgnoringModifiers: chars isARepeat: NO keyCode: code] atStart: NO];
 	}
 }
