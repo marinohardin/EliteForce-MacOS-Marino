@@ -737,7 +737,10 @@ void CGCam_TrackEntUpdate ( void )
 		dist = VectorLengthSquared( vec );
 		if ( dist < 256 )//16 squared
 		{//FIXME: who should be doing the using here?
-			G_UseTargets( trackEnt, trackEnt );
+			if ( !COOP_IsReplica() )	// (a co-op guest's copy runs no game logic: the host fires it)
+			{
+				G_UseTargets( trackEnt, trackEnt );
+			}
 			reached = qtrue;
 		}
 	}
@@ -1322,6 +1325,18 @@ void CGCam_Roff( void )
 	// Check back in 100 ms to get the next roff entry
 	client_camera.next_roff_time = cg.time + 100;  
 }
+
+#ifdef EF_COOP
+// co-op: the view's height in pixels (the letterbox bars are sized from it)
+int CGCam_ViewHeight( void )
+{
+	if ( !cg.refdef.height )
+	{
+		CG_CalcVrect();
+	}
+	return cg.refdef.height;
+}
+#endif
 
 void CMD_CGCam_Disable( void )
 {

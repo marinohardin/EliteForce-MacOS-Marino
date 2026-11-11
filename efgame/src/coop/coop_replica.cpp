@@ -69,7 +69,24 @@ typedef struct
 	int		playerLocked;
 	int		p2Num;
 	int		numEntities;
+	int		skipping;		// the host is skipping a cutscene (skippingCinematic)
+	vec4_t	textColors[3];	// caption, centre and scroll text colours (scripts set them)
 } repGlobals_t;
+
+// The host's cutscene camera (cg_camera.cpp). Scripts drive it on the host only; the guest gets its
+// whole state while a camera runs or its covers fade, and its cgame draws from it as the host's does.
+// Every move, pan, zoom, fade and bar is a start, an end and a start time, so the guest's view between
+// two host frames is the same shot at its own clock; following and tracking advance per drawn frame and
+// are put back in step by the next host frame. The letterbox bars are in the host's screen pixels.
+typedef struct
+{
+	camera_t	cam;
+	int			viewHeight;		// the host's view height in pixels, for the bars
+} repCamera_t;
+
+extern cvar_t	*g_skippingcin;
+extern vec4_t	textcolor_caption, textcolor_center, textcolor_scroll;
+extern int		CGCam_ViewHeight( void );
 
 // sounds the host's game started directly (G_SoundOnEnt: script voice lines, some NPC sounds), not
 // through an entity event; the last second's go with the globals and the guest plays the new ones
@@ -283,12 +300,23 @@ static int REP_WriteGlobals( unsigned char *buf, int size )
 	g.playerLocked = player_locked ? 1 : 0;
 	g.p2Num = coop_p2Num;
 	g.numEntities = globals.num_entities;
+	g.skipping = ( g_skippingcin && g_skippingcin->integer ) ? 1 : 0;
+	Vector4Copy( textcolor_caption, g.textColors[0] );
+	Vector4Copy( textcolor_center, g.textColors[1] );
+	Vector4Copy( textcolor_scroll, g.textColors[2] );
 
 	REP_BeginWrite( buf, size );
 	gi.AppendToSaveGame( 'RGLB', &g, sizeof( g ) );
 	{
 		level_locals_t temp = level;
 		EnumerateFields( savefields_LevelLocals, (byte *)&temp, 'LVLC', LLOFS( LEVEL_LOCALS_T_SAVESTOP ) );
+	}
+	if ( in_camera || ( client_camera.info_state & ( CAMERA_BAR_FADING | CAMERA_FADING ) ) || client_camera.fade_color[3] > 0 )
+	{
+		repCamera_t c;
+		c.cam = client_camera;
+		c.viewHeight = CGCam_ViewHeight();
+		gi.AppendToSaveGame( 'RCAM', &c, sizeof( c ) );
 	}
 	{
 		repSound_t	recent[REP_SOUNDS];
@@ -487,6 +515,18 @@ static void REP_ApplyEntity( int num, const unsigned char *data, int len )
 	}
 }
 
+// the host's camera, its letterbox bars scaled from the host's view height to this one's
+static void REP_ApplyCamera( const repCamera_t *c )
+{
+	int		h = CGCam_ViewHeight();
+	float	scale = ( c->viewHeight > 0 && h > 0 ) ? (float)h / c->viewHeight : 1.0f;
+
+	client_camera = c->cam;
+	client_camera.bar_height *= scale;
+	client_camera.bar_height_source *= scale;
+	client_camera.bar_height_dest *= scale;
+}
+
 static void REP_ApplyGlobals( const unsigned char *data, int len )
 {
 	repGlobals_t	g;
@@ -502,6 +542,8 @@ static void REP_ApplyGlobals( const unsigned char *data, int len )
 	{
 		level_locals_t temp = level;
 		EvaluateFields( savefields_LevelLocals, (byte *)&temp, (byte *)&level, 'LVLC', LLOFS( LEVEL_LOCALS_T_SAVESTOP ), qfalse );
+		repCamera_t	cam;
+		int			haveCam = gi.ReadFromSaveGameOptional( 'RCAM', &cam, sizeof( cam ), NULL ) == (int)sizeof( cam );
 		repSound_t	recent[REP_SOUNDS];
 		int			n = gi.ReadFromSaveGameOptional( 'RSND', recent, sizeof( recent ), NULL ) / (int)sizeof( recent[0] );
 		if ( !REP_EndRead() )
@@ -524,10 +566,20 @@ static void REP_ApplyGlobals( const unsigned char *data, int len )
 			}
 		}
 		rep_soundSynced = qtrue;	// joining: only the sounds that start from now on
+		if ( haveCam )
+		{
+			REP_ApplyCamera( &cam );
+		}
 	}
 	level.clients = clients;
-	// in_camera stays the guest's own: the host's camera itself isn't mirrored yet (M2), and the
-	// cgame would draw from a camera that isn't there
+	in_camera = g.inCamera ? true : false;
+	Vector4Copy( g.textColors[0], textcolor_caption );
+	Vector4Copy( g.textColors[1], textcolor_center );
+	Vector4Copy( g.textColors[2], textcolor_scroll );
+	if ( ( g_skippingcin ? g_skippingcin->integer : 0 ) != g.skipping )
+	{
+		gi.cvar_set( "skippingCinematic", g.skipping ? "1" : "0" );	// the bridge shows the skip screen
+	}
 	player_locked = g.playerLocked ? qtrue : qfalse;
 	coop_p2Num = g.p2Num;
 	if ( g.numEntities > globals.num_entities && g.numEntities <= MAX_GENTITIES )

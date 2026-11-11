@@ -471,6 +471,11 @@ void COOP_RunFrame( void )
 	ent->client->renderInfo.eyePoint[2] += ent->client->ps.viewheight;
 	VectorCopy( ent->client->ps.viewangles, ent->client->renderInfo.eyeAngles );
 
+	if ( coop_p2.rejoinAt && level.time >= coop_p2.rejoinAt && !in_camera )
+	{
+		coop_p2.rejoinAt = 0;
+		COOP_CameraRejoin( ent );
+	}
 	COOP_BuildCmd( ent, &cmd );
 	ClientThink( ent->s.number, &cmd );
 }
