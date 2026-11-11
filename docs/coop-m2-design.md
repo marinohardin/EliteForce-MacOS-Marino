@@ -248,3 +248,30 @@ drone ignoring the players turning on player 2 after player 2 shot it; down and 
 down and bleed-out (mission status on both, the guest's Attack reloads), trigger_hurt death next to the
 partner, puppet revive, save refused while down. Regression harness vs `coop-m2-base`: ALL IDENTICAL
 with co-op off and with co-op on and `sp_coop 0`.
+
+## Revives and the level's barriers (2026-11-11)
+- A revive needs a clear line between the two bodies (at the middle of the body, or 20 units higher,
+  so a low console between them doesn't matter): walls, closed doors, forcefields and other movers and
+  player clips stop it; people don't. Before, any partner within 96 units revived, and on voy2 player 1
+  revived player 2 through the forcefield that seals the burning section, so player 2 got up on the far
+  side.
+- A player the level itself downs (no enemy as the attacker: trigger_hurt, a mover or forcefield, a
+  scripted explosion such as voy2's behind that forcefield, the world) is put next to the partner, as
+  for pits, so a body is never left where the story has just closed the way. A player an enemy downed
+  stays where they fell. The floor check ignores people and a box starting a little inside a raised
+  floor plate.
+- Not handled: a player an enemy downs in an area that a barrier closes afterwards can't be reached
+  and bleeds out (game over, the host reloads).
+- Test: `coop_p2_damage <n> npc` deals the damage as the first enemy NPC in the level (spawn one with
+  `coop_p2_npc spawn <type>`); without it the damage comes from the world.
+- Testing two copies next to a third that already hosts (it holds UDP 29760):
+  `VOYAGERSP_TEST_COOP_PORT=<n>` for the test host, `coop_connect 127.0.0.1:<n>` on the guest.
+- The guest's window closing on its own was Cmd+W: SDL's Window menu has Close (Cmd+W), which asks to
+  close the only window, and SDL then quits ("Client Shutdown (Closed window)"). The two
+  `MAX_PACKET_USERCMDS` lines after it are the disconnect packets carrying the commands single player
+  never sends; harmless.
+- Two copies on one data folder (a host and its guest on one Mac): the PID file now belongs to the copy
+  that wrote it. A copy that finds another running copy's PID leaves the file alone, and a copy only
+  removes the file when it still holds its own PID. Before, the second copy overwrote it and the first to
+  quit removed the other's, which could make a later start ask about an abnormal exit. A copy that
+  crashes alone is still caught.
