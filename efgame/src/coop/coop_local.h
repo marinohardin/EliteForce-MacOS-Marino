@@ -54,6 +54,9 @@ void		COOP_LagRecord( void );						// coop_lagcomp.cpp
 void		COOP_TestTargetFrame( void );
 qboolean	COOP_TestTargetCommand( void );
 void		COOP_AIInit( void );						// coop_ai.cpp
+void		COOP_DownInit( void );						// coop_down.cpp
+void		COOP_DownFrame( void );
+qboolean	COOP_GameIsOver( void );
 void		COOP_ListNPCs( void );
 void		COOP_ReplicaInit( void );					// coop_replica.cpp				// a guest is connected, steering or not
 

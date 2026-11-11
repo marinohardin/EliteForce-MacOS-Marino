@@ -1039,7 +1039,7 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 
 qboolean GameAllowedToSaveHere(void)
 {
-	return !in_camera;
+	return !in_camera && !COOP_AnyoneDown();
 }
 
 //////////////////// eof /////////////////////

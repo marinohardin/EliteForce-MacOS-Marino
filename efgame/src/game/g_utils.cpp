@@ -955,6 +955,7 @@ void G_ChangeMap (const char *mapname, const char *spawntarget, qboolean hub)
 	// Player_RestoreFromPrevLevel carries weapons/ammo/health/etc across the transition. (Retail did this in
 	// the engine; this port's bridge spawns the new map fresh + carries the player via these cvars.)
 	extern void Player_CacheForNextLevel(void);
+	COOP_ReviveAll();	// co-op: nobody goes to the next level down
 	Player_CacheForNextLevel();
 	COOP_CacheForNextLevel();
 

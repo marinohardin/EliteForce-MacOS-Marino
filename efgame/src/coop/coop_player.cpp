@@ -494,6 +494,7 @@ void COOP_EndFrame( void )
 	{
 		ClientEndFrame( ent );
 	}
+	COOP_DownFrame();
 	COOP_TestTargetFrame();
 	COOP_LagRecord();
 }
@@ -543,7 +544,23 @@ void COOP_P2DeadThink( gentity_t *ent, usercmd_t *ucmd )
 	gentity_t	*p1 = &g_entities[0];
 	vec3_t		org;
 
-	if ( level.time < coop_p2.respawnTime || !p1->inuse || p1->health <= 0 )
+	if ( COOP_GameIsOver() )
+	{
+		// out with player 1: the guest's attack reloads the level too, as player 1's does
+		extern void respawn( gentity_t *ent );
+		if ( COOP_GuestConnected() && ( ucmd->buttons & BUTTON_ATTACK ) && p1->client
+			&& p1->client->ps.pm_type == PM_DEAD && level.time > p1->client->respawnTime )
+		{
+			p1->client->respawnTime = level.time + 3000;	// once
+			respawn( p1 );
+		}
+		return;
+	}
+	if ( COOP_IsDowned( ent ) )
+	{
+		return;	// waiting for a revive
+	}
+	if ( level.time < coop_p2.respawnTime || !p1->inuse || ( p1->health <= 0 && !COOP_IsDowned( p1 ) ) )
 	{
 		return;
 	}

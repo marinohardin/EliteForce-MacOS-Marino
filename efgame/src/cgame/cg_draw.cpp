@@ -2523,6 +2523,7 @@ static void CG_Draw2D( void )
 	if ( !CG_DrawScoreboard() ) {
 		CG_DrawCenterString();
 	}
+	COOP_DrawStatus();
 
 	if (cg.showInformation)
 	{

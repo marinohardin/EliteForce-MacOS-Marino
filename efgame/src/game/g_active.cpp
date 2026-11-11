@@ -926,7 +926,7 @@ extern vmCvar_t cg_thirdPerson;
 	} 
 	else if ( client->ps.stats[STAT_HEALTH] <= 0 ) 
 	{
-		client->ps.pm_type = PM_DEAD;
+		client->ps.pm_type = COOP_IsDowned( ent ) ? PM_FREEZE : PM_DEAD;	// co-op: a downed player lies still
 	} 
 	else 
 	{
@@ -1176,6 +1176,10 @@ extern vmCvar_t cg_thirdPerson;
 		{
 			COOP_P2DeadThink( ent, ucmd );	// not the player respawn below: that reloads the game
 			return;
+		}
+		if ( COOP_IsDowned( ent ) )
+		{
+			return;	// co-op: waiting for a revive
 		}
 		// wait for the attack button to be pressed
 		if ( ent->NPC == NULL && level.time > client->respawnTime ) 

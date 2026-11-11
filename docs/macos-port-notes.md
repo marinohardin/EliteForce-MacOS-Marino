@@ -1233,6 +1233,15 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 - Test cvars: `coop_simlatency` / `coop_simloss` (simulated link), `coop_netstats 2` (which fields
   change), `coop_p2_target` (a swaying target in front of player 2).
 
+## Co-op: enemies and both players, downed and revive (2026-11-11, branch `1_4_0/coop-m1` only)
+- Enemies take player 2 as well: a script naming the player as an NPC's enemy gets the player that
+  provoked it (or the nearer one), and an NPC fighting one player turns on the other when that one is
+  clearly the better target.
+- A player whose health runs out goes down; the partner revives them by holding Use (`coop_revivetime`,
+  3 s); game over for both when both are down, on bleed-out (`coop_bleedout`, 30 s) or when player 1
+  dies for real. No saving while someone is down.
+- Details: `docs/coop-m2-design.md`.
+
 ## SP: ambient and mover sound sets load again (2026-11-10)
 
 `sound/sound.txt` (pak0) defines 103 sound sets: 48 `generalSet` (a map area's background loop and

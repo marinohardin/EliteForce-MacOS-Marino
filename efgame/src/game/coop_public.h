@@ -51,6 +51,12 @@
 #define COOP_PredictingEvents(p)	((void)0)
 #define COOP_SkipPlayerstateEvent(e)	0
 #define COOP_SkipEntityEvent(n,e)	0
+#define COOP_ServerCommand(c)		0
+#define COOP_DrawStatus()			((void)0)
+#define COOP_PlayerDown(e,a,m)		0
+#define COOP_IsDowned(e)			0
+#define COOP_AnyoneDown()			0
+#define COOP_ReviveAll()			((void)0)
 #define COOP_NoteAttacker(v,a)		((void)0)
 #define COOP_ScriptEnemy(s,e)		(e)
 #define COOP_RethinkPlayerEnemy()	((void)0)
@@ -127,6 +133,19 @@ void		COOP_NoteViewMuzzle( const vec3_t origin );
 void		COOP_PredictingEvents( qboolean predicting );
 qboolean	COOP_SkipPlayerstateEvent( int event );
 qboolean	COOP_SkipEntityEvent( int num, int event );
+
+// the cgame's co-op status text (coop_hud.cpp): CG_ServerCommand hands it "coopmsg" (qtrue:
+// taken), CG_Draw2D draws it
+qboolean	COOP_ServerCommand( const char *cmd );
+void		COOP_DrawStatus( void );
+
+// downed players (coop_down.cpp): player_die asks COOP_PlayerDown first (qtrue: the player went
+// down instead, or player 2's death was handled); a downed player is frozen (ClientThink_real) and
+// can't respawn; saving waits until nobody is down; a level change revives them first
+qboolean	COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod );
+qboolean	COOP_IsDowned( const gentity_t *ent );
+qboolean	COOP_AnyoneDown( void );
+void		COOP_ReviveAll( void );
 
 // enemies and the two players (coop_ai.cpp): NPC_Pain notes which player hurt an NPC; a script
 // that names player 1 as an NPC's enemy gets the player that provoked it (or the nearer one,

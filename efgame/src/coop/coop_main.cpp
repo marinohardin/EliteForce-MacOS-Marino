@@ -26,6 +26,7 @@ void COOP_Init( void )
 	coop_p2Num = -1;
 	COOP_ReplicaInit();
 	COOP_AIInit();
+	COOP_DownInit();
 	memset( &coop_p2, 0, sizeof( coop_p2 ) );
 	coop_p2.follow = qtrue;
 	COOP_ReadCarry();
@@ -67,10 +68,11 @@ The M0 puppet controls (host console; reached through the game's ClientCommand):
 	coop_p2_move <fwd> <right> [up] [frames]   -127..127 each, for frames (default 20 = 1 s)
 	coop_p2_turn <yaw> [pitch]       hold this view; "coop_p2_turn off" lets follow aim again
 	coop_p2_fire [frames] [alt]      hold attack (alt: alt attack)
-	coop_p2_use                      press use once
+	coop_p2_use [frames]             press use once (or hold it for frames)
 	coop_p2_weapon <n>               switch to weapon n (if P2 has it)
 	coop_p2_tele [x y z]             move P2 next to P1 (or to x y z)
-	coop_p2_damage <n> [fall]        hurt P2 by n (test death and respawn; fall: as falling damage)
+	coop_p2_damage <n> [fall|pit] [p1]  hurt P2 (p1: player 1) by n (tests: death, down, respawn;
+	                                 fall: as falling damage, pit: as a trigger_hurt)
 	coop_p2_target <n|npc> [amp] [ms] (tests) put entity n (or the nearest NPC) in front of P2's view, swaying side to side
 	                                 amp units over a period of ms; "coop_p2_target off" lets it go
 	coop_p2_aim <n>                  (tests) turn player 2's view to entity n's chest
@@ -156,7 +158,7 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 	}
 	else if ( !Q_stricmp( cmd, "coop_p2_use" ) )
 	{
-		coop_p2.buttonFrames = 1;
+		coop_p2.buttonFrames = ( gi.argc() > 1 ) ? atoi( gi.argv( 1 ) ) : 1;
 		coop_p2.buttons = BUTTON_USE;
 	}
 	else if ( !Q_stricmp( cmd, "coop_p2_weapon" ) )
@@ -186,9 +188,25 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 	}
 	else if ( !Q_stricmp( cmd, "coop_p2_damage" ) )
 	{
-		vec3_t dir = { 0, 0, 1 };
-		G_Damage( ent, NULL, NULL, dir, ent->currentOrigin, atoi( gi.argv( 1 ) ), DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR,
-			!Q_stricmp( gi.argv( 2 ), "fall" ) ? MOD_FALLING : MOD_UNKNOWN );
+		vec3_t		dir = { 0, 0, 1 };
+		gentity_t	*victim = ent;
+		int			mod = MOD_UNKNOWN;
+		for ( int i = 2; i < gi.argc(); i++ )
+		{
+			if ( !Q_stricmp( gi.argv( i ), "fall" ) )
+			{
+				mod = MOD_FALLING;
+			}
+			else if ( !Q_stricmp( gi.argv( i ), "pit" ) )
+			{
+				mod = MOD_TRIGGER_HURT;
+			}
+			else if ( !Q_stricmp( gi.argv( i ), "p1" ) )
+			{
+				victim = &g_entities[0];
+			}
+		}
+		G_Damage( victim, NULL, NULL, dir, victim->currentOrigin, atoi( gi.argv( 1 ) ), DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR | DAMAGE_NO_PROTECTION, mod );
 	}
 	else
 	{

@@ -1,0 +1,521 @@
+// coop_down.cpp -- single-player co-op: downed players and revives.
+//
+// In co-op a player whose health runs out goes down instead of dying: lies on the ground, can't
+// move or fire, and enemies leave them alone. The other player revives them by standing next to
+// them and holding Use (coop_revivetime seconds); they come back with a quarter of their health.
+// The game is over for both when both are down at once or the bleed-out time (coop_bleedout
+// seconds) runs out, and whenever player 1 dies for real (a script ending the mission, or nobody
+// left to revive them): player 2 dies with them, so the guest gets the same game-over screen.
+//
+// Player 2 goes down only while a guest steers it; the local puppet (no guest) keeps its old
+// death and respawn next to player 1, and revives player 1 by itself when it is next to them.
+//
+// Saving is refused while a player is down (GameAllowedToSaveHere): a save holds player 1 only,
+// and loading one with player 1 at 0 health would be a death the game can't recover from; a
+// checkpoint autosave waits until both are up again.
+
+#include "g_local.h"
+#include "g_functions.h"
+#include "anims.h"
+#include "coop_public.h"
+#include "coop_local.h"
+
+extern vec3_t	playerMins;
+extern vec3_t	playerMaxs;
+extern bool		in_camera;
+extern void		NPC_SetAnim( gentity_t *ent, int type, int anim, int priority );
+extern void		PM_SetLegsAnimTimer( gentity_t *ent, int *legsAnimTimer, int time );
+extern void		PM_SetTorsoAnimTimer( gentity_t *ent, int *torsoAnimTimer, int time );
+
+#define COOP_REVIVE_RANGE		96		// reviver within this of the downed player (origins)
+#define COOP_REVIVE_RANGE_BOT	128		// the puppet stops further away when it follows
+#define COOP_REVIVE_HEALTH		25		// percent of max health after a revive
+#define COOP_DOWN_MSG_TIME		250		// ms between the on-screen updates
+
+typedef struct
+{
+	qboolean	down;
+	int			bleedLeft;		// ms of bleed-out left (does not run while a camera runs)
+	int			reviveStart;	// level.time the partner started holding Use, 0: not reviving
+	int			nextMsg;
+	int			oldFlags;		// FL_NOTARGET as it was before going down (the death set FL_NO_KNOCKBACK)
+	gentity_t	*attacker;		// for the mission status text if this ends the game
+} coopDown_t;
+
+static coopDown_t	coop_down[2];
+static qboolean		coop_gameOver;
+static int			coop_downLastTime;
+static cvar_t		*coop_bleedout;
+static cvar_t		*coop_revivetime;
+
+void COOP_DownInit( void )
+{
+	memset( coop_down, 0, sizeof( coop_down ) );
+	coop_gameOver = qfalse;
+	coop_downLastTime = 0;
+	coop_bleedout = gi.cvar( "coop_bleedout", "30", 0 );
+	coop_revivetime = gi.cvar( "coop_revivetime", "3", 0 );
+}
+
+static gentity_t *COOP_DownPlayer( int idx )
+{
+	return idx == 0 ? &g_entities[0] : COOP_P2();
+}
+
+static int COOP_DownIndex( const gentity_t *ent )
+{
+	if ( ent == &g_entities[0] )
+	{
+		return 0;
+	}
+	return ( ent && COOP_IsP2( ent ) ) ? 1 : -1;
+}
+
+qboolean COOP_IsDowned( const gentity_t *ent )
+{
+	int idx = COOP_DownIndex( ent );
+	return (qboolean)( coop_enabled && idx >= 0 && coop_down[idx].down );
+}
+
+qboolean COOP_AnyoneDown( void )
+{
+	return (qboolean)( coop_enabled && ( coop_down[0].down || coop_down[1].down ) );
+}
+
+// a player that can revive (or be the partner a downed one is moved to): alive, up, in the level
+static qboolean COOP_PlayerUp( int idx )
+{
+	gentity_t *ent = COOP_DownPlayer( idx );
+
+	if ( !ent || !ent->inuse || !ent->client || ent->health <= 0 || coop_down[idx].down || ent->client->ps.pm_type >= PM_DEAD )
+	{
+		return qfalse;
+	}
+	if ( idx == 1 && coop_p2.hidden )
+	{
+		return qfalse;
+	}
+	return qtrue;
+}
+
+static const char *COOP_PlayerName( int idx )
+{
+	if ( idx == 1 )
+	{
+		const char *g = COOP_GuestConnected() ? COOP_GuestName() : "";
+		return g[0] ? g : "Player 2";
+	}
+	gentity_t *p1 = &g_entities[0];
+	return ( p1->client && p1->client->pers.netname[0] ) ? p1->client->pers.netname : "Player 1";
+}
+
+// a status line on one player's screen (coop_hud.cpp) (player 2's only while a guest shows it)
+static void COOP_Tell( int idx, const char *text )
+{
+	if ( idx == 0 )
+	{
+		gi.SendServerCommand( 0, "coopmsg \"%s\"", text );
+	}
+	else if ( coop_p2Num >= 0 && COOP_GuestConnected() )
+	{
+		gi.SendServerCommand( coop_p2Num, "coopmsg \"%s\"", text );
+	}
+}
+
+static void COOP_MovePlayer( gentity_t *ent, const vec3_t org )
+{
+	if ( COOP_IsP2( ent ) )
+	{
+		COOP_PlaceP2( ent, org );
+		return;
+	}
+	vec3_t o;
+	VectorCopy( org, o );
+	G_SetOrigin( ent, o );
+	VectorCopy( o, ent->client->ps.origin );
+	VectorClear( ent->client->ps.velocity );
+	ent->client->ps.eFlags ^= EF_TELEPORT_BIT;
+	gi.linkentity( ent );
+}
+
+// deaths a body on the spot can't come back from: the downed player is put next to the partner
+static qboolean COOP_DeathNeedsMove( gentity_t *ent, int mod )
+{
+	trace_t	tr;
+	vec3_t	below;
+
+	switch ( mod )
+	{
+	case MOD_WATER:
+	case MOD_SLIME:
+	case MOD_LAVA:
+	case MOD_CRUSH:
+	case MOD_TELEFRAG:
+	case MOD_FALLING:
+	case MOD_TRIGGER_HURT:
+		return qtrue;
+	default:
+		break;
+	}
+	// in the air with no floor close below (knocked off a ledge, a pit)
+	VectorCopy( ent->currentOrigin, below );
+	below[2] -= 256;
+	gi.trace( &tr, ent->currentOrigin, playerMins, playerMaxs, below, ent->s.number, MASK_PLAYERSOLID );
+	return (qboolean)( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f );
+}
+
+// settle a downed body onto the floor below it (it doesn't fall while down)
+static void COOP_DropToFloor( gentity_t *ent )
+{
+	trace_t	tr;
+	vec3_t	below;
+
+	VectorCopy( ent->currentOrigin, below );
+	below[2] -= 256;
+	gi.trace( &tr, ent->currentOrigin, playerMins, playerMaxs, below, ent->s.number, MASK_PLAYERSOLID );
+	if ( !tr.startsolid && !tr.allsolid && tr.fraction < 1.0f )
+	{
+		COOP_MovePlayer( ent, tr.endpos );
+	}
+}
+
+static void COOP_GameOver( gentity_t *attacker );
+
+/*
+COOP_PlayerDown
+
+player_die for either player. qtrue: handled here (the player went down, or player 2's death
+was handled); qfalse: the normal death runs (player 1: game over; player 2: COOP_P2Die).
+*/
+qboolean COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod )
+{
+	int			idx = COOP_DownIndex( ent );
+	int			other;
+	gclient_t	*cl;
+
+	if ( !coop_enabled || idx < 0 || !ent->client || coop_gameOver )
+	{
+		return qfalse;
+	}
+	cl = ent->client;
+	if ( coop_down[idx].down || cl->ps.pm_type == PM_DEAD )
+	{
+		return qtrue;	// already down (or dead)
+	}
+	if ( idx == 1 && !COOP_GuestConnected() )
+	{
+		return qfalse;	// the puppet: its old death and respawn
+	}
+	other = idx ^ 1;
+	if ( !COOP_PlayerUp( other ) )
+	{
+		// nobody left to revive: game over for both
+		if ( idx == 0 )
+		{
+			return qfalse;	// player 1's own death; COOP_DownFrame takes player 2 along
+		}
+		coop_down[idx].attacker = attacker;
+		COOP_GameOver( attacker );
+		return qtrue;
+	}
+
+	gentity_t *partner = COOP_DownPlayer( other );
+	if ( COOP_DeathNeedsMove( ent, mod ) )
+	{
+		vec3_t org;
+		int contents = ent->contents;
+		ent->contents = 0;	// not in the way of the spot search
+		qboolean found = COOP_FindSpotNear( partner, org );
+		ent->contents = contents;
+		if ( !found )
+		{
+			if ( idx == 0 )
+			{
+				return qfalse;
+			}
+			COOP_GameOver( attacker );
+			return qtrue;
+		}
+		COOP_MovePlayer( ent, org );
+	}
+
+	coop_down[idx].down = qtrue;
+	coop_down[idx].bleedLeft = (int)( coop_bleedout->value * 1000 );
+	if ( coop_down[idx].bleedLeft < 1000 )
+	{
+		coop_down[idx].bleedLeft = 1000;
+	}
+	coop_down[idx].reviveStart = 0;
+	coop_down[idx].nextMsg = 0;
+	coop_down[idx].oldFlags = ent->flags & FL_NOTARGET;
+	coop_down[idx].attacker = attacker;
+
+	ent->health = 0;
+	cl->ps.stats[STAT_HEALTH] = 0;
+	ent->takedamage = qfalse;
+	ent->flags |= FL_NOTARGET;
+	ent->contents = CONTENTS_CORPSE;
+	ent->enemy = NULL;
+	VectorClear( cl->ps.velocity );
+	cl->ps.pm_type = PM_FREEZE;
+	cl->renderInfo.lookTarget = ENTITYNUM_NONE;
+	memset( cl->ps.powerups, 0, sizeof( cl->ps.powerups ) );
+	G_AddEvent( ent, Q_irand( EV_DEATH1, EV_DEATH3 ), ent->health );
+	NPC_SetAnim( ent, SETANIM_BOTH, BOTH_DEATH1, SETANIM_FLAG_OVERRIDE | SETANIM_FLAG_HOLD );
+	PM_SetLegsAnimTimer( ent, &cl->ps.legsAnimTimer, -1 );
+	PM_SetTorsoAnimTimer( ent, &cl->ps.torsoAnimTimer, -1 );
+	COOP_DropToFloor( ent );
+	gi.linkentity( ent );
+	gi.Printf( "co-op: player %d is down (%d s to revive)\n", idx + 1, coop_down[idx].bleedLeft / 1000 );
+	return qtrue;
+}
+
+static void COOP_Revive( int idx )
+{
+	gentity_t	*ent = COOP_DownPlayer( idx );
+	gclient_t	*cl;
+	int			maxHealth;
+
+	coop_down[idx].down = qfalse;
+	if ( !ent || !ent->client )
+	{
+		return;
+	}
+	cl = ent->client;
+	maxHealth = cl->ps.stats[STAT_MAX_HEALTH] > 0 ? cl->ps.stats[STAT_MAX_HEALTH] : 100;
+	ent->health = maxHealth * COOP_REVIVE_HEALTH / 100;
+	if ( ent->health < 1 )
+	{
+		ent->health = 1;
+	}
+	cl->ps.stats[STAT_HEALTH] = ent->health;
+	ent->takedamage = qtrue;
+	ent->flags = ( ent->flags & ~( FL_NOTARGET | FL_NO_KNOCKBACK ) ) | coop_down[idx].oldFlags;
+	ent->contents = CONTENTS_BODY;
+	VectorCopy( playerMins, ent->mins );
+	VectorCopy( playerMaxs, ent->maxs );
+	cl->ps.pm_type = PM_NORMAL;
+	cl->ps.legsAnimTimer = 0;
+	cl->ps.torsoAnimTimer = 0;
+	NPC_SetAnim( ent, SETANIM_BOTH, BOTH_STAND2, SETANIM_FLAG_OVERRIDE );
+	gi.linkentity( ent );
+	COOP_Tell( idx, "" );
+	COOP_Tell( idx ^ 1, "" );
+	gi.Printf( "co-op: player %d revived (health %d)\n", idx + 1, ent->health );
+}
+
+// level change while someone is down: they get up (the next level must not start with a dead player)
+void COOP_ReviveAll( void )
+{
+	if ( !coop_enabled )
+	{
+		return;
+	}
+	for ( int i = 0; i < 2; i++ )
+	{
+		if ( coop_down[i].down )
+		{
+			COOP_Revive( i );
+		}
+	}
+}
+
+/*
+COOP_GameOver
+
+Both players are out: player 1 dies for real (the normal death and its mission status screen),
+player 2 dies with it and doesn't come back; the host's reload starts the level again for both.
+*/
+static void COOP_GameOver( gentity_t *attacker )
+{
+	gentity_t	*p1 = &g_entities[0];
+	gentity_t	*p2 = COOP_P2();
+
+	if ( coop_gameOver )
+	{
+		return;
+	}
+	coop_gameOver = qtrue;
+	gi.Printf( "co-op: game over\n" );
+	for ( int i = 0; i < 2; i++ )
+	{
+		if ( coop_down[i].down )
+		{
+			COOP_Tell( i, "" );
+		}
+		coop_down[i].down = qfalse;
+	}
+	if ( p2 && p2->client && p2->client->ps.pm_type != PM_DEAD )
+	{
+		p2->health = 0;
+		p2->client->ps.stats[STAT_HEALTH] = 0;
+		COOP_P2Die( p2, attacker );
+	}
+	if ( p1->client && p1->client->ps.pm_type != PM_DEAD )
+	{
+		if ( p1->health > 0 )
+		{
+			p1->health = 0;
+		}
+		p1->client->ps.stats[STAT_HEALTH] = p1->health;
+		p1->takedamage = qfalse;
+		player_die( p1, p1, attacker ? attacker : p1, 0, MOD_UNKNOWN );
+	}
+}
+
+// COOP_P2DeadThink: no respawn once the game is over
+qboolean COOP_GameIsOver( void )
+{
+	return coop_gameOver;
+}
+
+static void COOP_DownMessages( int idx, int reviver, int progress )
+{
+	coopDown_t	*d = &coop_down[idx];
+	int			partner = idx ^ 1;
+	int			secs = ( d->bleedLeft + 999 ) / 1000;
+	char		text[256];
+
+	if ( level.time < d->nextMsg )
+	{
+		return;
+	}
+	d->nextMsg = level.time + COOP_DOWN_MSG_TIME;
+
+	if ( progress >= 0 )
+	{
+		char	bar[21];
+		int		total = (int)( coop_revivetime->value * 1000 );
+		int		n = total > 0 ? progress * 20 / total : 20;
+		for ( int i = 0; i < 20; i++ )
+		{
+			bar[i] = i < n ? '=' : '-';
+		}
+		bar[20] = 0;
+		Com_sprintf( text, sizeof( text ), "Reviving %s|[%s]", COOP_PlayerName( idx ), bar );
+		COOP_Tell( partner, text );
+		Com_sprintf( text, sizeof( text ), "%s is reviving you|[%s]", COOP_PlayerName( partner ), bar );
+		COOP_Tell( idx, text );
+		return;
+	}
+	Com_sprintf( text, sizeof( text ), "Downed: waiting for %s|%d s", COOP_PlayerName( partner ), secs );
+	COOP_Tell( idx, text );
+	if ( reviver >= 0 )
+	{
+		Com_sprintf( text, sizeof( text ), "Hold Use to revive %s|%d s", COOP_PlayerName( idx ), secs );
+	}
+	else
+	{
+		Com_sprintf( text, sizeof( text ), "%s is down: revive them|%d s", COOP_PlayerName( idx ), secs );
+	}
+	COOP_Tell( partner, text );
+}
+
+/*
+COOP_DownFrame
+
+After both players' frames (COOP_EndFrame): game over on both, bleed-out, revives, messages.
+*/
+void COOP_DownFrame( void )
+{
+	gentity_t	*p1 = &g_entities[0];
+	gentity_t	*p2 = COOP_P2();
+	int			elapsed;
+
+	if ( !coop_enabled )
+	{
+		return;
+	}
+	elapsed = coop_downLastTime ? level.time - coop_downLastTime : 0;
+	coop_downLastTime = level.time;
+
+	// player 1 died for real (no one to revive them, a script ending the mission): player 2 too
+	if ( !coop_gameOver && p1->client && p1->client->ps.pm_type == PM_DEAD )
+	{
+		if ( p2 && ( p2->health > 0 || coop_down[1].down ) )
+		{
+			COOP_GameOver( coop_down[1].attacker );
+		}
+		else
+		{
+			coop_gameOver = qtrue;
+		}
+		return;
+	}
+	if ( coop_gameOver )
+	{
+		return;
+	}
+
+	// the guest left while player 2 was down: the puppet's old death and respawn
+	if ( coop_down[1].down && ( !p2 || !COOP_GuestConnected() ) )
+	{
+		coop_down[1].down = qfalse;
+		COOP_Tell( 0, "" );
+		if ( p2 )
+		{
+			COOP_P2Die( p2, coop_down[1].attacker );
+		}
+	}
+
+	if ( coop_down[0].down && coop_down[1].down )
+	{
+		COOP_GameOver( coop_down[0].attacker );
+		return;
+	}
+
+	for ( int idx = 0; idx < 2; idx++ )
+	{
+		coopDown_t	*d = &coop_down[idx];
+		gentity_t	*ent = COOP_DownPlayer( idx );
+		int			partner = idx ^ 1;
+		gentity_t	*pent = COOP_DownPlayer( partner );
+		int			reviver = -1;
+		int			progress = -1;
+
+		if ( !d->down || !ent )
+		{
+			continue;
+		}
+		if ( !in_camera )
+		{
+			d->bleedLeft -= elapsed;
+		}
+		if ( d->bleedLeft <= 0 )
+		{
+			gi.Printf( "co-op: player %d bled out\n", idx + 1 );
+			COOP_GameOver( d->attacker );
+			return;
+		}
+		ent->client->ps.pm_type = PM_FREEZE;
+
+		if ( COOP_PlayerUp( partner ) && pent )
+		{
+			qboolean	bot = (qboolean)( partner == 1 && !COOP_GuestConnected() );
+			float		range = bot ? COOP_REVIVE_RANGE_BOT : COOP_REVIVE_RANGE;
+			if ( DistanceSquared( ent->currentOrigin, pent->currentOrigin ) <= range * range )
+			{
+				reviver = partner;
+				if ( bot || ( pent->client->buttons & BUTTON_USE ) )
+				{
+					if ( !d->reviveStart )
+					{
+						d->reviveStart = level.time;
+					}
+					progress = level.time - d->reviveStart;
+					if ( progress >= (int)( coop_revivetime->value * 1000 ) )
+					{
+						COOP_Revive( idx );
+						continue;
+					}
+				}
+			}
+		}
+		if ( progress < 0 && d->reviveStart )
+		{
+			d->reviveStart = 0;
+			d->nextMsg = 0;		// show the cancel at once
+		}
+		COOP_DownMessages( idx, reviver, progress );
+	}
+}

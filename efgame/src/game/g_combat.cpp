@@ -477,6 +477,10 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 	int			contents;
 	qboolean	deathScript = qfalse;
 
+	if ( COOP_PlayerDown( self, attacker, meansOfDeath ) )
+	{
+		return;	// co-op: down until the other player revives them
+	}
 	if ( COOP_IsP2( self ) )
 	{
 		COOP_P2Die( self, attacker );	// no game over, no targets

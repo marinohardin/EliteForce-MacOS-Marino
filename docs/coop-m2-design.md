@@ -210,3 +210,41 @@ behaviour), so wait for it.
 
 Not tested: two Macs; a movie the host skips (the guest follows the host's resume, the same path as a
 movie that ends); a guest that never finishes loading (the 30 s limit).
+
+## Combat with two players, downed players (2026-11-11)
+Enemies (`efgame/src/coop/coop_ai.cpp`):
+- Level scripts name the player as an NPC's enemy by the name only player 1 has. In co-op such a script
+  gets the player who hurt that NPC last (within 5 s), else the one it already fights, else the nearer
+  one. This is what made Borg drones that player 2 shot turn on player 1 (their pain script sets the
+  enemy to the player).
+- An NPC fighting one player turns on the other when that one is in sight and either the current one
+  isn't or the other is clearly nearer (75% of the distance); checked twice a second, held 3 s after a
+  switch. Shot by the other player: turns on the shooter with the game's skill-based odds.
+- Test commands: `coop_p2_npcs [radius]` lists NPCs and their enemies, `coop_p2_npc spawn <type>` (the
+  game's `npc` command), `coop_p2_aim <n>`, `coop_p2_use [frames]`, `coop_p2_damage <n> [fall|pit] [p1]`.
+
+Downed players (`efgame/src/coop/coop_down.cpp`, `coop_hud.cpp`):
+- A player whose health runs out goes down: lies on the floor (frozen, health 0, not a target, not
+  solid), and the partner revives them by holding Use within 96 units for `coop_revivetime` seconds
+  (default 3); back up with 25% health. Bleed-out `coop_bleedout` (default 30 s; paused during cameras).
+- Game over for both: both down, a bleed-out, or player 1 dying for real (scripted mission failure,
+  nobody up to revive): player 2 dies with player 1, so the guest gets the same mission status screen;
+  either player's Attack reloads.
+- Deaths a body can't stay at (trigger_hurt, lava, slime, drowning, crushed, telefrag, falling, no floor
+  below): the downed player is put next to the partner (game over when there is no spot).
+- Player 2 goes down only while a guest steers it; the local puppet keeps its old death and 4 s respawn,
+  and revives player 1 by itself when next to them. A guest leaving while player 2 is down: the old
+  death and respawn.
+- On screen: the game's own centre print isn't drawn in single player, so the host sends `coopmsg`
+  lines that the cgame draws (downed: "Downed: waiting for <name>" and the seconds left; partner:
+  "Hold Use to revive <name>", a progress bar while holding).
+- Saving is refused while someone is down (`GameAllowedToSaveHere`; a checkpoint autosave waits): a save
+  holds player 1 only, and one with player 1 at 0 health would load as a death. A level change revives
+  anyone down first.
+
+Tested on one Mac (two copies, the forge3 save): the reaver fight with both players (enemies take
+player 2), a spawned reaver switching from player 1 to player 2 when player 2 is next to it, a borg2
+drone ignoring the players turning on player 2 after player 2 shot it; down and revive both ways, both
+down and bleed-out (mission status on both, the guest's Attack reloads), trigger_hurt death next to the
+partner, puppet revive, save refused while down. Regression harness vs `coop-m2-base`: ALL IDENTICAL
+with co-op off and with co-op on and `sp_coop 0`.
