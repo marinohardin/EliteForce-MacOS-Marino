@@ -30,7 +30,9 @@ free, non-commercial distribution only, for use with the retail game. Its
 text is "STEF Game Source License.doc" in this folder (and in
 ../licenses). They are not covered by the engine's GPL.
 
-For building the app: pk3 files aren't kept in git. macos/make-app.sh
-copies the newest macos/cmod/pakcmod-release-*.pk3 of your checkout (or
-the file named by CMOD_PAK=<path>) into the app, with this README and the
-license. Without one, the app is built without cMod's modules.
+For building: the cMod pk3 is kept in git here (macos/cmod/), unlike other
+pk3 files. macos/make-app.sh, windows/make-release.sh and
+linux/make-appimage.sh copy the newest macos/cmod/pakcmod-release-*.pk3
+(or the file named by CMOD_PAK=<path>) into the package, with this README
+and the license. For a new cMod release, add its pk3 here and remove the
+old one.

@@ -53,3 +53,6 @@ efgame/buildmac-coop/
 /BaseEF/
 /*.pk3
 # ------------------------------------------------------------------------------
+
+# cMod's game modules ship with every package (macos/cmod/README.txt), so the pk3 is kept in git
+!/macos/cmod/pakcmod-release-*.pk3
