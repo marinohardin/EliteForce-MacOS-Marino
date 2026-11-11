@@ -283,3 +283,33 @@ with co-op off and with co-op on and `sp_coop 0`.
   mouse still go to the front window only. Measured with `com_maxfpsUnfocused 5` on both unfocused
   copies: 20 host frames/s with it on, 10 with it off. Single player has no pause of its own on focus
   loss. No effect without co-op (Holomatch, `sp_coop 0`, EF_COOP off).
+
+## Names and the guest's Munro (2026-11-11)
+- The Co-op sheet has "Your name" at the top, for Host and Join alike: it starts as the Mac's name
+  (`NSHost localizedName`), is kept in the app's preferences (`CoopPlayerName`) and goes to the game as
+  `+set coop_name "..."`. Names are made plain: accents and other scripts turned into ASCII, no quotes,
+  `\`, `;`, `%` or control characters, spaces squeezed, at most 31 characters (the engine cleans what it
+  receives the same way). A copy without `coop_name` uses the Mac's name.
+- Join has "Munro: Male / Female" (`CoopGuestMunro`, `+set coop_sex male|female`). The guest's connect
+  carries it as an optional `sex` key; the host hands it to the game with the name (bridge version 4,
+  `GuestSex`). The accept carries the host's `hostName`, and the co-op check answers the host player's
+  name as `player` (the sheet shows "Host: ..."). No protocol bump: both keys are optional, and an older
+  peer is already refused by the app version check.
+- Player 2's look (`efgame/src/coop/coop_look.cpp`): without a guest, or a guest without `sex`, the same
+  models as player 1. With a guest of the other sex, player 1's outfit in that sex (munro and alexandria
+  heads, hazard and hazardfemale suits, the scavenger and imperial disguises; anything else becomes the
+  hazard suit), and that voice's pain, death, jump and gasp sounds, registered straight from
+  `sound/voice/alexa|munro/misc` so the host's own sex setting doesn't turn them around. Checked every
+  frame, so a guest joining or leaving, or player 1 changing clothes in a script, follows at once. The
+  guest's replica registers the same models from player 2's model names and its voice once its cgame
+  is up.
+- Names in co-op messages: player 2 is the guest's name (also player 2's netname, which is co-op
+  state), player 1 is the host's `coop_name`, else player 1's netname. Player 1's netname, `sex`,
+  `g_sex` and everything the story reads stay the host's: the story keeps talking to the host's Munro.
+- Tested on one Mac (two copies, borg2): host "Captain Host" (male), guest "Seven of Guest" (female):
+  player 2 with the Alexandria head and female suit on both screens, both copies registered the alexa
+  death and pain sounds; `coop_p2_damage 200 npc` showed "Hold Use to revive Seven of Guest" on the host
+  and "Downed: waiting for Captain Host", then "Captain Host is reviving you" on the guest. The guest
+  leaving turned player 2 back into player 1's look; host as Alexandria with a male guest: player 2 male
+  Munro. The sheet rendered with both new controls; Host passed `+set coop_name`. Regression harness vs
+  `coop-m2-base`: ALL IDENTICAL with co-op off and with co-op on and `sp_coop 0`.
