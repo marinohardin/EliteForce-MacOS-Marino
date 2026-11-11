@@ -675,6 +675,7 @@ static struct {
 	coopFrame_t			*building;		// between CoopNet_HostFrameBegin and End
 	int					frameNum;		// the newest frame's number
 	int					ackFrame;		// the newest frame the guest has
+	int					guestLevel;		// the host level the guest has up (CoopNet_HostGuestLevel)
 	int					fullFrame;		// the last whole-world frame sent, and when
 	int					fullSentAt;
 	int					sndbufSet;
@@ -820,6 +821,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	memset( &coopHost.cmd, 0, sizeof( coopHost.cmd ) );
 	CoopRingClear( coopHost.ring );
 	coopHost.ackFrame = 0;
+	coopHost.guestLevel = 0;
 	coopHost.fullFrame = 0;
 	coopHost.fullSentAt = 0;
 	coopHost.statStart = now;
@@ -881,6 +883,8 @@ static void CoopHostReadAck( msg_t *msg )
 	ack = MSG_ReadLong( msg );
 	if ( ack > coopHost.ackFrame && ack <= coopHost.frameNum )
 		coopHost.ackFrame = ack;
+	if ( msg->readcount + 4 <= msg->cursize )
+		coopHost.guestLevel = MSG_ReadLong( msg );
 }
 
 void CoopNet_HostPacket( int sock, const unsigned char *data, int len, const struct sockaddr_in *from )
@@ -973,6 +977,11 @@ int CoopNet_HostNeedsPassword( void )
 int CoopNet_HostHasGuest( void )
 {
 	return coopHost.active;
+}
+
+int CoopNet_HostGuestLevel( void )
+{
+	return coopHost.active ? coopHost.guestLevel : 0;
 }
 
 /*
@@ -1190,6 +1199,7 @@ static struct {
 	int					newestFrameAt;	// and when (Sys_Milliseconds)
 	int					ackSent;		// the newest frame the host was told about
 	int					loadLevelId;	// the host level this guest loaded the map for (0: none yet)
+	int					readyLevel;		// ...and the one it has up (CoopNet_GuestLevelReady)
 	struct {
 		int		frame;					// 0: free
 		int		count, got, zlen, rawlen;
@@ -1618,6 +1628,7 @@ static void CoopGuestSend( void )
 			MSG_WriteByte( &msg, (byte)c->upmove );
 		}
 		MSG_WriteLong( &msg, coopGuest.newestFrame );
+		MSG_WriteLong( &msg, coopGuest.readyLevel );
 		CoopSendMessage( coopGuest.sock, NULL, &msg );
 		coopGuest.unsent = qfalse;
 		coopGuest.lastSend = now;
@@ -1628,6 +1639,7 @@ static void CoopGuestSend( void )
 		// (a new replica frame is acknowledged at once, so the host's next one is a small change)
 		CoopBeginMessage( &msg, buf, sizeof( buf ), coopGuest.session, COOP_MSG_KEEPALIVE );
 		MSG_WriteLong( &msg, coopGuest.newestFrame );
+		MSG_WriteLong( &msg, coopGuest.readyLevel );
 		CoopSendMessage( coopGuest.sock, NULL, &msg );
 		coopGuest.lastSend = now;
 		coopGuest.ackSent = coopGuest.newestFrame;
@@ -1694,6 +1706,15 @@ int CoopNet_GuestFrameSlot( int frame, int slot, const unsigned char **data )
 int CoopNet_GuestLevelId( void )
 {
 	return coopGuest.loadLevelId;
+}
+
+void CoopNet_GuestLevelReady( int levelId )
+{
+	if ( coopGuest.readyLevel != levelId )
+	{
+		coopGuest.readyLevel = levelId;
+		coopGuest.ackSent = -1;		// tell the host now (a keepalive)
+	}
 }
 
 int CoopNet_GuestHostPaused( void )

@@ -22,8 +22,9 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 #define VSP_COOP_PORT		29760
 // bumped whenever co-op's network messages change; host and guest must match
 // (1: the M0 check only; 2: M1, a guest can connect; 3: the guest mirrors the host's world;
-// 4: one guest command per host frame, acknowledged for prediction)
-#define VSP_COOP_PROTOCOL	4
+// 4: one guest command per host frame, acknowledged for prediction; 5: the guest says which host
+// level it has up, movies, cutscene skips)
+#define VSP_COOP_PROTOCOL	5
 
 // the biggest co-op packet (fits a usual Ethernet/Wi-Fi MTU with room to spare)
 #define COOP_MAX_PACKET		1400
@@ -46,6 +47,8 @@ void		CoopNet_HostShutdown( int sock, const char *reason );
 // and "guest" (1 while a guest is connected)
 int			CoopNet_HostNeedsPassword( void );
 int			CoopNet_HostHasGuest( void );
+// the host level (sp/sp_bridge.cpp's level id) the guest has loaded and runs, 0 for none yet
+int			CoopNet_HostGuestLevel( void );
 // the coop_status / coop_disconnect / coop_kick commands (once; the guest adds them itself)
 void		CoopNet_AddCommands( void );
 
@@ -71,6 +74,9 @@ qboolean	CoopNet_GuestFrameInfo( int frame, int *levelId, int *levelTime, int *a
 int			CoopNet_GuestFrameSlot( int frame, int slot, const unsigned char **data );
 // the host level the guest's current map load is for (frames of other levels aren't applied)
 int			CoopNet_GuestLevelId( void );
+// the bridge applied a frame of host level levelId with its cgame up: the guest is in that level
+// (the host holds a new level's start until then)
+void		CoopNet_GuestLevelReady( int levelId );
 // the host's game isn't going on: 1 the host paused it (menu, console), 2 its frames stopped
 // coming for another reason (a load, the network); 0 it plays
 int			CoopNet_GuestHostPaused( void );

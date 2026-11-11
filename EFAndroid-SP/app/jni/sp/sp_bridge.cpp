@@ -158,6 +158,8 @@ static void SP_CoopSetBridge( void ){
 // (game/coop_bridge.h, efcode/sys/sys_coop_net.c).
 extern "C" {
 #include "../efcode/sys/sys_coop_net.h"
+    qboolean CL_InGameCinematicActive( void );   // cl_cin.c
+    void     SCR_StopCinematic( void );
 }
 static const coopReplica_t *g_coopRep = NULL;   // the game module's replica functions
 static int  g_coopReplica = 0;      // this level is a guest's replica
@@ -165,10 +167,56 @@ static int  g_coopLevelId = 0;      // host: counts level starts, so the guest k
 static int  g_coopApplied = 0;      // guest: the last host frame written into this level
 static int  g_coopAppliedAt = 0;    // ...and when (Sys_Milliseconds), for the cgame's clock
 static int  g_coopCmdSeen = 0;      // guest: the newest host server command passed to the cgame
+static int  g_coopHoldLevel = 0;    // host: this level's start waits for the guest to load it (0: no wait)
+static int  g_coopHoldAt = 0;       // ...since (Sys_Milliseconds; 0 until the first drawn frame)
+static int  g_coopHoldSent = 0;     // ...and the last frame sent meanwhile
+#define COOP_HOLD_MAX  30000        // ms: a guest that hasn't loaded the level by then isn't waited for
 #define COOP_CMDS 64
 static int  g_coopSeq = 0;          // guest: its commands (never reset: the host takes only newer numbers)
 static int  g_coopAck = 0;          // guest: the newest of them the host applied (see SP_CoopMakeCmd)
 static int  SP_CoopCurrentCmd( void );
+// Co-op saves. The .sav stays a plain single-player save (player 2 isn't in it, see the game's
+// coop_save.cpp); player 2's health, armor, weapon and ammo go to <name>.coop next to it, which single
+// player never reads. Loading the save hands them to the game the way a map change does (coop_p2save,
+// read at the level start). A save without player 2 removes an old .coop of the same name.
+extern "C" {
+    void  FS_WriteFile( const char *qpath, const void *buffer, int size );
+    void  FS_HomeRemove( const char *homePath );
+    qboolean FS_FileExists( const char *file );
+}
+static void SP_CoopWriteSideFile( const char *name ){
+    char p2[1024], path[96];
+    Cvar_VariableStringBuffer( "coop_p2saved", p2, sizeof(p2) );
+    snprintf( path, sizeof(path), "saves/%s.coop", name );
+    if( p2[0] ){
+        FS_WriteFile( path, p2, (int)strlen( p2 ) );
+        blog("co-op: wrote %s (player 2: %s)\n", path, p2);
+    } else if( FS_FileExists( path ) ){
+        FS_HomeRemove( path );
+    }
+    Cvar_Set( "coop_p2saved", "" );
+}
+static void SP_CoopReadSideFile( const char *name ){
+    char path[96], p2[1024]; void *buf = NULL;
+    snprintf( path, sizeof(path), "saves/%s.coop", name );
+    long len = FS_ReadFile( path, &buf );
+    if( len > 0 && buf ){
+        int n = len < (long)sizeof(p2) - 1 ? (int)len : (int)sizeof(p2) - 1;
+        memcpy( p2, buf, n ); p2[n] = 0;
+        FS_FreeFile( buf );
+        Cvar_Set( "coop_p2save", p2 );
+        blog("co-op: read %s (player 2: %s)\n", path, p2);
+    } else {
+        if( buf ) FS_FreeFile( buf );
+        char cur[8]; Cvar_VariableStringBuffer( "coop_p2save", cur, sizeof(cur) );
+        if( cur[0] ) Cvar_Set( "coop_p2save", "" );   // (not the last level's: this save starts afresh)
+    }
+}
+// host: a level starts with a guest connected: hold its first game frame until the guest has it too
+static void SP_CoopHoldStart( void ){
+    g_coopHoldLevel = ( g_coopRep && !g_coopReplica && CoopNet_HostHasGuest() ) ? g_coopLevelId : 0;
+    g_coopHoldAt = 0; g_coopHoldSent = 0;
+}
 static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd );
 static void SP_CoopGetReplica( void ){
     typedef const coopReplica_t *(*coopGetReplica_t)( void );
@@ -511,8 +559,18 @@ static int   I_FS_ReadFile( const char *name, void **buf ){ return (int)FS_ReadF
 static void *I_Malloc( int bytes ){ return malloc((size_t)bytes); }
 static void  I_Free( void *p ){ free(p); }
 static int   g_spMovieQueued = 0;   // the game queued "inGameCinematic" this frame (see SP_DrawFrame's skip)
+#ifdef EF_COOP
+static int   g_coopMovieSeq = 0;    // host: counts the in-game movies the game started (the guest plays them too)
+static char  g_coopMovie[64];       // ...and its name
+static void  SP_CoopNoteMovie( const char *t );
+#endif
 static void  I_SendConsole( const char *t ){
-    if( t && !strncasecmp( t, "inGameCinematic", 15 ) ) g_spMovieQueued = 1;
+    if( t && !strncasecmp( t, "inGameCinematic", 15 ) ){
+        g_spMovieQueued = 1;
+#ifdef EF_COOP
+        SP_CoopNoteMovie( t );
+#endif
+    }
     Cbuf_AddText(t);
 }
 static void  I_DropClient( int n, const char *r ){ (void)n;(void)r; }
@@ -864,6 +922,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     g_coopApplied = 0; g_coopCmdSeen = 0;
     // a guest's replica level (sp_coop 2, applied by InitGame): no game frames, the host's come instead
     g_coopReplica = ( g_coopRep && Cvar_VariableIntegerValue( "sp_coop" ) == 2 ) ? 1 : 0;
+    SP_CoopHoldStart();
     if( !g_coopReplica )
 #endif
     SP_RunFrames( SP_SETTLE_FRAMES );   // retail SV_SpawnServer settle frames, before SP_StartClient connects the player
@@ -1620,6 +1679,7 @@ extern "C" qboolean SP_FinishTransition(void){
 #ifdef EF_COOP
     g_coopLevelId++;
     g_coopReplica = 0;   // a replica level starts only through SP_SpawnServer (the guest's map load)
+    SP_CoopHoldStart();
 #endif
     // Fresh spawn (eAUTO: forward transition or autosave load): retail SV_SpawnServer's settle frames, before the
     // player connects. Not for an eFULL user load: ReadLevel below replaces every entity with the saved, already
@@ -1875,11 +1935,17 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
           I_Append('CSIN', &i, 4);
           I_Append('CSDA', g_configstrings[i], (int)strlen(g_configstrings[i])+1);
       } }
+#ifdef EF_COOP
+    if( g_coopRep ) Cvar_Set( "coop_p2saved", "" );   // the co-op game fills it in WriteLevel (player 2's state)
+#endif
     ge->WriteLevel(bEAUTO);                     // eFULL(qfalse): gclient + full entity table; eAUTO(qtrue): entity 0 + objectives/ICARUS only
     SG_Close();
     char to[96]; snprintf(to,sizeof(to),"saves/%s.sav", name);
     FS_Rename("saves/current.sav", to);
     binfo("save: wrote %s (map %s, t=%d, %s)\n", to, g_curMap, tnow, bEAUTO ? "eAUTO" : "eFULL");
+#ifdef EF_COOP
+    if( g_coopRep ) SP_CoopWriteSideFile( name );
+#endif
 }
 
 // Public save entry (the `save` console command, deferred-autosave writer, quick-save): always eFULL, exactly
@@ -1915,6 +1981,9 @@ extern "C" void SP_LoadGameFile(const char* name){
     if( g_transMap[0] ){ bwarn("SP_LoadGameFile: '%s' already pending -> ignoring overlapping load '%s'\n", g_transMap, name); return; }
     char path[96]; snprintf(path,sizeof(path),"saves/%s.sav", name);
     if(!SG_OpenRead(path)){ bwarn("load: open failed %s\n", path); return; }
+#ifdef EF_COOP
+    SP_CoopReadSideFile( name );
+#endif
     static unsigned char shot[256*256*4];
     char comm[128], mpcm[1024]; int ncvc=0, game=0, tnow=0, timr=0, cscn=0;
     // EFSP 4:3: cg_forceAspect is a DISPLAY preference (the video-menu Aspect toggle), not gameplay state. The
@@ -2195,14 +2264,41 @@ static int SP_CoopCommandsImage( unsigned char *buf, int size ){
     int len = 0;
     memcpy( buf + len, &g_svCmdSeq, 4 ); len += 4;
     memcpy( buf + len, &n, 4 ); len += 4;
+    int put = 0;
     for( int i = n - 1; i >= 0; i-- ){
         const char *t = g_svCmds[seqs[i] & (SC_RING-1)];
         int tl = (int)strlen( t ) + 1;
-        if( len + 4 + tl > size ) break;
+        if( len + 4 + tl > size - 88 ) break;
         memcpy( buf + len, &seqs[i], 4 ); len += 4;
         memcpy( buf + len, t, tl ); len += tl;
+        put++;
     }
+    memcpy( buf + 4, &put, 4 );
+    // then whether this level's start is held for the guest, whether a movie plays here now, and the
+    // newest in-game movie: [held][playing][seq][name\0] (seq 0: none yet)
+    int held = ( g_coopHoldLevel && g_coopHoldLevel == g_coopLevelId ) ? 1 : 0;
+    int playing = CL_InGameCinematicActive() ? 1 : 0;
+    memcpy( buf + len, &held, 4 ); len += 4;
+    memcpy( buf + len, &playing, 4 ); len += 4;
+    int ml = (int)strlen( g_coopMovie ) + 1;
+    memcpy( buf + len, &g_coopMovieSeq, 4 ); len += 4;
+    memcpy( buf + len, g_coopMovie, ml ); len += ml;
     return len;
+}
+// The game started an in-game movie ("inGameCinematic <name>"): the guest plays it too.
+static void SP_CoopNoteMovie( const char *t ){
+    char name[64]; int n = 0;
+    t += 15;
+    while( *t == ' ' || *t == '"' ) t++;
+    while( *t && *t != ' ' && *t != '"' && *t != '\n' && *t != ';' && n < (int)sizeof(name) - 1 ){
+        char c = *t++;
+        if( !isalnum( (unsigned char)c ) && c != '_' && c != '-' && c != '.' && c != '/' ) return;   // not a movie name
+        name[n++] = c;
+    }
+    name[n] = 0;
+    if( !n ) return;
+    g_coopMovieSeq++;
+    memcpy( g_coopMovie, name, n + 1 );
 }
 // After every game frame while a guest is connected: the world as replica slots.
 static void SP_CoopHostFrame( void ){
@@ -2226,6 +2322,50 @@ static void SP_CoopHostFrame( void ){
 }
 
 // ---- co-op replica: the guest's side ----
+// In-game movies. The host's game pauses while one plays; the guest plays the same movie (both start
+// it in the same host frame), and stops it when the host's game goes on again (the movie ended or the
+// host skipped it), so neither waits long for the other. A guest whose copy ends first, or who skips
+// it, sees "Host paused" until the host's ends.
+static int g_coopMovieSeen = 0;     // guest: the newest host movie seen (played, or left out on joining)
+static int g_coopMovieSynced = 0;   // ...decided for this level which one is current (see below)
+static int g_coopMovieOn = 0;       // ...one of them is playing here
+static int g_coopMovieHeld = 0;     // ...and the host's game has paused for it since
+static void SP_CoopGuestMovie( int seq, const char *name, qboolean hostPlaying ){
+    if( !g_spActive ) return;   // (decided once the cgame runs)
+    if( !g_coopMovieSynced ){
+        // the first frame of a level here (joining, or following the host): the host's newest movie
+        // only if it plays there now (it may have started while this guest loaded the level)
+        g_coopMovieSynced = 1;
+        qboolean current = ( seq > 0 && seq != g_coopMovieSeen && hostPlaying ) ? qtrue : qfalse;
+        g_coopMovieSeen = seq;
+        if( !current ) return;
+    } else {
+        if( seq <= g_coopMovieSeen ){
+            if( seq < g_coopMovieSeen ) g_coopMovieSeen = seq;   // a new host session counts from 0
+            return;
+        }
+        g_coopMovieSeen = seq;
+    }
+    if( !name[0] ) return;
+    blog("co-op: the host plays the movie %s; playing it here too\n", name);
+    char cmd[96]; snprintf( cmd, sizeof(cmd), "inGameCinematic %.63s\n", name );
+    Cbuf_AddText( cmd );
+    g_coopMovieOn = 1; g_coopMovieHeld = 0;
+}
+// every guest frame: end the movie here once the host's game has gone on after pausing for it
+static void SP_CoopGuestMovieFrame( int paused ){
+    if( !g_coopMovieOn ) return;
+    if( !CL_InGameCinematicActive() ){
+        if( g_coopMovieHeld || !paused ) g_coopMovieOn = 0;   // over here (it ended, or the guest skipped it)
+        else return;                                        // (queued, not started yet)
+    }
+    if( paused == 1 ) g_coopMovieHeld = 1;
+    else if( g_coopMovieHeld && !paused ){
+        blog("co-op: the host's movie is over; stopping it here\n");
+        SCR_StopCinematic();
+        g_coopMovieOn = 0;
+    }
+}
 static qboolean SP_CoopSlotSame( int a, int b, int slot, const unsigned char **data, int *len ){
     *len = CoopNet_GuestFrameSlot( b, slot, data );
     if( !a ) return qfalse;
@@ -2255,19 +2395,31 @@ static void SP_CoopApplyFrame( int frame, int time ){
     }
     len = CoopNet_GuestFrameSlot( frame, COOP_SLOT_COMMANDS, &d );
     if( len >= 8 ){
-        int newest, count, pos = 8;
+        int newest, count, pos = 8, held = 0;
         memcpy( &newest, d, 4 ); memcpy( &count, d + 4, 4 );
-        if( !prev ) g_coopCmdSeen = newest;   // joining: only what comes from now on
+        // the commands, then [held][movie seq][movie time][movie name]
+        const unsigned char *tail = NULL;
+        { int p = 8, i;
+          for( i = 0; i < count && p + 5 <= len; i++ ){ int tl = (int)strnlen( (const char *)d + p + 4, len - p - 4 ); if( p + 4 + tl >= len ) break; p += 4 + tl + 1; }
+          if( i == count && p + 13 <= len && !d[len - 1] ){ tail = d + p; memcpy( &held, tail, 4 ); } }
+        // joining: only what comes from now on; but a level the host holds for this guest is new,
+        // so all of its story text so far (an opening scroll text, the first subtitles) is shown
+        if( !prev ) g_coopCmdSeen = held ? 0 : newest;
         for( int i = 0; i < count && pos + 5 <= len; i++ ){
             int seq; memcpy( &seq, d + pos, 4 ); pos += 4;
             const char *text = (const char *)d + pos;
             int tl = (int)strnlen( text, len - pos );
             if( pos + tl >= len ) break;
             pos += tl + 1;
-            if( seq > g_coopCmdSeen && g_spActive ) I_SendServerCmd( 0, "%s", text );
-            if( seq > g_coopCmdSeen ) g_coopCmdSeen = seq;
+            if( seq > g_coopCmdSeen && g_spActive ){ I_SendServerCmd( 0, "%s", text ); g_coopCmdSeen = seq; }   // (kept until the cgame runs)
         }
         if( newest < g_coopCmdSeen ) g_coopCmdSeen = newest;   // (the host's count restarts with a level)
+        if( tail ){
+            int playing, mseq;
+            memcpy( &playing, tail + 4, 4 ); memcpy( &mseq, tail + 8, 4 );
+            if( !prev ) g_coopMovieSynced = 0;
+            SP_CoopGuestMovie( mseq, (const char *)tail + 12, playing ? qtrue : qfalse );
+        }
     }
     g_coopRep->ApplyDone( g_spActive ? qtrue : qfalse );
     g_coopApplied = frame;
@@ -2322,9 +2474,12 @@ extern "C" int SP_CoopReplicaApply( void ){
     for( int f = first; f <= newest; f++ ){
         int lid, t, ack;
         if( !CoopNet_GuestFrameInfo( f, &lid, &t, &ack ) || lid != CoopNet_GuestLevelId() ) continue;
+        int lastTime = g_coopApplied ? g_levelTime : -1;
         SP_CoopApplyFrame( f, t );
         applied++;
         if( ack > g_coopAck && ack <= g_coopSeq ) g_coopAck = ack;
+        if( g_spActive ) CoopNet_GuestLevelReady( lid );
+        if( t == lastTime ) continue;   // the host holds its level's start for this guest: no game time passed
         if( g_spActive ) SP_CoopMakeCmd();
         if( g_spActive ){
             g_cmdNum++;
@@ -2350,6 +2505,7 @@ static void SP_CoopReplicaDrawFrame( int stereo ){
         blog("co-op: the host's game goes on\n");
     }
     g_coopHostPaused = paused;
+    SP_CoopGuestMovieFrame( paused );
     if( !paused ){
       int an[3]; signed char fwd=0,side=0,up=0; int btn=0;
       SPR_GetLatestCmd(an,&fwd,&side,&up,&btn);
@@ -2361,15 +2517,56 @@ static void SP_CoopReplicaDrawFrame( int stereo ){
     if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC - 1 ) since = SP_SV_FRAMEMSEC - 1;
     int cgTime = g_levelTime - SP_SV_FRAMEMSEC + since;
     if( cgTime < g_snapBaseTime ) cgTime = g_snapBaseTime;
+    // the host skips a cutscene: the guest's view is the skip screen too, and the game's sounds stop
+    int skipping = Cvar_VariableIntegerValue( "skippingCinematic" );
+    if( skipping && !s_spWasSkipping ){ S_StopGameSounds(); SP_ClearVoiceTimers(); blog("co-op: the host skips the cutscene\n"); }
+    s_spWasSkipping = skipping;
     S_PauseGameSounds( paused ? qtrue : qfalse );   // (nothing to do when they aren't held)
-    s_spSoundsBlocked = paused ? 1 : 0; s_spSkipDraw = 0;
+    s_spSoundsBlocked = ( paused || skipping ) ? 1 : 0; s_spSkipDraw = skipping;
     SP_UpdateVisemes();
     SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
-    if( paused ){
-        S_ClearLoopingSounds( qtrue );   // the frame above re-added the loops; silent, like the host's pause
-        const char *text = paused == 1 ? "Host paused" : "Waiting for the host";
-        SCR_DrawBigString( 320 - (int)strlen( text ) * 8, 232, text, 1.0f, qtrue );   // 16-pixel characters, centred on 640x480
+    s_spSkipDraw = 0;
+    if( skipping ){
+        SP_DrawSkipProgress();
+        S_ClearLoopingSounds( qtrue );
     }
+    if( paused || skipping ){
+        if( paused ) S_ClearLoopingSounds( qtrue );   // the frame above re-added the loops; silent, like the host's pause
+        const char *text = paused == 1 ? "Host paused" : paused ? "Waiting for the host" : "Host is skipping the cutscene";
+        if( !CL_InGameCinematicActive() )
+            SCR_DrawBigString( 320 - (int)strlen( text ) * 8, 232, text, 1.0f, qtrue );   // 16-pixel characters, centred on 640x480
+    }
+}
+// The host's render frame while a new level (a New Game, a map change, a load) waits for the guest to
+// load it too, so both start it together: no game frames (the level's time stands still, as in a pause),
+// the frozen frame drawn with a line saying so, and a frame for the guest now and then (the first one
+// tells it which map to load). Over when the guest has the level up, leaves, or takes too long.
+static int SP_CoopHolding( int stereo ){
+    if( !g_coopHoldLevel ) return 0;
+    int now = Sys_Milliseconds();
+    if( !g_coopHoldAt ) g_coopHoldAt = now;
+    const char *why = NULL;
+    if( g_coopHoldLevel != g_coopLevelId || !CoopNet_HostHasGuest() ) why = "the guest left";
+    else if( CoopNet_HostGuestLevel() == g_coopHoldLevel ) why = "player 2 has it";
+    else if( now - g_coopHoldAt > COOP_HOLD_MAX ) why = "player 2 is taking too long; going on without waiting";
+    if( why ){
+        blog("co-op: level start held %d ms for player 2 (%s)\n", now - g_coopHoldAt, why);
+        if( now - g_coopHoldAt > COOP_HOLD_MAX ) SP_ComPrintf()("co-op: %s\n", why);
+        g_coopHoldLevel = 0;
+        SP_CoopHostFrame();   // (the guest's next frame says the level isn't held any more)
+        return 0;
+    }
+    if( !g_coopHoldSent || now - g_coopHoldSent >= 250 ){ g_coopHoldSent = now; SP_CoopHostFrame(); }
+    S_PauseGameSounds( qtrue );
+    s_spSoundsBlocked = 1;
+    int cgTime = g_levelTime - SP_SV_FRAMEMSEC + g_simResidual;
+    if( cgTime >= g_levelTime )    cgTime = g_levelTime - 1;
+    if( cgTime < g_snapBaseTime )  cgTime = g_snapBaseTime;
+    SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+    S_ClearLoopingSounds( qtrue );
+    const char *text = "Waiting for player 2";
+    SCR_DrawBigString( 320 - (int)strlen( text ) * 8, 232, text, 1.0f, qtrue );
+    return 1;
 }
 #endif
 
@@ -2389,6 +2586,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     if( Regress_Active() ) delta = SP_SV_FRAMEMSEC;          // regression harness: one game frame per drawn frame
 #ifdef EF_COOP
     if( g_coopReplica ){ SP_CoopReplicaDrawFrame( stereo ); return; }
+    if( SP_CoopHolding( stereo ) ) return;
 #endif
 
     // PAUSE when the in-game menu (ESC), the console or an in-game movie is up: retail SP pauses the
@@ -2491,6 +2689,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     if( g_simResidual > SP_SV_FRAMEMSEC * maxTicks )   // hitch cap: bound catch-up, no spiral
         g_simResidual = SP_SV_FRAMEMSEC * maxTicks;
     int simStart = Sys_Milliseconds();
+#ifdef EF_COOP
+    int coopSkipFrames = 0;
+#endif
     while( g_simResidual >= SP_SV_FRAMEMSEC ) {
         g_simResidual -= SP_SV_FRAMEMSEC;
         g_levelTime   += SP_SV_FRAMEMSEC;
@@ -2506,7 +2707,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         SP_GameRunFrame();
         BuildSnapshot();
 #ifdef EF_COOP
-        SP_CoopHostFrame();
+        // (while skipping, many game frames run per drawn frame: the guest gets the last of them, below)
+        if( !skipping ) SP_CoopHostFrame();
+        else coopSkipFrames++;
 #endif
         if( skipping ){
             if( !Cvar_VariableIntegerValue("skippingCinematic") || g_spMovieQueued ){
@@ -2517,6 +2720,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         }
     }
 
+#ifdef EF_COOP
+    if( coopSkipFrames ) SP_CoopHostFrame();
+#endif
     // Deferred autosave: an autosave requested during a cutscene (in_camera) was held back by SP_SaveGame so it
     // wouldn't capture mid-cinematic state. Write it now that the cutscene has ended, so the death-respawn
     // checkpoint is a clean post-cinematic state instead of one that reloads with the player free-walking the
