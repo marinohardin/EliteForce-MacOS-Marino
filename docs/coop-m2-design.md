@@ -275,3 +275,11 @@ with co-op off and with co-op on and `sp_coop 0`.
   removes the file when it still holds its own PID. Before, the second copy overwrote it and the first to
   quit removed the other's, which could make a later start ask about an abnormal exit. A copy that
   crashes alone is still caught.
+- Playing in the background: `coop_backgroundPlay` (archived, default 1; the Co-op sheet's Host side
+  has "Keep playing in the background", on by default, passed as `+set coop_backgroundPlay 0|1`).
+  While this copy hosts (single player, `sp_coop 1`) or is a guest, the unfocused/minimized frame caps
+  (`com_maxfpsUnfocused`, `com_maxfpsMinimized`) are skipped and the process holds a latency-critical
+  NSProcessInfo activity (no App Nap or timer coalescing when its window is covered). Keys and the
+  mouse still go to the front window only. Measured with `com_maxfpsUnfocused 5` on both unfocused
+  copies: 20 host frames/s with it on, 10 with it off. Single player has no pause of its own on focus
+  loss. No effect without co-op (Holomatch, `sp_coop 0`, EF_COOP off).

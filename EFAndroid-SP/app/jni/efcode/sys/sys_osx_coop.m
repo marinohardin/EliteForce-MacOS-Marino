@@ -317,6 +317,53 @@ static BOOL CoopAnswer( const char *packet, int len, const struct sockaddr_in *f
 
 /*
 =================
+Keeping a co-op game going in the background
+
+Two players on one Mac (or a host who looks at another app) keep the game
+going while its window isn't the front one: with coop_backgroundPlay 1 (the
+default; the Co-op sheet's "Keep playing in the background"), while this copy
+hosts (single player with sp_coop 1) or is a connected guest, the unfocused /
+minimized frame-rate caps (com_maxfpsUnfocused, com_maxfpsMinimized) don't
+apply and macOS is told the game is latency-critical work, so App Nap and timer
+coalescing don't slow it down when its window is covered or in the background.
+Keys and the mouse still go only to the window in front. Nothing changes
+without co-op.
+=================
+*/
+static cvar_t		*coop_backgroundPlay;
+static id			coopBackgroundActivity;		// NSProcessInfo activity while it applies
+
+int Sys_CoopBackgroundPlay( void )
+{
+	if( !coop_backgroundPlay || !coop_backgroundPlay->integer || Com_Holomatch() || Com_DedicatedServer() )
+		return 0;
+	if( CoopNet_GuestActive() )
+		return 1;		// a guest (connecting or connected)
+	return coopSocket >= 0 && Cvar_VariableIntegerValue( "sp_coop" ) == 1;	// a host
+}
+
+static void CoopBackgroundFrame( void )
+{
+	BOOL want = Sys_CoopBackgroundPlay() != 0;
+
+	if( want == ( coopBackgroundActivity != nil ) )
+		return;
+	if( want )
+	{
+		coopBackgroundActivity = [[NSProcessInfo processInfo] beginActivityWithOptions:
+			NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical
+			reason: @"Co-op game in progress"];
+		Com_Printf( "co-op: the game keeps playing in the background\n" );
+	}
+	else
+	{
+		[[NSProcessInfo processInfo] endActivity: coopBackgroundActivity];
+		coopBackgroundActivity = nil;
+	}
+}
+
+/*
+=================
 Sys_CoopFrame
 
 Once a frame (Com_Frame, EF_COOP builds): a guest (coop_connect set) runs
@@ -336,12 +383,14 @@ void Sys_CoopFrame( void )
 		registered = YES;
 		Cvar_Get( "coop_connect", "", CVAR_TEMP );
 		Cvar_Get( "coop_password", "", CVAR_TEMP );
+		coop_backgroundPlay = Cvar_Get( "coop_backgroundPlay", "1", CVAR_ARCHIVE );
 		CoopNet_AddCommands();
 	}
 	CoopNet_GuestFrame();
 	if( Com_Holomatch() || Com_DedicatedServer() || Cvar_VariableIntegerValue( "sp_coop" ) != 1 || CoopNet_GuestActive() )
 	{
 		CoopCloseSocket();
+		CoopBackgroundFrame();
 		return;
 	}
 	if( coopSocket < 0 )
@@ -359,6 +408,7 @@ void Sys_CoopFrame( void )
 	}
 	if( coopSocket >= 0 )
 		CoopNet_HostFrame( coopSocket );
+	CoopBackgroundFrame();
 }
 
 /* ------------------------------------------------------------------------
@@ -733,6 +783,8 @@ NSString *VSP_CoopLinkAddress( NSString *link )
 @end
 
 static BOOL coopHostChosen;
+static BOOL coopHostBackground = YES;	// Host: "Keep playing in the background" (coop_backgroundPlay)
+#define COOP_BACKGROUND_DEFAULT	@"CoopKeepPlayingInBackground"
 static NSString *coopJoinAddress;	// Connect: the host's "address:port"
 
 @interface VSPCoopController : NSObject <NSTextFieldDelegate>
@@ -782,6 +834,7 @@ static NSString *CoopSkillName( NSString *skill )
 	BOOL checking;
 	NSTextField *internetStatus;
 	NSButton *inviteButton;
+	NSButton *backgroundCheck;
 }
 
 - (instancetype)initWithLauncher: (id)launcher
@@ -830,6 +883,13 @@ static NSString *CoopSkillName( NSString *skill )
 	[inviteButton setControlSize: NSControlSizeSmall];
 	[inviteButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
 	[inviteButton setToolTip: @"Copy a stvef://coop/ link for your friend: opening it shows Co-op with your address filled in"];
+	backgroundCheck = [NSButton checkboxWithTitle: @"Keep playing in the background" target: nil action: nil];
+	{
+		id saved = [[NSUserDefaults standardUserDefaults] objectForKey: COOP_BACKGROUND_DEFAULT];
+		[backgroundCheck setState: ( !saved || [saved boolValue] ) ? NSControlStateValueOn : NSControlStateValueOff];
+	}
+	[backgroundCheck setToolTip: @"The game goes on while its window isn’t in front, e.g. while you click into a second "
+		@"copy on this Mac (keys and the mouse still go only to the window in front)"];
 	hostButton = [NSButton buttonWithTitle: @"Host" target: self action: @selector(host:)];
 	[hostButton setEnabled: canPlay];
 	[hostButton setToolTip: canPlay ? @"Play single player with co-op on" : @"Add the game files first"];
@@ -840,7 +900,7 @@ static NSString *CoopSkillName( NSString *skill )
 	col = CoopStack( @[ intro, list,
 		CoopStack( @[ VSP_Label( @"Password (optional)", [NSFont systemFontOfSize: 12], nil ), hostPassword ],
 			NSUserInterfaceLayoutOrientationHorizontal, 8 ),
-		_internetCheck, internetStatus, inviteButton,
+		backgroundCheck, _internetCheck, internetStatus, inviteButton,
 		note ], NSUserInterfaceLayoutOrientationVertical, 8 );
 	{
 		__weak VSPCoopController *weakSelf = self;
@@ -1117,6 +1177,8 @@ static NSString *CoopDescribe( NSDictionary *info )
 	coopNatChanged = nil;		// (the router's mapping stays while the app runs)
 	coopHostChosen = YES;
 	coopJoinAddress = nil;
+	coopHostBackground = [backgroundCheck state] == NSControlStateValueOn;
+	[[NSUserDefaults standardUserDefaults] setBool: coopHostBackground forKey: COOP_BACKGROUND_DEFAULT];
 	Sys_CoopSetLaunchPassword( [[hostPassword stringValue] UTF8String] );
 	LLog( @"Co-op: hosting (single player with sp_coop 1)%@", [[hostPassword stringValue] length] ? @", with a password" : @"" );
 	[l selectMode: 0];
@@ -1295,7 +1357,7 @@ void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch )
 	if( holomatch )
 		return;
 	if( coopHostChosen )
-		[args appendString: @"+set sp_coop 1 "];
+		[args appendFormat: @"+set sp_coop 1 +set coop_backgroundPlay %d ", coopHostBackground ? 1 : 0];
 	else if( [coopJoinAddress length] )
 	{
 		// "1.2.3.4:29760" from the Check (inet_ntop and a port): nothing to quote, but keep it so

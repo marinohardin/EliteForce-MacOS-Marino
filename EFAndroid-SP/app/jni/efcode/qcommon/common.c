@@ -3422,9 +3422,16 @@ void Com_Frame( void ) {
 			minMsec = SV_FrameMsec();
 		else
 		{
-			if(com_minimized->integer && com_maxfpsMinimized->integer > 0)
+#ifdef EF_COOP
+			// a co-op host or guest keeps its full rate in the background (coop_backgroundPlay)
+			extern int Sys_CoopBackgroundPlay( void );
+			qboolean throttle = Sys_CoopBackgroundPlay() ? qfalse : qtrue;
+#else
+			const qboolean throttle = qtrue;
+#endif
+			if(throttle && com_minimized->integer && com_maxfpsMinimized->integer > 0)
 				minMsec = 1000 / com_maxfpsMinimized->integer;
-			else if(com_unfocused->integer && com_maxfpsUnfocused->integer > 0)
+			else if(throttle && com_unfocused->integer && com_maxfpsUnfocused->integer > 0)
 				minMsec = 1000 / com_maxfpsUnfocused->integer;
 			else if(com_maxfps->integer > 0)
 				minMsec = 1000 / com_maxfps->integer;
