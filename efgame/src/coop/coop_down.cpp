@@ -32,6 +32,10 @@ extern void		PM_SetTorsoAnimTimer( gentity_t *ent, int *torsoAnimTimer, int time
 #define COOP_REVIVE_HEALTH		25		// percent of max health after a revive
 #define COOP_DOWN_MSG_TIME		250		// ms between the on-screen updates
 
+// what a body lies on and what a revive can't reach through: walls, closed doors, forcefields and
+// other movers, player clips; not people (an NPC standing over a downed player isn't a floor or a wall)
+#define COOP_WORLD_MASK			( CONTENTS_SOLID | CONTENTS_PLAYERCLIP )
+
 typedef struct
 {
 	qboolean	down;
@@ -138,12 +142,25 @@ static void COOP_MovePlayer( gentity_t *ent, const vec3_t org )
 	gi.linkentity( ent );
 }
 
-// deaths a body on the spot can't come back from: the downed player is put next to the partner
-static qboolean COOP_DeathNeedsMove( gentity_t *ent, int mod )
+/*
+COOP_DeathNeedsMove
+
+Deaths a body on the spot can't come back from: the downed player is put next to the partner.
+Besides hazards (pits, lava, crushing...), that is every death the level itself dealt rather than an
+enemy: a trigger_hurt, a mover or forcefield closing on them, a scripted explosion. Those happen
+where the story closes an area off (voy2's forcefield seals the burning section, and its blasts go
+off behind it), so a body left there could end up where the partner can't reach it any more, or
+where players aren't meant to be once it gets up. A player an enemy downed stays where they fell.
+*/
+static qboolean COOP_DeathNeedsMove( gentity_t *ent, gentity_t *attacker, int mod )
 {
 	trace_t	tr;
 	vec3_t	below;
 
+	if ( !attacker || !attacker->client )
+	{
+		return qtrue;	// the world, a trigger, a mover, an effect, a script
+	}
 	switch ( mod )
 	{
 	case MOD_WATER:
@@ -160,8 +177,10 @@ static qboolean COOP_DeathNeedsMove( gentity_t *ent, int mod )
 	// in the air with no floor close below (knocked off a ledge, a pit)
 	VectorCopy( ent->currentOrigin, below );
 	below[2] -= 256;
-	gi.trace( &tr, ent->currentOrigin, playerMins, playerMaxs, below, ent->s.number, MASK_PLAYERSOLID );
-	return (qboolean)( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f );
+	gi.trace( &tr, ent->currentOrigin, playerMins, playerMaxs, below, ent->s.number, COOP_WORLD_MASK );
+	// a box that starts a little inside a raised floor plate is still standing on something:
+	// only one stuck in a solid all the way down, or with nothing below, needs moving
+	return (qboolean)( tr.allsolid || tr.fraction >= 1.0f );
 }
 
 // settle a downed body onto the floor below it (it doesn't fall while down)
@@ -172,7 +191,7 @@ static void COOP_DropToFloor( gentity_t *ent )
 
 	VectorCopy( ent->currentOrigin, below );
 	below[2] -= 256;
-	gi.trace( &tr, ent->currentOrigin, playerMins, playerMaxs, below, ent->s.number, MASK_PLAYERSOLID );
+	gi.trace( &tr, ent->currentOrigin, playerMins, playerMaxs, below, ent->s.number, COOP_WORLD_MASK );
 	if ( !tr.startsolid && !tr.allsolid && tr.fraction < 1.0f )
 	{
 		COOP_MovePlayer( ent, tr.endpos );
@@ -180,6 +199,39 @@ static void COOP_DropToFloor( gentity_t *ent )
 }
 
 static void COOP_GameOver( gentity_t *attacker );
+
+/*
+COOP_CanReach
+
+The reviver must be next to the downed player with nothing solid between them: no wall, closed door,
+forcefield or other mover (a revive through a forcefield got player 2 up on the far side of voy2's).
+Two lines between the bodies, at the middle of the body and higher up, so a low console or railing
+between them doesn't stop it but anything as tall as a person does. People in the way don't count.
+*/
+static qboolean COOP_CanReach( gentity_t *reviver, gentity_t *downed, float range )
+{
+	trace_t	tr;
+	vec3_t	from, to;
+
+	if ( DistanceSquared( downed->currentOrigin, reviver->currentOrigin ) > range * range )
+	{
+		return qfalse;
+	}
+	for ( int i = 0; i < 2; i++ )
+	{
+		float up = i ? 20.0f : 0.0f;
+		VectorCopy( reviver->currentOrigin, from );
+		VectorCopy( downed->currentOrigin, to );
+		from[2] += up;
+		to[2] += up;
+		gi.trace( &tr, from, NULL, NULL, to, reviver->s.number, COOP_WORLD_MASK );
+		if ( !tr.startsolid && !tr.allsolid && ( tr.fraction >= 1.0f || tr.entityNum == downed->s.number ) )
+		{
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
 
 /*
 COOP_PlayerDown
@@ -220,7 +272,7 @@ qboolean COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod )
 	}
 
 	gentity_t *partner = COOP_DownPlayer( other );
-	if ( COOP_DeathNeedsMove( ent, mod ) )
+	if ( COOP_DeathNeedsMove( ent, attacker, mod ) )
 	{
 		vec3_t org;
 		int contents = ent->contents;
@@ -266,7 +318,8 @@ qboolean COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod )
 	PM_SetTorsoAnimTimer( ent, &cl->ps.torsoAnimTimer, -1 );
 	COOP_DropToFloor( ent );
 	gi.linkentity( ent );
-	gi.Printf( "co-op: player %d is down (%d s to revive)\n", idx + 1, coop_down[idx].bleedLeft / 1000 );
+	gi.Printf( "co-op: player %d is down (%d s to revive; by %s, means %d)\n", idx + 1, coop_down[idx].bleedLeft / 1000,
+		attacker ? ( attacker->classname ? attacker->classname : "?" ) : "nothing", mod );
 	return qtrue;
 }
 
@@ -342,6 +395,7 @@ static void COOP_GameOver( gentity_t *attacker )
 		if ( coop_down[i].down )
 		{
 			COOP_Tell( i, "" );
+			COOP_Tell( i ^ 1, "" );	// the partner's "revive them" line too
 		}
 		coop_down[i].down = qfalse;
 	}
@@ -493,7 +547,7 @@ void COOP_DownFrame( void )
 		{
 			qboolean	bot = (qboolean)( partner == 1 && !COOP_GuestConnected() );
 			float		range = bot ? COOP_REVIVE_RANGE_BOT : COOP_REVIVE_RANGE;
-			if ( DistanceSquared( ent->currentOrigin, pent->currentOrigin ) <= range * range )
+			if ( COOP_CanReach( pent, ent, range ) )
 			{
 				reviver = partner;
 				if ( bot || ( pent->client->buttons & BUTTON_USE ) )

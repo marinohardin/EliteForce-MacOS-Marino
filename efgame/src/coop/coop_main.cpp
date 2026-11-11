@@ -71,8 +71,8 @@ The M0 puppet controls (host console; reached through the game's ClientCommand):
 	coop_p2_use [frames]             press use once (or hold it for frames)
 	coop_p2_weapon <n>               switch to weapon n (if P2 has it)
 	coop_p2_tele [x y z]             move P2 next to P1 (or to x y z)
-	coop_p2_damage <n> [fall|pit] [p1]  hurt P2 (p1: player 1) by n (tests: death, down, respawn;
-	                                 fall: as falling damage, pit: as a trigger_hurt)
+	coop_p2_damage <n> [fall|pit] [p1] [npc]  hurt P2 (p1: player 1) by n (tests: death, down, respawn;
+	                                 fall: as falling damage, pit: as a trigger_hurt, npc: dealt by an NPC)
 	coop_p2_target <n|npc> [amp] [ms] (tests) put entity n (or the nearest NPC) in front of P2's view, swaying side to side
 	                                 amp units over a period of ms; "coop_p2_target off" lets it go
 	coop_p2_aim <n>                  (tests) turn player 2's view to entity n's chest
@@ -190,6 +190,7 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 	{
 		vec3_t		dir = { 0, 0, 1 };
 		gentity_t	*victim = ent;
+		gentity_t	*attacker = NULL;
 		int			mod = MOD_UNKNOWN;
 		for ( int i = 2; i < gi.argc(); i++ )
 		{
@@ -205,8 +206,20 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 			{
 				victim = &g_entities[0];
 			}
+			else if ( !Q_stricmp( gi.argv( i ), "npc" ) )
+			{
+				// dealt by an enemy NPC (an enemy's hit, not the level's): the first one in the level
+				for ( int n = 1; n < globals.num_entities && !attacker; n++ )
+				{
+					if ( g_entities[n].inuse && g_entities[n].NPC && g_entities[n].client
+						&& g_entities[n].client->playerTeam != TEAM_STARFLEET )
+					{
+						attacker = &g_entities[n];
+					}
+				}
+			}
 		}
-		G_Damage( victim, NULL, NULL, dir, victim->currentOrigin, atoi( gi.argv( 1 ) ), DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR | DAMAGE_NO_PROTECTION, mod );
+		G_Damage( victim, attacker, attacker, dir, victim->currentOrigin, atoi( gi.argv( 1 ) ), DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR | DAMAGE_NO_PROTECTION, mod );
 	}
 	else
 	{
