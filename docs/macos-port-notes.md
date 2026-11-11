@@ -1217,6 +1217,22 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 - The guest's view weapon no longer reads past `cgs.clientinfo` ("Bad animFileIndex").
 - Details: `docs/coop-m2-design.md`.
 
+### Co-op M2: shots over the internet, router port, invite, bandwidth (2026-11-10)
+- Lag compensation (host, `coop/coop_lagcomp.cpp`): player 2's instant-hit shots are traced against the
+  clients and moving brush models where the guest saw them (the frame it aimed in, sent with each
+  command; co-op protocol 6), at most 400 ms back, everything restored after the trace. The idea is
+  cMod's ping compensation by Noah Metzger (Chomenor), used with his permission; the code is ours.
+- Shot prediction (guest, `coop/coop_predict.cpp`): the compression rifle's and I-MOD's beam and
+  impact show at once; the host's effects of those shots are left out. Player 2's movement events now
+  run once on the guest (they ran up to three times). After cMod's weapon prediction, same credit.
+- Co-op… sheet: "Open the port on my router" (NAT-PMP / UPnP, as the server window), the public
+  address or why not, and Copy Invite (`stvef://coop/<address>:<port>`), which the launcher's link
+  handler opens as the Co-op… sheet with the address checked.
+- Bandwidth host to guest: borg2 23.8 to 4.3 KB/s, borg1 15.3 to 3.9, voy1 12.5 to 3.0 (host-only
+  fields masked from entity images, far entities sent every 10th frame).
+- Test cvars: `coop_simlatency` / `coop_simloss` (simulated link), `coop_netstats 2` (which fields
+  change), `coop_p2_target` (a swaying target in front of player 2).
+
 ## SP: ambient and mover sound sets load again (2026-11-10)
 
 `sound/sound.txt` (pak0) defines 103 sound sets: 48 `generalSet` (a map area's background loop and
