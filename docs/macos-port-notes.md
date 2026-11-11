@@ -1203,3 +1203,44 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 - The host's status says when its game is paused; the guest shows "Host paused" (or "Waiting for the
   host" when frames stop otherwise), holds P2's input and the game's sounds, and goes on with the
   next frame.
+
+## Co-op M2: cutscenes, level starts, saves (2026-11-10, branch `1_4_0/coop-m1` only)
+- The host's cutscene camera reaches the guest as state with the replica's globals (`RCAM`): the
+  guest's cgame draws the same shot; bars are scaled to its view; script text colours go along. The
+  host's skip is mirrored (skip screen on the guest). A camera track's end fires its targets on the host
+  only. Player 2 rejoins player 1 again half a second after a camera ends.
+- In-game movies play on the guest too and stop when the host's game goes on.
+- A level that starts with a guest connected waits (up to 30 s, "Waiting for player 2") until the guest
+  has loaded it; the guest then shows that level's story text from its start (co-op protocol 5).
+- Every co-op save writes player 2's state to `<save>.coop` next to the `.sav` (still a plain SP save);
+  a load reads it back.
+- The guest's view weapon no longer reads past `cgs.clientinfo` ("Bad animFileIndex").
+- Details: `docs/coop-m2-design.md`.
+
+## SP: ambient and mover sound sets load again (2026-11-10)
+
+`sound/sound.txt` (pak0) defines 103 sound sets: 48 `generalSet` (a map area's background loop and
+random one-shots, chosen by worldspawn's and triggers' `soundSet`), 36 `localSet` (an entity's own hum
+and one-shots: target_speakers, consoles, force fields) and 19 `bmodelSet` (start, moving and stop
+sounds of doors, plats and lifts). The SP bridge's reader expected each set's keywords in a `{ }`
+block, but the file is line based: a set line, then its keyword lines up to the next set, with `;`
+comment lines and a short tool header. So no set loaded, and every door, lift and room ambience that
+uses one was silent (borg1's lifts, the scav maps' trek doors, the Dreadnought's engine hum and hull
+creaks, Voyager's bridge, the Borg regeneration alcoves).
+
+`SP_AS_ParseSets` (sp/sp_bridge.cpp) now reads the line form (a `{ }` block is still accepted).
+Other changes there:
+- The kinds are looked up separately: `dntractor` is both a localSet and a bmodelSet (dn5), and maps
+  put bmodel set names on target_speakers (borg1's `largeelevator`) that must not start playing
+  the lift's sounds at random.
+- Up to 16 one-shots per set (`messhall` has 13).
+- Sounds are registered for the sets the map names (the cgame's precache list, which the trap used
+  to ignore) and on first use for the rest, instead of every sound of every set.
+- A local set's loop and one-shots follow the same out-of-view test as entity loops
+  (`SP_EntInView`): silent behind a closed door.
+- A local set's first one-shot waits a random interval instead of all consoles beeping at once
+  when they come into view, and a time left from another run (a loaded save) is rescheduled.
+
+Regression harness: Holomatch and sp-borg1, sp-transition identical. sp-save differs only in
+`event` of voy1's func_door 127 (voyagerdoors) from frame 361: the door now sends its
+EV_BMODEL_SOUND start and stop events. No other field changes.

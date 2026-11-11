@@ -159,6 +159,7 @@ that the cgame doesn't need. (CPU is the whole process, renderer included, sampl
   movies pause its game, so the guest shows "Host paused" until cutscenes are mirrored (M2).
 
 ## Open questions and what's left after M1
+(M2 has done cameras and cutscenes, movies, level changes, loads and saves: `docs/coop-m2-design.md`.)
 - The host's game pausing when its window loses focus matters for two copies on one Mac.
 - Cameras and cutscenes are not mirrored (M2): the guest keeps its own view while the host watches one.
 - The guest can't save, load, or change levels itself; a host level change makes it load the new map.
