@@ -42,6 +42,7 @@ void		COOP_ApplyHidden( gentity_t *ent, qboolean hidden );
 void		COOP_CameraRejoin( gentity_t *ent );		// coop_cutscene.cpp
 void		COOP_ReadCarry( void );						// coop_inventory.cpp
 void		COOP_ApplyCarry( gentity_t *ent );
+void		COOP_CacheForSave( void );
 void		COOP_PublishInfo( void );					// coop_info.cpp
 qboolean	COOP_GuestCmd( usercmd_t *cmd );			// coop_net.cpp
 const char	*COOP_GuestName( void );

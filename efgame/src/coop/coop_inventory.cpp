@@ -3,13 +3,15 @@
 // Weapons and holdable items are shared: whoever picks one up, both have it. Ammo, health and armor
 // go to whoever touches them first. Item targets fire once, with P1 as the activator. A script that
 // gives the player a weapon gives it to both. P2's health, armor and ammo carry over a map change in
-// the cvar coop_p2save (the game library is reloaded for every map, like P1's playersave cvars).
+// the cvar coop_p2save (the game library is reloaded for every map, like P1's playersave cvars); a
+// save keeps them in a .coop file next to the .sav, which a load reads back into the same cvar.
 
 #include "g_local.h"
 #include "coop_public.h"
 #include "coop_local.h"
 
-#define COOP_CARRY_CVAR		"coop_p2save"
+#define COOP_CARRY_CVAR		"coop_p2save"		// P2's state for the next level start (a map change or a load)
+#define COOP_SAVE_CVAR		"coop_p2saved"		// P2's state when the game was last saved (the engine's .coop file)
 
 static char		coop_carry[MAX_STRING_CHARS];	// read at InitGame, used by P2's first spawn
 
@@ -56,28 +58,51 @@ void COOP_OnScriptWeapon( gentity_t *ent, int wp )
 	coop_p2.weapon = wp;
 }
 
+// P2's health, armor, weapon and ammo as text ("" when it has none to keep: not in the level and no
+// carry waiting for its first spawn, or dead)
+static void COOP_CarryString( char *s, int size )
+{
+	gentity_t	*p2 = COOP_P2();
+
+	s[0] = 0;
+	if ( !p2 )
+	{
+		Q_strncpyz( s, coop_carry, size );	// a level start: what P2 brought along, not spawned yet
+		return;
+	}
+	if ( p2->health <= 0 )
+	{
+		return;
+	}
+	Com_sprintf( s, size, "%i %i %i", p2->client->ps.stats[STAT_HEALTH], p2->client->ps.stats[STAT_ARMOR],
+		p2->client->ps.weapon );
+	for ( int i = 0; i < AMMO_MAX; i++ )
+	{
+		Q_strcat( s, size, va( " %i", p2->client->ps.ammo[i] ) );
+	}
+}
+
 // G_ChangeMap, after Player_CacheForNextLevel
 void COOP_CacheForNextLevel( void )
 {
-	gentity_t	*p2 = COOP_P2();
+	char	s[MAX_STRING_CHARS];
 
 	if ( !coop_enabled )
 	{
 		return;
 	}
-	if ( !p2 || p2->health <= 0 )
-	{
-		gi.cvar_set( COOP_CARRY_CVAR, "" );
-		return;
-	}
-	char	s[MAX_STRING_CHARS];
-	Com_sprintf( s, sizeof( s ), "%i %i %i", p2->client->ps.stats[STAT_HEALTH], p2->client->ps.stats[STAT_ARMOR],
-		p2->client->ps.weapon );
-	for ( int i = 0; i < AMMO_MAX; i++ )
-	{
-		Q_strcat( s, sizeof( s ), va( " %i", p2->client->ps.ammo[i] ) );
-	}
+	COOP_CarryString( s, sizeof( s ) );
 	gi.cvar_set( COOP_CARRY_CVAR, s );
+}
+
+// WriteLevel (every save): P2's state for the engine's .coop file next to the .sav (the .sav itself
+// stays plain single player). Loading that save hands it back through COOP_CARRY_CVAR.
+void COOP_CacheForSave( void )
+{
+	char	s[MAX_STRING_CHARS];
+
+	COOP_CarryString( s, sizeof( s ) );
+	gi.cvar_set( COOP_SAVE_CVAR, s );
 }
 
 // COOP_Init: take the carry left by the previous level (a load or new game starts without one)

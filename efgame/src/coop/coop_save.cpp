@@ -2,7 +2,8 @@
 //
 // A .sav written in co-op must load in plain single player. P2 itself is skipped by
 // WriteGEntities; here every saved pointer to P2 in other entities is cleared first (saves
-// store pointers as entity numbers, which in plain SP would point at an empty slot).
+// store pointers as entity numbers, which in plain SP would point at an empty slot). P2's own
+// health, armor and ammo go to a .coop file next to the .sav instead (coop_inventory.cpp).
 
 #include "g_local.h"
 #include "fields.h"
@@ -38,7 +39,12 @@ void COOP_PreSave( void )
 {
 	gentity_t *p2;
 
-	if ( !coop_enabled || ( p2 = COOP_P2() ) == NULL )
+	if ( !coop_enabled )
+	{
+		return;
+	}
+	COOP_CacheForSave();
+	if ( ( p2 = COOP_P2() ) == NULL )
 	{
 		return;
 	}
