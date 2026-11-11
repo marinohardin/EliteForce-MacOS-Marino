@@ -577,6 +577,12 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 	} else {
 		// get clientinfo for animation map
 		ci = &cgs.clientinfo[ cent->currentState.clientNum ];
+#ifdef EF_COOP
+		if ( cent->currentState.clientNum >= MAX_CLIENTS && cent->gent && cent->gent->client )
+		{	// a co-op guest views player 2, a client past cgs.clientinfo (as in CG_ResetPlayerEntity)
+			ci = &cent->gent->client->clientInfo;
+		}
+#endif
 		hand.frame = CG_MapTorsoToWeaponFrame( ci, cent->pe.torso.frame, cent->pe.torso.animationNumber&~ANIM_TOGGLEBIT, cent->currentState.weapon, ( cent->currentState.eFlags & EF_FIRING ) );
 		hand.oldframe = CG_MapTorsoToWeaponFrame( ci, cent->pe.torso.oldFrame, cent->pe.torso.animationNumber&~ANIM_TOGGLEBIT, cent->currentState.weapon, ( cent->currentState.eFlags & EF_FIRING ) );
 		hand.backlerp = cent->pe.torso.backlerp;
