@@ -257,6 +257,7 @@ for f in $AUDIT_FILES; do
 	[ -f "$f" ] || continue
 	isqt=0
 	case "$f" in */libQt6*|*/usr/plugins/*|*/ef-launcher) isqt=1 ;; esac
+	case " $SYS_BUNDLE " in *" $(basename "$f") "*) isqt=1 ;; esac
 	for lib in $(needed "$f"); do
 		[ -e "$APPDIR/usr/lib/$lib" ] && continue
 		case " $HOST_OK " in *" $lib "*) continue ;; esac

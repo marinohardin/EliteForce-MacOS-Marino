@@ -956,3 +956,5 @@ void ServerConfigDialog::Impl::showAll()
 	showServerTab();
 	showCmod();
 }
+
+ServerConfigDialog::~ServerConfigDialog() { delete d; }

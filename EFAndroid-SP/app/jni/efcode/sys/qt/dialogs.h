@@ -80,7 +80,7 @@ class ServerConfigDialog : public QDialog {
 	Q_OBJECT
 public:
 	ServerConfigDialog( QWidget *parent, lc_server_settings *original, const QString &dataFolder );
-	~ServerConfigDialog() override { delete d; }
+	~ServerConfigDialog() override;
 	void selectTab( const QString &tab );
 	void setTickRate( int v );
 	void commit();							/* Done without closing (tests) */
