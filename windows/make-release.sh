@@ -21,7 +21,7 @@ FFMPEG="$ROOT/build-ffmpeg/windows/install"
 DIST="$ROOT/dist"
 OBJDUMP="${OBJDUMP:-x86_64-w64-mingw32-objdump}"
 version_from_cmake() {
-	for f in "$ROOT/CMakeLists.txt" "$ROOT/EFAndroid-SP/app/jni/macos/CMakeLists.txt"; do
+	for f in "$ROOT/CMakeLists.txt" "$ROOT/EFAndroid-SP/app/jni/engine/CMakeLists.txt" "$ROOT/EFAndroid-SP/app/jni/macos/CMakeLists.txt"; do
 		[ -f "$f" ] && sed -n 's/^.*set(EF_APP_VERSION "\([^"]*\)".*/\1/p' "$f"
 	done | head -1
 }

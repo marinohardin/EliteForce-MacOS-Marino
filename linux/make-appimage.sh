@@ -46,7 +46,7 @@ HAVE_QT=0
 [ -f "$QT/lib/cmake/Qt6Widgets/Qt6WidgetsConfig.cmake" ] && HAVE_QT=1
 DIST="$ROOT/dist"
 cmake_version() {
-	for f in "$ROOT/CMakeLists.txt" "$ROOT/EFAndroid-SP/app/jni/macos/CMakeLists.txt"; do
+	for f in "$ROOT/CMakeLists.txt" "$ROOT/EFAndroid-SP/app/jni/engine/CMakeLists.txt" "$ROOT/EFAndroid-SP/app/jni/macos/CMakeLists.txt"; do
 		[ -f "$f" ] && sed -n 's/^.*set(EF_APP_VERSION "\([^"]*\)".*/\1/p' "$f" | head -1
 	done | head -1
 }
