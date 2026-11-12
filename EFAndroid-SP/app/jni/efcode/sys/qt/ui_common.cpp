@@ -130,15 +130,33 @@ QFont font( double pt, QFont::Weight w, bool mono )
 	return f;
 }
 
+namespace {
+/* A wrapping label whose size is the wrapped text's, at most maxW wide (a plain wrapping
+   QLabel reports a too tall size hint inside grids). */
+class WrapLabel : public QLabel {
+public:
+	explicit WrapLabel( int maxW ) : m_maxW( maxW ) {}
+	QSize sizeHint() const override
+	{
+		const QRect r = QFontMetrics( font() ).boundingRect( QRect( 0, 0, m_maxW, 100000 ), Qt::TextWordWrap, text() );
+		return QSize( qMin( m_maxW, r.width() + 2 ), r.height() + 2 );
+	}
+	QSize minimumSizeHint() const override { return sizeHint(); }
+	bool hasHeightForWidth() const override { return false; }
+private:
+	int m_maxW;
+};
+}
+
 QLabel *label( const QString &text, double pt, QFont::Weight w, const QColor &c, int wrapWidth )
 {
-	QLabel *l = new QLabel( text );
+	QLabel *l = wrapWidth > 0 ? new WrapLabel( int( wrapWidth * scale() ) ) : new QLabel;
+	l->setText( text );
 	l->setFont( font( pt, w ) );
 	setColor( l, c );
 	if ( wrapWidth > 0 ) {
 		l->setWordWrap( true );
-		l->setMaximumWidth( int( wrapWidth * scale() ) );
-		l->setSizePolicy( QSizePolicy::Preferred, QSizePolicy::Minimum );
+		l->setSizePolicy( QSizePolicy::Preferred, QSizePolicy::Fixed );
 	}
 	l->setTextInteractionFlags( Qt::NoTextInteraction );
 	return l;

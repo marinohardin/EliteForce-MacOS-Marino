@@ -656,6 +656,8 @@ QWidget *ServerConfigDialog::Impl::gamePage()
 			showGame();
 		} );
 	}
+	mg->setColumnStretch( 0, 0 );
+	mg->setColumnStretch( 1, 1 );
 	g->addLayout( mg, r++, 1 );
 	g->setRowMinimumHeight( r - 1, 0 );
 	g->addWidget( label( "Some modifiers exclude others, as in the game's own Create Server menu.", 11, QFont::Normal, secondary(), 420 ), r++, 1 );

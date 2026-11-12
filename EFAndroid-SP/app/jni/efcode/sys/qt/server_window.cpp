@@ -57,7 +57,7 @@ struct ServerWindow::Impl {
 	QVector<lc_srv_player> players;
 	bool ready = false;
 	bool stopping = false;
-	QTimer pollTimer, killTimer;
+	QTimer pollTimer, stopTimer;
 	QString stopPidNote;
 
 	/* router mapping */
@@ -239,6 +239,7 @@ void ServerWindow::Impl::build()
 	addrValue->setFont( Ui::font( 15, QFont::DemiBold ) );
 	addrValue->setTextInteractionFlags( Qt::TextSelectableByMouse );
 	copyAddr = button( "Copy" );
+	ar->setSpacing( px( 10 ) );
 	ar->addWidget( addrValue );
 	ar->addWidget( copyAddr );
 	ar->addStretch( 1 );
@@ -416,23 +417,14 @@ void ServerWindow::Impl::build()
 	} );
 	QObject::connect( checkAgain, &QPushButton::clicked, q, [this]() {
 		if ( childRunning )
-			sendCmd( "heartbeat", false );
+			lc_srv_heartbeat( srv );
 		startListCheck();
 	} );
-	QObject::connect( nextMap, &QPushButton::clicked, q, [this]() { sendCmd( "vstr nextmap" ); } );
-	QObject::connect( restart, &QPushButton::clicked, q, [this]() { sendCmd( "map_restart" ); } );
+	QObject::connect( nextMap, &QPushButton::clicked, q, [this]() { lc_srv_next_map( srv ); } );
+	QObject::connect( restart, &QPushButton::clicked, q, [this]() { lc_srv_restart_map( srv ); } );
 	QObject::connect( mapMenu, &QMenu::aboutToShow, q, [this]() { rebuildMapMenu(); } );
-	QObject::connect( addBot, &QPushButton::clicked, q, [this]() {
-		char buf[256] = "";
-		const char *c = lc_srv_addbot_command( srv, s.botSkill, buf, sizeof buf );
-		if ( c && *c )
-			sendCmd( U( c ) );
-	} );
-	QObject::connect( removeBots, &QPushButton::clicked, q, [this]() {
-		sendCmd( "set bot_minplayers 0" );
-		sendCmd( "kick allbots" );
-		conLog( "Bots won't refill this game; Add Bot still adds them.", 4 );
-	} );
+	QObject::connect( addBot, &QPushButton::clicked, q, [this]() { lc_srv_add_bot( srv, s.botSkill ); } );
+	QObject::connect( removeBots, &QPushButton::clicked, q, [this]() { lc_srv_remove_bots( srv ); } );
 	QObject::connect( message, &QPushButton::clicked, q, [this]() { doMessage(); } );
 	QObject::connect( kickBtn, &QPushButton::clicked, q, [this]() { doKick( table->currentRow() ); } );
 	QObject::connect( table, &QTableWidget::customContextMenuRequested, q, [this]( const QPoint &p ) {
@@ -458,7 +450,16 @@ void ServerWindow::Impl::build()
 	} );
 	pollTimer.setInterval( 2000 );
 	QObject::connect( &pollTimer, &QTimer::timeout, q, [this]() { if ( srv ) lc_srv_poll_tick( srv, lc_now() ); } );
-	killTimer.setSingleShot( true );
+	stopTimer.setInterval( 250 );
+	QObject::connect( &stopTimer, &QTimer::timeout, q, [this]() {
+		if ( !srv || !proc )
+			return;
+		const int r = lc_srv_stop_tick( srv, lc_now() );
+		if ( r == 1 )
+			lc_proc_terminate( proc );
+		else if ( r == 2 )
+			lc_proc_kill( proc );
+	} );
 	natTimer.setSingleShot( true );
 	QObject::connect( &natTimer, &QTimer::timeout, q, [this]() {
 		if ( natState == NatOpening )
@@ -780,16 +781,11 @@ void ServerWindow::Impl::conLog( const QString &line, int color )
 		fprintf( stderr, "[server] %s\n", line.toUtf8().constData() );
 }
 
-void ServerWindow::Impl::sendCmd( const QString &cmd, bool echo )
+void ServerWindow::Impl::sendCmd( const QString &cmd, bool )
 {
-	if ( !childRunning || !proc ) {
+	if ( !childRunning || !proc || !srv )
 		return;
-	}
-	if ( echo )
-		conLog( "] " + cmd, 5 );
-	const QByteArray b = cmd.toUtf8() + "\n";
-	if ( lc_proc_write( proc, b.constData(), size_t( b.size() ) ) < 0 )
-		log( QString( "Server: couldn't send \"%1\": %2" ).arg( cmd, U( strerror( errno ) ) ) );
+	lc_srv_user_command( srv, B( cmd ).constData() );
 }
 
 void ServerWindow::Impl::doCommand()
@@ -802,10 +798,7 @@ void ServerWindow::Impl::doCommand()
 		stopThen();
 		return;
 	}
-	conLog( "] " + t, 5 );
 	lc_srv_user_command( srv, B( t ).constData() );
-	const QByteArray b = t.toUtf8() + "\n";
-	lc_proc_write( proc, b.constData(), size_t( b.size() ) );
 	command->clear();
 }
 
@@ -878,10 +871,7 @@ void ServerWindow::Impl::startChild()
 	}
 	free( text );
 	if ( !wrote ) {
-		conLog( "Couldn't write " + cfgPath + ( err[0] ? QString( ": " ) + U( err ) : QString() ), 2 );
-		state = LC_SRV_FAILED;
-		stateDetail = "couldn't start";
-		showAll();
+		lc_srv_start_failed( srv, B( "Couldn't write " + cfgPath + ( err[0] ? QString( ": " ) + U( err ) : QString() ) ).constData() );
 		return;
 	}
 
@@ -924,10 +914,7 @@ void ServerWindow::Impl::startChild()
 			QMetaObject::invokeMethod( i->q, [i, signaled, code]() { i->childExited( signaled, code ); }, Qt::QueuedConnection );
 		}, this );
 	if ( !proc ) {
-		conLog( QString( "Couldn't start the server: %1" ).arg( U( strerror( errno ) ) ), 2 );
-		state = LC_SRV_FAILED;
-		stateDetail = "couldn't start";
-		showAll();
+		lc_srv_start_failed( srv, B( QString( "Couldn't start the server: %1" ).arg( U( strerror( errno ) ) ) ).constData() );
 		return;
 	}
 	childRunning = true;
@@ -944,7 +931,7 @@ void ServerWindow::Impl::becameReady( int boundPort )
 	ready = true;
 	if ( boundPort > 0 )
 		port = boundPort;
-	log( QString( "Server: ready on %1 (map %2)" ).arg( myAddress(), currentMap ) );
+	log( QString( "Server: ready on %1" ).arg( myAddress() ) );
 	registerRunning();
 	showInfo();
 	if ( isInternet() && s.openPort )
@@ -970,9 +957,9 @@ void ServerWindow::Impl::becameReady( int boundPort )
 			else if ( act == "removebots" )
 				removeBots->click();
 			else if ( act.startsWith( "slot" ) )
-				sendCmd( QString( "vstr vsp_map%1" ).arg( act.mid( 4 ).toInt() ) );
+				lc_srv_change_map_slot( srv, act.mid( 4 ).toInt() );
 			else if ( act.startsWith( "map:" ) )
-				sendCmd( "map " + act.mid( 4 ) );
+				lc_srv_change_map( srv, B( act.mid( 4 ) ).constData() );
 			else if ( act.startsWith( "kick" ) )
 				doKick( act.mid( 4 ).toInt() );
 		} );
@@ -981,37 +968,23 @@ void ServerWindow::Impl::becameReady( int boundPort )
 
 void ServerWindow::Impl::childExited( int signaled, int code )
 {
-	log( QString( "Server: exited (%1 %2)" ).arg( signaled ? "signal" : "code" ).arg( code ) );
+	const bool wasStopping = srv && lc_srv_is_stopping( srv );
 	childRunning = false;
-	proc = nullptr;
+	if ( proc ) {
+		lc_proc_free( proc );
+		proc = nullptr;
+	}
 	pollTimer.stop();
-	killTimer.stop();
+	stopTimer.stop();
 	closeRouterPort();
 	stopListCheck();
 	currentMap.clear();
 	players.clear();
-	const bool wasReady = ready;
 	if ( srv )
-		lc_srv_exited( srv, signaled, code );
-	if ( stopping ) {
-		state = LC_SRV_STOPPED;
-		conLog( "The server stopped.", 4 );
-		showAll();
-		QCoreApplication::exit( 0 );
-		return;
-	}
-	if ( signaled )
-		conLog( QString( "The server crashed (signal %1)." ).arg( code ), 2 );
-	else if ( code == 1 && !wasReady )
-		conLog( "The server found no Elite Force game files (exit code 1).", 2 );
-	else if ( code == 3 && !wasReady )
-		conLog( "The server couldn't use the game folder (exit code 3).", 2 );
-	else
-		conLog( QString( "The server quit (exit code %1)." ).arg( code ), 2 );
-	state = LC_SRV_FAILED;
-	stateDetail = wasReady ? "the server quit unexpectedly" : code == 1 ? "no game files" : code == 3 ? "the game folder can't be used"
-		: "the server didn't start, see the console below";
+		lc_srv_exited( srv, signaled, code );		/* logs, the 9.14 console messages, Stopped / Failed */
 	showAll();
+	if ( wasStopping || stopping )
+		QCoreApplication::exit( 0 );
 }
 
 void ServerWindow::Impl::stopThen()
@@ -1023,23 +996,8 @@ void ServerWindow::Impl::stopThen()
 	if ( stopping )
 		return;
 	stopping = true;
-	state = LC_SRV_STOPPING;
-	stateDetail.clear();
-	showAll();
-	sendCmd( "quit" );
-	QTimer::singleShot( 5000, q, [this]() {
-		if ( !childRunning || !proc )
-			return;
-		log( "Server: no exit after quit, sending SIGTERM" );
-		const int pid = lc_proc_pid( proc );
-		lc_proc_terminate( proc );
-		QTimer::singleShot( 3000, q, [this, pid]() {
-			if ( childRunning && proc && lc_proc_pid( proc ) == pid ) {
-				log( "Server: still running, sending SIGKILL" );
-				lc_proc_kill( proc );
-			}
-		} );
-	} );
+	lc_srv_begin_stop( srv );
+	stopTimer.start();
 }
 
 void ServerWindow::requestStop() { d->stopThen(); }
@@ -1065,7 +1023,7 @@ void ServerWindow::Impl::doKick( int row )
 			QStringList() << "Kick" << "Cancel", 1, 1, 0 ) != 0 )
 			return;
 	}
-	sendCmd( QString( "clientkick %1" ).arg( U( p.num ) ) );
+	lc_srv_kick( srv, p.num );
 }
 
 void ServerWindow::Impl::doMessage()
@@ -1095,10 +1053,7 @@ void ServerWindow::Impl::doMessage()
 	e->setFocus();
 	if ( dlg.exec() != QDialog::Accepted )
 		return;
-	char buf[512] = "";
-	lc_srv_say_command( B( e->text() ).constData(), buf, sizeof buf );
-	if ( buf[0] )
-		sendCmd( U( buf ) );
+	lc_srv_say( srv, B( e->text() ).constData() );
 }
 
 void ServerWindow::Impl::rebuildMapMenu()
@@ -1114,7 +1069,7 @@ void ServerWindow::Impl::rebuildMapMenu()
 			QAction *a = mapMenu->addAction( "    " + mapTitle( n, true ) );
 			a->setCheckable( true );
 			a->setChecked( n == currentMap );
-			QObject::connect( a, &QAction::triggered, q, [this, i]() { sendCmd( QString( "vstr vsp_map%1" ).arg( i ) ); } );
+			QObject::connect( a, &QAction::triggered, q, [this, i]() { lc_srv_change_map_slot( srv, i + 1 ); } );
 		}
 	}
 	if ( !catalog )
@@ -1143,7 +1098,7 @@ void ServerWindow::Impl::rebuildMapMenu()
 		QAction *a = mapMenu->addAction( t );
 		a->setCheckable( true );
 		a->setChecked( n == currentMap );
-		QObject::connect( a, &QAction::triggered, q, [this, n]() { sendCmd( "map " + n ); } );
+		QObject::connect( a, &QAction::triggered, q, [this, n]() { lc_srv_change_map( srv, B( n ).constData() ); } );
 	}
 }
 
