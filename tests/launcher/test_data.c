@@ -271,7 +271,7 @@ static void TestValidate( void )
 	tu_text( root, "Inst/BaseEF/pak0.pk3", "x" );
 	CHECK( lc_validate_choice( tu_path( root, "Inst" ), 0, base, sizeof( base ), problem, sizeof( problem ) ) == 0 );
 	lc_path_join( want, sizeof( want ), tu_path( root, "Inst" ), "BaseEF" );
-	CHECK_STR( base, want );
+	CHECK( !lc_stricmp( base, want ) );		/* (Windows reports the spelling it was asked for) */
 	CHECK_STR( problem, "" );
 	CHECK( lc_validate_choice( tu_path( root, "Inst" ), 1, base, sizeof( base ), problem, sizeof( problem ) ) == 0 );
 	/* a trailing separator */
@@ -484,8 +484,12 @@ static void TestAddFiles( void )
 	j = lc_plan_add_files( picks, 1, home, ext, &present );
 	CHECK( j && lc_copyjob_count( j ) == 1 );
 	CHECK( lc_copyjob_run( j, &progress, &cancel, err, sizeof( err ) ) == 1 );
-	CHECK( lc_file_size( tu_path( home, "PAK3.PK3" ) ) == 250 );
-	CHECK( !lc_is_file( tu_path( home, "PAK3.PK3.part" ) ) );
+	{
+		char found[LC_MAX_PATH];
+		/* the same file whatever its spelling (a case-insensitive volume may keep either) */
+		CHECK( lc_child_ci( home, "pak3.pk3", found, sizeof( found ) ) && lc_file_size( found ) == 250 );
+		CHECK( !lc_child_ci( home, "pak3.pk3.part", found, sizeof( found ) ) );
+	}
 	lc_copyjob_free( j );
 }
 
