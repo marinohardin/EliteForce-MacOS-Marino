@@ -15,6 +15,12 @@ CURL_VERSION="8.23.0"
 CURL_SHA256="8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
 FFMPEG_VERSION="9.0.2"
 FFMPEG_SHA256="8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
+# Linux only: the Qt 6 Widgets launcher (ef-launcher), qtbase + qtwayland, LGPL-3.0,
+# built and bundled as shared libraries by linux/build-qt.sh. 6.8.3 is the last
+# open-source release of the 6.8 LTS line.
+QT_VERSION="6.8.3"
+QTBASE_SHA256="56001b905601bb9023d399f3ba780d7fa940f3e4861e496a7c490331f49e0b80"
+QTWAYLAND_SHA256="20fe385887d21190165a3180c17dcfc8b9a0e1da4ec76865b6334bdc709994b0"
 # macOS only (Windows ships the driver's vulkan-1.dll, Linux the system libvulkan.so.1)
 VULKAN_VERSION="1.4.363.0"
 VULKAN_SHA256="941eff558fc74f248745fb7df367640cf89a8457f216dae498a74ae14b6ba6f7"
