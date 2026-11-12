@@ -9,6 +9,9 @@
 set(LC_SOURCES
   ${CMAKE_CURRENT_LIST_DIR}/lc_common.c
   ${CMAKE_CURRENT_LIST_DIR}/lc_settings.c
+  ${CMAKE_CURRENT_LIST_DIR}/lc_links.c
+  ${CMAKE_CURRENT_LIST_DIR}/lc_update.c
+  ${CMAKE_CURRENT_LIST_DIR}/lc_launch.c
 )
 
 add_library(eflauncher STATIC ${LC_SOURCES})

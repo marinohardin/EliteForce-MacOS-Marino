@@ -70,6 +70,11 @@ int lc_delete_summarize( const char *homepath, const char *baseInUse, lc_delete_
 /* the confirmation text of §5.4 (with LC_TRASH_NAME), message and informative parts */
 void lc_delete_texts( const char *homepath, const lc_delete_summary *s,
 	char *title, size_t titleSize, char *info, size_t infoSize );
+#define LC_DELETE_BUTTON	"Move to " LC_TRASH_NAME " and Quit"
+/* a hook for the one alert the exit-time code may need ("Could not delete saves &
+   settings"); the engine side installs an SDL message box. May stay unset. */
+typedef void (*lc_alert_fn)( const char *title, const char *text );
+void lc_set_alert( lc_alert_fn fn );
 /* at exit: re-check, move to the trash (VOYAGERSP_TEST_NOTRASH: log only); registers
    atexit; clears gamefolder from the store first */
 void lc_delete_at_exit( const char *homepath, const char *expectedName );

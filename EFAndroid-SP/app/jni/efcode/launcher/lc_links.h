@@ -22,10 +22,14 @@ int lc_link_address( const char *link, char *out, size_t size, char *password, s
 int lc_coop_link_address( const char *link, char *out, size_t size );
 /* 1 if argv[i] looks like a link we handle */
 int lc_is_link_arg( const char *arg );
+/* the link a process was started with: argv "stvef:..." or "--uri" "stvef:..."
+   (Windows registers the latter, so the engine ignores whatever follows --uri;
+   Linux's .desktop uses the bare form); NULL if none. Points into argv. */
+const char *lc_link_from_args( int argc, char **argv );
 
 /* registration as the stvef: handler.
    Windows: HKCU\Software\Classes\stvef (URL Protocol, shell\open\command =
-   "<exe>" "%1"). Linux: ~/.local/share/applications/eliteforce-marino-stvef.desktop
+   "<exe>" --uri "%1", as LDC 7.1). Linux: ~/.local/share/applications/eliteforce-marino-stvef.desktop
    with MimeType=x-scheme-handler/stvef; + xdg-mime default (Exec = lc_self_command()).
    lc_link_handler_state: 1 = this app, 0 = none, 2 = another app (name filled). */
 int lc_link_handler_state( char *otherApp, size_t size );
