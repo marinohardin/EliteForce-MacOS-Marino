@@ -10,6 +10,9 @@ SDL2COMPAT_SHA256="ec68abde77e2e459c8abc4f9587b8976b5d2a657b2bfda2fb3a079b0f8924
 # 5.8.4 (the 5.6.0/5.6.1 releases were the backdoored ones; stay well past them)
 XZ_VERSION="5.8.4"
 XZ_SHA256="4ce24038fd4221e0d13bc1a2de7a4db56e90b92b3bf75321f6c14be73f65de4b"
+# Windows only (HTTP map downloads, sv_dlURL; loaded at run time as libcurl-4.dll)
+CURL_VERSION="8.23.0"
+CURL_SHA256="8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
 FFMPEG_VERSION="9.0.2"
 FFMPEG_SHA256="8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
 # macOS only (Windows ships the driver's vulkan-1.dll, Linux the system libvulkan.so.1)

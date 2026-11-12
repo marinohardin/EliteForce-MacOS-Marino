@@ -48,6 +48,7 @@ and loaded at runtime from the system `OpenAL.framework`; it is not bundled.
 | Vulkan-Loader (Khronos) | 1.4.363 | Apache-2.0 | <https://github.com/KhronosGroup/Vulkan-Loader/blob/main/LICENSE.txt> |
 | MoltenVK (Khronos / Brenwill) | 1.4.2 | Apache-2.0 | <https://github.com/KhronosGroup/MoltenVK/blob/main/LICENSE> |
 | FFmpeg (`libavformat`, `libavcodec`, `libavutil`, `libswscale`), minimal build | 9.0.2 | LGPL-2.1-or-later (see below) | <https://ffmpeg.org/legal.html>; source: <https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz>; text: `Contents/Resources/licenses/FFmpeg-LGPL-2.1.txt` in the app |
+| libcurl (**Windows build only**, `libcurl-4.dll`; HTTP/HTTPS only, Windows Schannel TLS, for `sv_dlURL` map downloads; built by `windows/build-deps.sh`, not in the macOS app) | 8.23.0 | curl license (MIT-like) | <https://curl.se/docs/copyright.html>; source: <https://curl.se/download/curl-8.23.0.tar.xz>; text: `licenses/curl-LICENSE.txt` in the Windows zip |
 
 The Apache-2.0 text is at <https://www.apache.org/licenses/LICENSE-2.0.txt>. Apache-2.0 also requires
 redistributing any `NOTICE` files these projects ship.

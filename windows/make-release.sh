@@ -51,7 +51,8 @@ $OBJDUMP -h "$STAGE/EliteForce.exe" >/dev/null	# fails early when OBJDUMP is wro
 
 # Bundled DLLs: SDL3 and sdl2-compat's SDL2 (SDL3.dll is loaded by SDL2.dll by name), and
 # every av*/sw* DLL FFmpeg's install has (the minimal LGPL build is just those four).
-for f in "$DEPS/bin/SDL3.dll" "$DEPS/bin/SDL2.dll"; do
+# libcurl-4.dll (HTTP map downloads, sv_dlURL; the engine dlopens it from the exe's directory).
+for f in "$DEPS/bin/SDL3.dll" "$DEPS/bin/SDL2.dll" "$DEPS/bin/libcurl-4.dll"; do
 	[ -f "$f" ] || { echo "$f is missing (windows/build-deps.sh)" >&2; exit 1; }
 	cp "$f" "$STAGE/"
 done
@@ -80,6 +81,8 @@ FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/windows/build-ffmp
 for d in "$ROOT"/build-ffmpeg/windows/ffmpeg-*/ "$ROOT"/build-ffmpeg/ffmpeg-*/; do
 	[ -f "${d}COPYING.LGPLv2.1" ] && { cp "${d}COPYING.LGPLv2.1" "$LIC/FFmpeg-LGPL-2.1.txt"; break; }
 done
+[ -f "$DEPS/licenses/curl-COPYING.txt" ] || { echo "$DEPS/licenses/curl-COPYING.txt is missing (windows/build-deps.sh)" >&2; exit 1; }
+cp "$DEPS/licenses/curl-COPYING.txt" "$LIC/curl-LICENSE.txt"
 cat > "$LIC/FFmpeg-README.txt" <<EOF_FF
 The av*.dll / sw*.dll files next to EliteForce.exe are FFmpeg ${FF_VERSION:-(see THIRD_PARTY_LICENSES.md)}
 (https://ffmpeg.org), licensed under the GNU LGPL 2.1 or later (FFmpeg-LGPL-2.1.txt).

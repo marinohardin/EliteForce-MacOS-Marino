@@ -2,7 +2,9 @@
 # Cross-build (from macOS or Linux, GCC mingw-w64) the libraries the Windows
 # x86_64 build bundles other than FFmpeg (see build-ffmpeg.sh):
 #   SDL3 and sdl2-compat (the SDL2 API the engine uses, on SDL3), both shared
-#   (SDL3.dll, SDL2.dll + import libraries), and a static liblzma.
+#   (SDL3.dll, SDL2.dll + import libraries), a static liblzma, and libcurl
+#   (libcurl-4.dll, HTTP/HTTPS only, Windows Schannel TLS) for sv_dlURL map downloads.
+#   EF_DEPS_ONLY=curl rebuilds just libcurl into the existing install.
 # There is no Vulkan loader: the GPU driver ships vulkan-1.dll.
 #
 #   windows/build-deps.sh        ->  build-deps/windows/install/{bin,include,lib}
@@ -52,8 +54,10 @@ cmake_build() {
 	rm -rf "$src"
 }
 
-rm -rf "$PREFIX"
 export EF_WIN_PREFIX="$PREFIX"
+ONLY="${EF_DEPS_ONLY:-}"
+if [ -z "$ONLY" ]; then
+rm -rf "$PREFIX"
 
 t="$(fetch "xz-$XZ_VERSION.tar.xz" \
 	"https://github.com/tukaani-project/xz/releases/download/v$XZ_VERSION/xz-$XZ_VERSION.tar.xz" "$XZ_SHA256")"
@@ -73,6 +77,25 @@ rm -rf "$WORK/sdl2-compat-$SDL2COMPAT_VERSION" && tar -xzf "$t" -C "$WORK"
 cmake_build "$WORK/sdl2-compat-$SDL2COMPAT_VERSION" -DSDL2COMPAT_TESTS=OFF -DSDL2COMPAT_STATIC=OFF
 # installed as sdl2-compat.pc; "pkg-config sdl2" wants sdl2.pc, as on macOS
 ln -sf sdl2-compat.pc "$PREFIX/lib/pkgconfig/sdl2.pc"
+fi
+
+if [ -z "$ONLY" ] || [ "$ONLY" = curl ]; then
+mkdir -p "$PREFIX"
+rm -f "$PREFIX"/bin/libcurl*.dll "$PREFIX"/lib/libcurl*.a "$PREFIX"/bin/curl-config
+t="$(fetch "curl-$CURL_VERSION.tar.xz" "https://curl.se/download/curl-$CURL_VERSION.tar.xz" "$CURL_SHA256")"
+rm -rf "$WORK/curl-$CURL_VERSION" && tar -xJf "$t" -C "$WORK"
+mkdir -p "$PREFIX/licenses" && cp "$WORK/curl-$CURL_VERSION/COPYING" "$PREFIX/licenses/curl-COPYING.txt"
+# libcurl-4.dll is the name the engine dlopens (cl_curl.h); HTTP/HTTPS only over Schannel; nothing but Windows system DLLs is imported
+cmake_build "$WORK/curl-$CURL_VERSION" -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=OFF \
+	-DLIBCURL_OUTPUT_NAME=libcurl-4 -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_LIBCURL_DOCS=OFF -DBUILD_MISC_DOCS=OFF \
+	-DENABLE_CURL_MANUAL=OFF -DCURL_USE_SCHANNEL=ON -DCURL_USE_OPENSSL=OFF -DCURL_ENABLE_SSL=ON \
+	-DCURL_USE_LIBPSL=OFF -DCURL_USE_LIBSSH2=OFF -DCURL_USE_LIBSSH=OFF -DUSE_NGHTTP2=OFF -DUSE_LIBIDN2=OFF \
+	-DCURL_BROTLI=OFF -DCURL_ZSTD=OFF -DCURL_ZLIB=OFF -DCURL_DISABLE_LDAP=ON -DCURL_DISABLE_LDAPS=ON \
+	-DCURL_DISABLE_FTP=ON -DCURL_DISABLE_RTSP=ON -DCURL_DISABLE_DICT=ON -DCURL_DISABLE_TELNET=ON \
+	-DCURL_DISABLE_TFTP=ON -DCURL_DISABLE_POP3=ON -DCURL_DISABLE_IMAP=ON -DCURL_DISABLE_SMTP=ON \
+	-DCURL_DISABLE_GOPHER=ON -DCURL_DISABLE_MQTT=ON -DCURL_DISABLE_SMB=ON -DCURL_DISABLE_FILE=ON \
+	-DCURL_DISABLE_SCP=ON -DCURL_DISABLE_SFTP=ON -DCURL_DISABLE_IPFS=ON
+fi
 
 # the DLLs must depend on system DLLs only (no libgcc_s / libwinpthread)
 bad=0
@@ -83,4 +106,4 @@ for dll in "$PREFIX"/bin/*.dll; do
 done
 [ "$bad" = 0 ] || exit 1
 
-echo "Built SDL3 $SDL3_VERSION, sdl2-compat $SDL2COMPAT_VERSION, liblzma $XZ_VERSION for Windows x86_64 in $PREFIX"
+echo "Built SDL3 $SDL3_VERSION, sdl2-compat $SDL2COMPAT_VERSION, liblzma $XZ_VERSION, libcurl $CURL_VERSION for Windows x86_64 in $PREFIX"
