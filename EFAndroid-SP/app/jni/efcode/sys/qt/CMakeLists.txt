@@ -19,9 +19,20 @@ message(STATUS "ef-launcher: Qt ${Qt6_VERSION} at ${Qt6_DIR}")
 set(EFROOT ${CMAKE_CURRENT_LIST_DIR}/../..)		# efcode
 get_filename_component(EF_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../../.." ABSOLUTE)
 
-# the portable launcher core (another branch may already have added it)
+# the portable launcher core. If the engine added it already (LC_BUNDLE_ZLIB off: efsp has zlib),
+# ef-launcher, which has no engine, brings the engine's zlib sources itself.
 if(NOT TARGET eflauncher)
   add_subdirectory(${EFROOT}/launcher eflauncher)
+  set(EF_QT_NEED_ZLIB OFF)
+else()
+  set(EF_QT_NEED_ZLIB ON)
+endif()
+if(EF_QT_NEED_ZLIB)
+  file(GLOB EF_QT_ZLIB_SRC ${EFROOT}/zlib/*.c)
+  add_library(ef_qt_zlib STATIC ${EF_QT_ZLIB_SRC})
+  target_include_directories(ef_qt_zlib PUBLIC ${EFROOT}/zlib)
+  set_target_properties(ef_qt_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_compile_options(ef_qt_zlib PRIVATE -w)
 endif()
 
 # JPEG decoding for the map thumbnails: the engine's bundled libjpeg (Qt is built with no
@@ -56,6 +67,9 @@ if(DEFINED EF_HOMEPATH_NAME)
   target_compile_definitions(ef-launcher PRIVATE EF_HOMEPATH_NAME="${EF_HOMEPATH_NAME}")
 endif()
 target_link_libraries(ef-launcher PRIVATE Qt6::Widgets Qt6::Network Qt6::Gui Qt6::Core eflauncher ef_qt_jpeg)
+if(EF_QT_NEED_ZLIB)
+  target_link_libraries(ef-launcher PRIVATE ef_qt_zlib)
+endif()
 # libstdc++ / libgcc linked in, like the rest of the AppImage's own binaries
 target_link_options(ef-launcher PRIVATE -static-libstdc++ -static-libgcc)
 # bundled libraries (Qt, ...) are found next to the binary or in ../lib
