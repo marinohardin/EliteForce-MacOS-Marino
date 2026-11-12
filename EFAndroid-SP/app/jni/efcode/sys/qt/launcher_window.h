@@ -112,10 +112,6 @@ private:
 	QPointer<QDialog> m_sheet;
 	QString m_updateVersion, m_updateUrl;
 	bool m_graphicsLoading = false;
-	lc_nat *m_natLookup = nullptr;
-	QMutex m_ipLock;
-	QString m_publicIP;
-	bool m_publicIPKnown = false;
 	QStringList m_pendingLinks;
 
 	/* widgets */

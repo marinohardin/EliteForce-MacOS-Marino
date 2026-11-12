@@ -118,14 +118,7 @@ LauncherWindow::LauncherWindow( bool hostOnly ) : QDialog( nullptr, Qt::Window |
 	build();
 
 	/* public address lookup (LDC §2.8): ready by the time Play is pressed */
-	m_natLookup = lc_nat_public_address( []( lc_nat_result r, const char *ip, int, void *u ) {
-		LauncherWindow *w = static_cast<LauncherWindow *>( u );
-		if ( r == LC_NAT_OK && ip && *ip ) {
-			QMutexLocker l( &w->m_ipLock );
-			w->m_publicIP = U( ip );
-			w->m_publicIPKnown = true;
-		}
-	}, this );
+	lc_public_address_start();
 
 	refreshData();
 	refreshServerSummary();
@@ -138,8 +131,6 @@ LauncherWindow::LauncherWindow( bool hostOnly ) : QDialog( nullptr, Qt::Window |
 
 LauncherWindow::~LauncherWindow()
 {
-	if ( m_natLookup )
-		lc_nat_release( m_natLookup );
 	delete m_server;
 }
 
@@ -977,14 +968,12 @@ QString LauncherWindow::loopbackIP( bool wait )
 {
 	if ( !lc_store_get_bool( lc_store_shared(), LC_KEY_LOOPBACK_FIX, 1 ) )
 		return QString();
+	/* VSP_LoopbackArgs: waits up to 1.5 s for the router's answer, keeping the UI alive */
 	const double t0 = lc_now();
 	for ( ;; ) {
-		{
-			QMutexLocker l( &m_ipLock );
-			if ( m_publicIPKnown )
-				return m_publicIP;
-		}
-		if ( !wait || lc_now() - t0 > 1.5 )
+		if ( const char *ip = lc_public_address() )
+			return U( ip );
+		if ( !wait || !lc_public_address_pending() || lc_now() - t0 > 1.5 )
 			return QString();
 		QCoreApplication::processEvents( QEventLoop::AllEvents, 50 );
 		lc_sleep_ms( 20 );

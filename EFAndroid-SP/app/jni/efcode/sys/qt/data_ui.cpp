@@ -13,24 +13,19 @@ using namespace Ui;
 
 namespace {
 
-const unsigned long long kSlack = 64ull * 1024 * 1024;
-
-QString msgUseBaseEF()
-{
-	return "Run GOG's installer instead (with Wine on Linux), or install the game on a Windows PC, then choose the folder it installed to.";
-}
-
 QString homeBase() { return U( lc_homebase() ); }
 
 QString externalBase()
 {
-	const char *gf = lc_store_get( lc_store_shared(), LC_KEY_GAMEFOLDER );
-	if ( !gf || !*gf )
-		return QString();
-	char out[LC_MAX_PATH];
-	if ( lc_child_ci( gf, LC_BASEGAME, out, sizeof out ) && lc_is_dir( out ) )
-		return U( out );
-	return QString();
+	char out[LC_MAX_PATH] = "";
+	lc_data_external_base( out, sizeof out );
+	return U( out );
+}
+
+/* alert texts the core worded (title, text) */
+void coreAlert( QWidget *parent, const char *title, const char *text )
+{
+	alert( parent, Warning, U( title ), U( text ) );
 }
 
 QFileDialog::Options fileOptions()
@@ -126,67 +121,53 @@ int runJob( QWidget *parent, lc_copyjob *job, QString *errOut )
 	return result;
 }
 
-int freeSpaceCheck( QWidget *parent, unsigned long long total, const QString &verb, bool offerInPlace )
+int freeSpaceCheck( QWidget *parent, lc_copyjob *job )
 {
-	const QByteArray hb = B( homeBase() );
-	lc_mkdir_p( hb.constData() );
-	const unsigned long long freeB = lc_free_space( hb.constData() );
-	if ( freeB && freeB < total + kSlack ) {
-		QString info;
-		if ( offerInPlace )
-			info = QString( "%1 needs %2, but only %3 is free on the disk containing\n%4.\n\nFree up some space, or tick "
-				"\"Use BaseEF files in place rather than copy\" to use the game folder directly." )
-				.arg( verb, bytes( total + kSlack ), bytes( freeB ), homeBase() );
-		else
-			info = QString( "%1 needs %2, but only %3 is free." ).arg( verb, bytes( total ), bytes( freeB ) );
-		alert( parent, Warning, "Not enough disk space", info );
-		return 0;
-	}
-	return 1;
+	char title[256] = "", text[1024] = "";
+	if ( lc_copyjob_check_space( job, title, sizeof title, text, sizeof text ) )
+		return 1;
+	coreAlert( parent, title, text );
+	return 0;
+}
+
+void failureAlert( QWidget *parent, lc_copyjob *job, const QString &err )
+{
+	char title[256] = "", text[1024] = "";
+	lc_copyjob_failure_texts( job, B( err ).constData(), title, sizeof title, text, sizeof text );
+	log( "Copy failed: " + err );
+	coreAlert( parent, title, text );
 }
 
 /* GOG installer unpack (LDC §4.3): returns files unpacked, 0 nothing to do, -1 failed */
 int unpackInstaller( QWidget *parent, const QString &exe, bool onlyNew )
 {
-	const QByteArray eb = B( exe );
-	log( "GOG installer: reading \"" + exe + "\"" );
 	char err[512] = "";
 	int present = 0;
 	const QString ext = externalBase();
-	lc_copyjob *job = lc_plan_unpack_installer( eb.constData(), onlyNew, B( homeBase() ).constData(),
+	lc_copyjob *job = lc_plan_unpack_installer( B( exe ).constData(), onlyNew, B( homeBase() ).constData(),
 		ext.isEmpty() ? nullptr : B( ext ).constData(), &present, err, sizeof err );
+	char title[256] = "", text[1024] = "";
 	if ( !job ) {
-		log( "GOG installer: " + U( err ) );
-		alert( parent, Warning, "This installer can't be used",
-			QString( "%1\n\nThis app can't unpack it: %2.\n\n%3" ).arg( QFileInfo( exe ).fileName(), U( err ), msgUseBaseEF() ) );
-		return -1;
-	}
-	const int count = lc_copyjob_count( job );
-	log( QString( "GOG installer: %1 .pk3 files (%2 to unpack), %3 already present" ).arg( count )
-		.arg( bytes( lc_copyjob_total( job ) ) ).arg( present ) );
-	if ( count == 0 ) {
-		lc_copyjob_free( job );
-		alert( parent, Warning, "Nothing to add", "The game already has all of this installer's .pk3 files." );
+		if ( err[0] ) {
+			lc_installer_error_alert( B( exe ).constData(), err, title, sizeof title, text, sizeof text );
+			coreAlert( parent, title, text );
+			return -1;
+		}
+		lc_nothing_to_add_alert( 1, present, title, sizeof title, text, sizeof text );
+		coreAlert( parent, title, text );
 		return 0;
 	}
-	if ( !freeSpaceCheck( parent, lc_copyjob_total( job ), "Unpacking the game files", false ) ) {
+	const int count = lc_copyjob_count( job );
+	if ( !freeSpaceCheck( parent, job ) ) {
 		lc_copyjob_free( job );
 		return -1;
 	}
 	QString e;
 	const int r = runJob( parent, job, &e );
+	if ( r == 0 )
+		failureAlert( parent, job, e );
 	lc_copyjob_free( job );
-	if ( r == 0 ) {
-		log( "Copy failed: " + e );
-		alert( parent, Warning, "Unpacking the GOG installer failed",
-			QString( "%1.\n\nThe partly unpacked files were removed. If the download is damaged, download it again from GOG; otherwise: %2" )
-				.arg( e, msgUseBaseEF() ) );
-		return -1;
-	}
-	if ( r < 0 )
-		return -1;
-	log( QString( "GOG installer: unpacked %1 files to \"%2\"" ).arg( count ).arg( homeBase() ) );
-	return count;
+	return r > 0 ? count : -1;
 }
 
 bool copyGameFiles( QWidget *parent, const QString &srcBase )
@@ -194,33 +175,19 @@ bool copyGameFiles( QWidget *parent, const QString &srcBase )
 	int pk3s = 0, saves = 0, kept = 0;
 	lc_copyjob *job = lc_plan_copy_game_files( B( srcBase ).constData(), B( homeBase() ).constData(), &pk3s, &saves, &kept );
 	if ( !job ) {
-		alert( parent, Warning, "Copying the game files failed", "Nothing could be copied from that folder." );
+		coreAlert( parent, "Copying the game files failed", "Nothing could be copied from that folder." );
 		return false;
 	}
-	log( QString( "Copying %1 .pk3 files and %2 saves (%3 existing saves kept) from \"%4\" to \"%5\": %6" )
-		.arg( pk3s ).arg( saves ).arg( kept ).arg( srcBase, homeBase(), bytes( lc_copyjob_total( job ) ) ) );
-	if ( !freeSpaceCheck( parent, lc_copyjob_total( job ), "Copying the game files", true ) ) {
+	if ( !freeSpaceCheck( parent, job ) ) {
 		lc_copyjob_free( job );
 		return false;
 	}
 	QString e;
-	const unsigned long long total = lc_copyjob_total( job );
 	const int r = runJob( parent, job, &e );
+	if ( r == 0 )
+		failureAlert( parent, job, e );
 	lc_copyjob_free( job );
-	if ( r == 0 ) {
-		log( "Copy failed: " + e );
-		alert( parent, Warning, "Copying the game files failed", e + "\n\nThe partial copy was removed." );
-		return false;
-	}
-	if ( r < 0 )
-		return false;
-	char p0[LC_MAX_PATH];
-	if ( !lc_child_ci( B( homeBase() ).constData(), "pak0.pk3", p0, sizeof p0 ) ) {
-		alert( parent, Warning, "Copying the game files failed", "pak0.pk3 did not end up in the destination folder." );
-		return false;
-	}
-	log( QString( "Copied %1 of game files to \"%2\"" ).arg( bytes( total ), homeBase() ) );
-	return true;
+	return r > 0;
 }
 
 /* the chooser's panel: what to pick and whether to copy */
@@ -348,7 +315,11 @@ bool runChooser( QWidget *parent )
 			continue;
 		}
 		log( QString( "Rejected \"%1\": %2" ).arg( path, U( problem ) ) );
-		alert( parent, Warning, "That folder can't be used", path + "\n\n" + U( problem ) );
+		{
+			char title[256] = "", text[2048] = "";
+			lc_choice_alert( pb.constData(), problem, title, sizeof title, text, sizeof text );
+			coreAlert( parent, title, text );
+		}
 		if ( !testChoose.isEmpty() )
 			return false;
 	}
@@ -425,34 +396,24 @@ int addGameFiles( QWidget *parent, const QString &testPath )
 	lc_copyjob *job = lc_plan_add_files( ptrs.constData(), int( ptrs.size() ), B( homeBase() ).constData(),
 		ext.isEmpty() ? nullptr : B( ext ).constData(), &present );
 	const int count = job ? lc_copyjob_count( job ) : 0;
-	log( QString( "Add game files: %1 new .pk3 (%2), %3 already present" ).arg( count )
-		.arg( bytes( job ? lc_copyjob_total( job ) : 0 ) ).arg( present ) );
 	if ( !job || count == 0 ) {
 		if ( job )
 			lc_copyjob_free( job );
-		const QString info = present == 1 ? "The game already has that .pk3 file."
-			: present > 1 ? "The game already has all of those .pk3 files."
-			: "No .pk3 files were found there. Choose .pk3 files, or the BaseEF folder that contains them.";
-		alert( parent, Warning, "Nothing to add", info );
+		char title[256] = "", text[1024] = "";
+		lc_nothing_to_add_alert( 0, present, title, sizeof title, text, sizeof text );
+		coreAlert( parent, title, text );
 		return total;
 	}
-	if ( !freeSpaceCheck( parent, lc_copyjob_total( job ), "Adding the files", false ) ) {
+	if ( !freeSpaceCheck( parent, job ) ) {
 		lc_copyjob_free( job );
 		return total;
 	}
-	const unsigned long long jobTotal = lc_copyjob_total( job );
 	QString e;
 	const int r = runJob( parent, job, &e );
+	if ( r == 0 )
+		failureAlert( parent, job, e );
 	lc_copyjob_free( job );
-	if ( r == 0 ) {
-		log( "Copy failed: " + e );
-		alert( parent, Warning, "Copying the game files failed", e + "\n\nThe partial copy was removed." );
-		return total;
-	}
-	if ( r < 0 )
-		return total;
-	log( QString( "Added %1 files (%2) to \"%3\"" ).arg( count ).arg( bytes( jobTotal ), homeBase() ) );
-	return total + count;
+	return r > 0 ? total + count : total;
 }
 
 }	/* namespace DataUi */

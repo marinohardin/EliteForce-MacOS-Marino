@@ -342,3 +342,13 @@ endif()
 if(EF_BINK)
   target_link_libraries(efsp PRIVATE PkgConfig::FFMPEG)
 endif()
+
+# ---- ef-launcher: the Qt 6 launcher of the Linux AppImage / Steam Deck port (efcode/sys/qt) ----
+# A separate executable next to efsp, so efsp never links Qt (docs/launcher-spec/ARCHITECTURE.md).
+# Built when Qt 6 is found (CMAKE_PREFIX_PATH=build-deps/linux/qt, linux/build-qt.sh).
+if(NOT APPLE AND NOT WIN32)
+  option(EF_QT_LAUNCHER "Build ef-launcher, the Qt 6 launcher (needs Qt 6)" ON)
+  if(EF_QT_LAUNCHER)
+    add_subdirectory(${EF}/sys/qt qt-launcher)
+  endif()
+endif()

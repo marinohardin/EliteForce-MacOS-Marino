@@ -174,9 +174,9 @@ public:
 			switch ( c ) {
 			case 3: {
 				const int st = mapState ? mapState( r ) : 0;
-				if ( st == 2 )
+				if ( st == LC_MAP_EXPANSION )
 					return purple();
-				if ( st == 1 )
+				if ( st == LC_MAP_MISSING )
 					return amber();
 				return QVariant();
 			}
@@ -305,16 +305,13 @@ struct BrowserDialog::Impl {
 	int masterCount = 0;
 	const lc_map_catalog *catalog = nullptr;
 	lc_browser *b = nullptr;
-	QSet<QString> haveMaps, builtinMaps;
 	QSet<QString> favorites;
 	int source = 1;
-	QHash<int, bool> fetched;
-	QVector<lc_sort_key> keys;
-	QHash<QString, lc_server_status> statuses;
+	lc_sort_key keys[4];
+	int nKeys = 4;
 	QString asking;
 	QHash<QString, QString> views3D;			/* map -> url, or "none" */
 	QSet<QString> checking3D;
-	QHash<QString, QString> cmodOverride;		/* address -> version */
 	QString selectedAddress;
 	QString address, password;
 	bool reloadPending = false;
@@ -349,11 +346,7 @@ struct BrowserDialog::Impl {
 	void joinRowImpl( int row );
 	bool busyNow() const;
 	QString statusOf( int src ) const { return U( lc_browser_status_text( b, src ) ); }
-	bool fetching( int src ) const
-	{
-		const QString t = statusOf( src );
-		return t.startsWith( "Asking" ) || t.endsWith( QString::fromUtf8( "asking each\xe2\x80\xa6" ) ) || t.startsWith( "Looking on" );
-	}
+	bool fetching( int src ) const { return lc_browser_is_busy( b, src ) != 0; }
 	void refreshLinkRow();
 };
 
@@ -368,15 +361,10 @@ QString BrowserDialog::Impl::sourceLabel( int src ) const
 
 int BrowserDialog::Impl::mapStateOf( const QString &map ) const
 {
-	/* 0 have, 1 missing, 2 Expansion Pack not installed */
+	/* LC_MAP_HAVE / LC_MAP_MISSING / LC_MAP_EXPANSION (Expansion Pack not installed) */
 	if ( map.isEmpty() )
-		return 0;
-	const QString l = map.toLower();
-	if ( haveMaps.contains( l ) )
-		return 0;
-	if ( lc_is_expansion_map( B( l ).constData() ) )
-		return 2;
-	return 1;
+		return LC_MAP_HAVE;
+	return lc_map_state( catalog, B( map ).constData() );
 }
 
 BrowserDialog::BrowserDialog( QWidget *parent, const QString &dataFolder ) : QDialog( parent ), d( new Impl )
@@ -391,17 +379,6 @@ BrowserDialog::BrowserDialog( QWidget *parent, const QString &dataFolder ) : QDi
 	}
 	d->masterCount = lc_masters_load( lc_store_shared(), d->masters );
 	d->catalog = lc_map_catalog_get( B( dataFolder ).constData(), lc_homebase() );
-	if ( d->catalog ) {
-		for ( int i = 0; i < lc_map_catalog_count( d->catalog ); ++i ) {
-			const lc_map_info *m = lc_map_catalog_at( d->catalog, i );
-			d->haveMaps.insert( U( m->name ).toLower() );
-			if ( m->retail || m->expansion )
-				d->builtinMaps.insert( U( m->name ).toLower() );
-		}
-	}
-	for ( int i = 0; i < 64; ++i ) {
-		/* the Expansion Pack list: efservers.com has no page for these either */
-	}
 	{
 		char items[256][64];
 		const int n = lc_store_get_list( lc_store_shared(), "browserfavorites", &items[0][0], 64, 256 );
@@ -409,7 +386,9 @@ BrowserDialog::BrowserDialog( QWidget *parent, const QString &dataFolder ) : QDi
 			d->favorites.insert( U( items[i] ) );
 	}
 	d->b = lc_browser_new( d->masters, d->masterCount, d->catalog );
-	d->keys << lc_sort_key{ LC_COL_FAV, 0 } << lc_sort_key{ LC_COL_HUMANS, 0 } << lc_sort_key{ LC_COL_PLAYERS, 0 } << lc_sort_key{ LC_COL_PING, 1 };
+	lc_browser_default_sort( d->keys );
+	d->nKeys = 4;
+	lc_browser_set_loopback_fix( d->b, lc_store_get_bool( lc_store_shared(), LC_KEY_LOOPBACK_FIX, 1 ) );
 	d->build();
 	d->source = d->masterCount > 0 ? 1 : 0;
 	d->tabs->setCurrent( d->source );
@@ -422,7 +401,7 @@ BrowserDialog::~BrowserDialog()
 		QMutexLocker l( &g_liveLock );
 		g_live.remove( d );
 	}
-	lc_browser_cancel_all( d->b );
+	lc_browser_free( d->b );
 	delete d;
 }
 
@@ -488,22 +467,15 @@ void BrowserDialog::Impl::build()
 	/* server table */
 	model = new ServerModel;
 	model->cmodOf = [this]( const lc_browser_row &r ) {
-		QString v = r.cmodVersion;
-		bool is = r.isCmod != 0;
-		const QString a = U( r.info.address );
-		if ( !is && cmodOverride.contains( a ) ) {
-			is = true;
-			v = cmodOverride[a];
-		}
-		return cmodText( is, B( v ).constData(), nullptr );
+		return cmodText( r.isCmod != 0, r.cmodVersion, nullptr );
 	};
 	model->mapState = [this]( const lc_browser_row &r ) { return mapStateOf( U( r.info.map ) ); };
 	model->mapTip = [this]( const QString &m ) -> QString {
 		const int st = mapStateOf( m );
-		if ( st == 2 )
+		if ( st == LC_MAP_EXPANSION )
 			return QString( "%1 is an Expansion Pack map, and the Expansion Pack isn't in your game files. Servers can't send it: add the "
 				"Expansion Pack's files with Add Game Files\xe2\x80\xa6 in the launcher to join." ).arg( m );
-		if ( st == 1 )
+		if ( st == LC_MAP_MISSING )
 			return QString( "%1 isn't in your game files. It downloads when you join, if the server allows downloads." ).arg( m );
 		return QString();
 	};
@@ -625,7 +597,7 @@ void BrowserDialog::Impl::build()
 	QObject::connect( &reloadTimer, &QTimer::timeout, q, [this]() { reloadPending = false; show_(); } );
 	QObject::connect( tabs, &Segmented::currentChanged, q, [this]( int s ) {
 		source = s;
-		if ( !fetched.value( s ) )
+		if ( !lc_browser_fetched( b, s ) )
 			fetch( s );
 		else
 			show_();
@@ -678,7 +650,7 @@ void BrowserDialog::Impl::build()
 			joinRowImpl( ix.row() );
 	} );
 	QObject::connect( playersRefresh, &QToolButton::clicked, q, [this]() {
-		statuses.remove( selectedAddress );
+		lc_browser_forget_status( b, B( selectedAddress ).constData() );
 		showPlayers();
 	} );
 	QObject::connect( mapInfo, &QPushButton::clicked, q, [this]() {
@@ -729,7 +701,6 @@ QString BrowserDialog::Impl::selected() const
 
 void BrowserDialog::Impl::fetch( int src )
 {
-	fetched[src] = true;
 	QString publicIP;
 	lc_browser_fetch( b, src, publicIP.isEmpty() ? nullptr : B( publicIP ).constData(), []( int s, void *u ) {
 		QMutexLocker l( &g_liveLock );
@@ -758,7 +729,7 @@ void BrowserDialog::Impl::show_()
 	for ( const QByteArray &fb : favBytes )
 		favPtrs << fb.constData();
 	const int n = lc_browser_rows( b, source, onlyFav->isChecked(), onlyPeople->isChecked(), favPtrs.constData(), int( favPtrs.size() ),
-		keys.constData(), int( keys.size() ), &rows );
+		keys, nKeys, &rows );
 	const QString sel = selectedAddress;
 	{
 		QSignalBlocker blk( table->selectionModel() );
@@ -781,10 +752,9 @@ void BrowserDialog::Impl::show_()
 	const bool f = fetching( source );
 	spinner->setVisible( f );
 	/* sort indicator follows the primary key */
-	if ( !keys.isEmpty() ) {
-		static const int colOf[9] = { 0, 1, 2, 3, 4, 5, 6, 7, 8 };
+	if ( nKeys > 0 ) {
 		QSignalBlocker hb( table->horizontalHeader() );
-		table->horizontalHeader()->setSortIndicator( colOf[int( keys[0].column )],
+		table->horizontalHeader()->setSortIndicator( int( keys[0].column ),
 			keys[0].ascending ? Qt::AscendingOrder : Qt::DescendingOrder );
 	}
 	showPlayers();
@@ -794,18 +764,7 @@ void BrowserDialog::Impl::sortBy( int c )
 {
 	if ( c < 0 || c > 8 )
 		return;
-	const lc_column col = lc_column( c );
-	bool asc;
-	if ( !keys.isEmpty() && keys[0].column == col )
-		asc = !keys[0].ascending;
-	else {
-		/* direction on the first click (servers.md §8.3) */
-		asc = col == LC_COL_NAME || col == LC_COL_MAP || col == LC_COL_TYPE || col == LC_COL_PING;
-	}
-	for ( int i = keys.size() - 1; i >= 0; --i )
-		if ( keys[i].column == col )
-			keys.removeAt( i );
-	keys.prepend( lc_sort_key{ col, asc ? 1 : 0 } );
+	nKeys = lc_sort_click( keys, nKeys, 4, lc_column( c ) );
 	show_();
 }
 
@@ -846,29 +805,29 @@ void BrowserDialog::Impl::showPlayers()
 	playersTitle->setText( "Players on " + nm );
 
 	/* Map Info / 3D Map Preview */
-	if ( !map.isEmpty() && !builtinMaps.contains( map.toLower() ) && !lc_is_expansion_map( B( map.toLower() ).constData() ) ) {
+	if ( !map.isEmpty() && !lc_map_is_builtin( catalog, B( map ).constData() ) ) {
 		mapInfo->show();
 		mapInfo->setToolTip( QString( "See %1 on efservers.com: screenshots and its files" ).arg( map ) );
 		show3D();
 	}
 
 	const QString a = selectedAddress;
-	if ( !statuses.contains( a ) ) {
-		playersNote->setText( "Asking the server\xe2\x80\xa6" );
+	lc_server_status st;
+	memset( &st, 0, sizeof st );
+	if ( !lc_browser_get_status( b, B( a ).constData(), &st ) ) {
+		playersNote->setText( QString::fromUtf8( "Asking the server\xe2\x80\xa6" ) );
 		playersRefresh->hide();
 		if ( asking != a ) {
 			asking = a;
-			auto *st = new lc_server_status;
-			memset( st, 0, sizeof *st );
+			auto *ns = new lc_server_status;
+			memset( ns, 0, sizeof *ns );
 			auto *ok = new int( 0 );
-			async( q, [a, st, ok]() { *ok = lc_query_status( B( a ).constData(), st ); }, [this, a, st, ok]() {
+			async( q, [a, ns, ok]() { *ok = lc_query_status( B( a ).constData(), ns ); }, [this, a, ns, ok]() {
 				if ( asking == a )
 					asking.clear();
 				if ( *ok ) {
-					st->when = lc_time();
-					statuses[a] = *st;
-					if ( st->isCmod )
-						cmodOverride[a] = U( st->cmodVersion );
+					ns->when = lc_time();
+					lc_browser_store_status( b, B( a ).constData(), ns );
 					reloadTimer.start();
 					if ( selectedAddress == a )
 						showPlayers();
@@ -876,20 +835,15 @@ void BrowserDialog::Impl::showPlayers()
 					playersNote->setText( "The server didn't answer." );
 					playersRefresh->show();
 				}
-				delete st;
+				delete ns;
 				delete ok;
 			} );
 		}
 		return;
 	}
-	lc_server_status st = statuses[a];
 	lc_sort_players( st.players, st.playerCount );
-	int pinged = 0;
-	for ( int i = 0; i < st.playerCount; ++i )
-		if ( st.players[i].ping > 0 )
-			++pinged;
 	const int humans = st.humans >= 0 ? st.humans : row.info.humans;
-	const bool tag = humans < 0 || pinged == humans;
+	const bool tag = lc_tag_bots( st.players, st.playerCount, humans ) != 0;
 	if ( st.playerCount == 0 )
 		playersNote->setText( "No one is playing." );
 	else
@@ -985,7 +939,7 @@ void BrowserDialog::Impl::joinRowImpl( int row )
 	QString nm = plainName( U( r.info.hostname ) );
 	if ( nm.isEmpty() )
 		nm = plainName( U( r.info.name ) );
-	if ( mapStateOf( map ) == 2 ) {
+	if ( mapStateOf( map ) == LC_MAP_EXPANSION ) {
 		int ans;
 		const QString t = testEnv( "VOYAGERSP_TEST_BROWSER_EXPANSION" ).toLower();
 		if ( !t.isEmpty() ) {
