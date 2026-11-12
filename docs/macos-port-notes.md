@@ -1241,3 +1241,9 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   3 s); game over for both when both are down, on bleed-out (`coop_bleedout`, 30 s) or when player 1
   dies for real. No saving while someone is down.
 - Details: `docs/coop-m2-design.md`.
+
+## Co-op: guest closed on ladders (2026-11-12, branch `1_4_0/coop-m1` only)
+- The guest's game quit (crash, no report) as soon as player 2 was on a ladder or waist-deep in water:
+  its cgame predicts player 2's moves with no game entity, and the water/ladder depth check read that
+  entity's NPC type (null). In co-op builds the check now treats "no entity" as not a biohulk, as the
+  host does for player 2. Single player and builds without `EF_COOP` are unchanged.

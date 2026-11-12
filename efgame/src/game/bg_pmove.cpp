@@ -1289,7 +1289,12 @@ static void PM_SetWaterLevel( void ) {
 		cont = pm->pointcontents (point, pm->ps->clientNum );
 		if ( cont & (MASK_WATER|CONTENTS_LADDER) ) 
 		{
+#ifdef EF_COOP
+			// co-op: a guest's cgame predicts player 2 with no entity (pm->gent NULL); it isn't a biohulk
+			if ( !pm->gent || Q_stricmp( "biohulk", pm->gent->NPC_type ) != 0 )
+#else
 			if ( Q_stricmp( "biohulk", pm->gent->NPC_type ) != 0 )
+#endif
 			{//special hack for biohulk- they're never waist-high in water
 				pm->waterlevel = 2;
 			}
