@@ -104,7 +104,7 @@ sed 's/$/\r/' "$ROOT/windows/ReadMe.txt" > "$STAGE/Read Me.txt"
 
 # ---- 3. audit: imports are bundled or Windows system DLLs -----------------------------
 echo "Auditing DLL imports"
-SYSTEM_DLLS=' kernel32 user32 gdi32 gdi32full advapi32 shell32 ole32 oleaut32 ws2_32 winmm iphlpapi dbghelp psapi setupapi imm32 version shlwapi msvcrt ucrtbase bcrypt bcryptprimitives cfgmgr32 comctl32 comdlg32 combase crypt32 secur32 shcore wsock32 mswsock dwmapi uxtheme userenv winspool rpcrt4 ntdll normaliz mf mfplat mfreadwrite mfuuid dxgi d3d11 d3d12 dinput8 xinput1_4 xinput9_1_0 hid winhttp wininet wldap32 ncrypt netapi32 sensorsapi propsys windowscodecs cabinet vulkan-1 '
+SYSTEM_DLLS=' kernel32 user32 gdi32 gdi32full advapi32 shell32 ole32 oleaut32 ws2_32 winmm iphlpapi dbghelp psapi setupapi imm32 version shlwapi gdiplus msvcrt ucrtbase bcrypt bcryptprimitives cfgmgr32 comctl32 comdlg32 combase crypt32 secur32 shcore wsock32 mswsock dwmapi uxtheme userenv winspool rpcrt4 ntdll normaliz mf mfplat mfreadwrite mfuuid dxgi d3d11 d3d12 dinput8 xinput1_4 xinput9_1_0 hid winhttp wininet wldap32 ncrypt netapi32 sensorsapi propsys windowscodecs cabinet vulkan-1 '
 bad=0
 for f in "$STAGE"/*.exe "$STAGE"/*.dll; do
 	for dll in $($OBJDUMP -p "$f" | sed -n 's/^[[:space:]]*DLL Name: \(.*\)$/\1/p'); do
