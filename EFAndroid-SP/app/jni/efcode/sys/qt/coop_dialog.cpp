@@ -9,6 +9,8 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 
 #include "dialogs.h"
 
+#include <arpa/inet.h>
+
 using namespace Ui;
 
 namespace {
@@ -80,7 +82,7 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 	}
 	if ( na > 0 ) {
 		m_lanLabel = label( lines.join( "\n" ), 13, QFont::Medium );
-		QFont f = font( 13, QFont::Medium, true );
+		QFont f = Ui::font( 13, QFont::Medium, true );
 		m_lanLabel->setFont( f );
 		m_lanLabel->setTextInteractionFlags( Qt::TextSelectableByMouse );
 	} else

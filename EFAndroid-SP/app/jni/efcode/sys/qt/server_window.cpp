@@ -9,6 +9,8 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 
 #include "dialogs.h"
 
+#include <arpa/inet.h>
+
 #include <QClipboard>
 #include <QTextCursor>
 #include <unistd.h>
@@ -203,8 +205,7 @@ void ServerWindow::Impl::build()
 	hd->addWidget( ic );
 	QVBoxLayout *hc = new QVBoxLayout;
 	hc->setSpacing( px( 3 ) );
-	title = label( U( s.hostname ), 22, QFont::Bold );
-	title->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
+	title = elidedLabel( U( s.hostname ), 22, QFont::Bold );
 	hc->addWidget( title );
 	QHBoxLayout *sr = new QHBoxLayout;
 	sr->setSpacing( px( 6 ) );
@@ -235,7 +236,7 @@ void ServerWindow::Impl::build()
 	gl->addWidget( lab( "Address:" ), r, 0 );
 	QHBoxLayout *ar = new QHBoxLayout;
 	addrValue = label( QString(), 15, QFont::DemiBold );
-	addrValue->setFont( font( 15, QFont::DemiBold ) );
+	addrValue->setFont( Ui::font( 15, QFont::DemiBold ) );
 	addrValue->setTextInteractionFlags( Qt::TextSelectableByMouse );
 	copyAddr = button( "Copy" );
 	ar->addWidget( addrValue );
@@ -286,8 +287,7 @@ void ServerWindow::Impl::build()
 	gl->addWidget( listStatusRow, r++, 1 );
 
 	gl->addWidget( lab( "Map:" ), r, 0 );
-	mapValue = label( QString(), 13 );
-	mapValue->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
+	mapValue = elidedLabel( QString(), 13 );
 	gl->addWidget( mapValue, r++, 1 );
 	gl->addWidget( lab( "Game:" ), r, 0 );
 	gameValue = label( QString(), 13 );
@@ -368,7 +368,7 @@ void ServerWindow::Impl::build()
 	right->addWidget( label( "CONSOLE", 11, QFont::DemiBold, secondary() ) );
 	console = new QTextEdit;
 	console->setReadOnly( true );
-	console->setFont( font( 11, QFont::Normal, true ) );
+	console->setFont( Ui::font( 11, QFont::Normal, true ) );
 	console->setFrameShape( QFrame::NoFrame );
 	console->document()->setDocumentMargin( 6 );
 	console->setLineWrapMode( QTextEdit::WidgetWidth );
@@ -607,7 +607,7 @@ void ServerWindow::Impl::showInternet()
 	if ( !icon_.isEmpty() )
 		inetIcon->setPixmap( iconPixmap( icon_, ic, 16 ) );
 	inetValue->setText( QString::fromUtf8( value.toUtf8() ) );
-	inetValue->setFont( font( mono ? 15 : 13, mono ? QFont::DemiBold : QFont::Normal ) );
+	inetValue->setFont( Ui::font( mono ? 15 : 13, mono ? QFont::DemiBold : QFont::Normal ) );
 	copyInet->setVisible( showCopy );
 	inetHint->setVisible( !hint.isEmpty() );
 	inetHint->setText( hint );
@@ -719,7 +719,7 @@ void ServerWindow::Impl::showPlayersTable()
 	const int cur = table->currentRow();
 	table->setRowCount( 0 );
 	table->setRowCount( players.size() );
-	const QFont mono = font( 12, QFont::Normal, true );
+	const QFont mono = Ui::font( 12, QFont::Normal, true );
 	for ( int i = 0; i < players.size(); ++i ) {
 		const lc_srv_player &p = players[i];
 		QTableWidgetItem *n = new QTableWidgetItem( U( p.name ) );

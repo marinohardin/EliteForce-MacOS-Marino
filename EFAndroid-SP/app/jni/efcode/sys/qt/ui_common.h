@@ -75,6 +75,9 @@ QFont font( double pt, QFont::Weight w = QFont::Normal, bool mono = false );
 /* a label: pt size, weight, colour (invalid = default), wrap width (0 = no wrap) */
 QLabel *label( const QString &text, double pt = 13, QFont::Weight w = QFont::Normal,
 	const QColor &c = QColor(), int wrapWidth = 0 );
+/* a single-line label that elides its text (tail or middle) instead of clipping */
+QLabel *elidedLabel( const QString &text, double pt = 13, QFont::Weight w = QFont::Normal,
+	const QColor &c = QColor(), Qt::TextElideMode mode = Qt::ElideRight );
 QPushButton *button( const QString &text, const QString &tooltip = QString() );
 QToolButton *iconButton( const QString &icon, const QString &tooltip, int iconPx = 12 );
 QIcon icon( const QString &name, const QColor &c = QColor(), int px = 16 );

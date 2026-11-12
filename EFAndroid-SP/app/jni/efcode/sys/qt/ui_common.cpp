@@ -144,6 +144,37 @@ QLabel *label( const QString &text, double pt, QFont::Weight w, const QColor &c,
 	return l;
 }
 
+namespace {
+class ElideLabel : public QLabel {
+public:
+	explicit ElideLabel( Qt::TextElideMode m ) : m_mode( m ) {}
+	QSize minimumSizeHint() const override { return QSize( 0, QLabel::sizeHint().height() ); }
+	QSize sizeHint() const override { return QSize( QLabel::sizeHint().width(), QLabel::sizeHint().height() ); }
+protected:
+	void paintEvent( QPaintEvent * ) override
+	{
+		QPainter p( this );
+		p.setFont( font() );
+		p.setPen( palette().color( foregroundRole() ) );
+		const QFontMetrics fm( font() );
+		p.drawText( rect(), int( alignment() ) | Qt::AlignVCenter, fm.elidedText( text(), m_mode, width() ) );
+	}
+private:
+	Qt::TextElideMode m_mode;
+};
+}
+
+QLabel *elidedLabel( const QString &text, double pt, QFont::Weight w, const QColor &c, Qt::TextElideMode mode )
+{
+	QLabel *l = new ElideLabel( mode );
+	l->setText( text );
+	l->setFont( font( pt, w ) );
+	setColor( l, c );
+	l->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
+	l->setTextInteractionFlags( Qt::NoTextInteraction );
+	return l;
+}
+
 QPushButton *button( const QString &text, const QString &tooltip )
 {
 	QPushButton *b = new QPushButton( text );

@@ -333,7 +333,7 @@ QWidget *LauncherWindow::buildGraphics()
 	m_quality = new Segmented( QStringList() << lc_preset_title( LC_PRESET_PERFORMANCE ) << lc_preset_title( LC_PRESET_BALANCED )
 		<< lc_preset_title( LC_PRESET_BEST ) << "Custom" );
 	m_quality->setSegmentEnabled( 3, false );
-	m_quality->setFixedWidth( px( 320 ) );
+	m_quality->setFixedWidth( px( 380 ) );
 	connect( m_quality, &Segmented::currentChanged, this, [this]( int i ) {
 		if ( i < 3 )
 			applyPreset( lc_preset( i ) );
@@ -392,14 +392,8 @@ QWidget *LauncherWindow::buildServerGroup()
 	int r = 0;
 	auto row = [&]( const QString &lab, QLabel *&val, bool mono = false ) {
 		gl->addWidget( gridLabelCell( lab ), r, 0 );
-		val = label( QString(), 13, mono ? QFont::Medium : QFont::Normal );
-		if ( mono ) {
-			QFont f = val->font();
-			f.setFeature( "tnum", 1 );
-			val->setFont( f );
-		}
-		val->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
-		gl->addWidget( val, r, 1 );
+		val = elidedLabel( QString(), 13, mono ? QFont::Medium : QFont::Normal );
+			gl->addWidget( val, r, 1 );
 		++r;
 	};
 	row( "Server name:", m_srvName );
@@ -438,8 +432,7 @@ QWidget *LauncherWindow::buildHolomatch()
 
 	gl->addWidget( gridLabelCell( "Internet games:" ), 2, 0 );
 	QHBoxLayout *mh = new QHBoxLayout;
-	m_masterSummary = label( QString(), 13 );
-	m_masterSummary->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
+	m_masterSummary = elidedLabel( QString(), 13 );
 	mh->addWidget( m_masterSummary, 1 );
 	m_mastersButton = button( QString::fromUtf8( "Servers\xe2\x80\xa6" ),
 		"The master servers that list internet games, and that a server you host announces itself to" );
@@ -496,15 +489,13 @@ QWidget *LauncherWindow::buildGameFiles()
 	top->addWidget( m_folderIcon, 0, Qt::AlignTop );
 	QVBoxLayout *col = new QVBoxLayout;
 	col->setSpacing( px( 3 ) );
-	m_pathLabel = label( QString(), 12, QFont::Medium );
-	m_pathLabel->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
+	m_pathLabel = elidedLabel( QString(), 12, QFont::Medium, QColor(), Qt::ElideMiddle );
 	col->addWidget( m_pathLabel );
 	QHBoxLayout *sr = new QHBoxLayout;
 	sr->setSpacing( px( 4 ) );
 	m_statusIcon = new QLabel;
 	m_statusIcon->setFixedSize( px( 14 ), px( 14 ) );
-	m_statusText = label( QString(), 11, QFont::Normal, secondary() );
-	m_statusText->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
+	m_statusText = elidedLabel( QString(), 11, QFont::Normal, secondary() );
 	sr->addWidget( m_statusIcon );
 	sr->addWidget( m_statusText, 1 );
 	col->addLayout( sr );
@@ -512,8 +503,7 @@ QWidget *LauncherWindow::buildGameFiles()
 	er->setSpacing( px( 4 ) );
 	m_expIcon = new QLabel;
 	m_expIcon->setFixedSize( px( 14 ), px( 14 ) );
-	m_expText = label( QString(), 11, QFont::Normal, secondary() );
-	m_expText->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
+	m_expText = elidedLabel( QString(), 11, QFont::Normal, secondary() );
 	er->addWidget( m_expIcon );
 	er->addWidget( m_expText, 1 );
 	col->addLayout( er );
@@ -593,8 +583,8 @@ void LauncherWindow::showEvent( QShowEvent *e )
 		resize( avail.size().boundedTo( QSize( 1280, 800 ) ) );
 		return;
 	}
-	const QSize sh = m_content->sizeHint();
-	const int maxH = avail.height() - 60;
+	const QSize sh = m_content->sizeHint().expandedTo( m_content->minimumSizeHint() );
+	const int maxH = testEnv( "VOYAGERSP_TEST_LAUNCHER_SNAPSHOT" ).isEmpty() ? avail.height() - 60 : 4000;
 	const int h = qMin( sh.height(), maxH );
 	const int sb = h < sh.height() ? style()->pixelMetric( QStyle::PM_ScrollBarExtent ) : 0;
 	setFixedSize( sh.width() + sb, h );

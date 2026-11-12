@@ -54,7 +54,7 @@ public:
 		const int row = idx.row();
 		const QString addr = idx.data( Qt::DisplayRole ).toString();
 		/* slot label */
-		p->setFont( font( 12 ) );
+		p->setFont( Ui::font( 12 ) );
 		p->setPen( sec );
 		p->drawText( QRect( r.left(), r.top(), px( 92 ), r.height() ), Qt::AlignVCenter | Qt::AlignLeft,
 			row < 5 ? QString( "Internet %1" ).arg( row + 1 ) : QString( "Announce only" ) );
@@ -84,18 +84,18 @@ public:
 				}
 			}
 		}
-		p->setFont( font( 11 ) );
+		p->setFont( Ui::font( 11 ) );
 		p->setPen( sc );
 		p->drawText( sr, Qt::AlignVCenter | Qt::AlignRight, QString::fromUtf8( st.toUtf8() ) );
 		if ( !ic.isEmpty() ) {
-			const int tw = QFontMetrics( font( 11 ) ).horizontalAdvance( st );
+			const int tw = QFontMetrics( Ui::font( 11 ) ).horizontalAdvance( st );
 			const QPixmap pm = iconPixmap( ic, sel ? txt : icc, 12 );
 			p->drawPixmap( sr.right() - tw - px( 18 ), r.center().y() - px( 6 ), pm );
 		}
 		/* address */
 		const int ax = r.left() + px( 92 ) + px( 8 );
 		const int aw = sr.left() - px( 22 ) - ax;
-		p->setFont( font( 13, QFont::Medium ) );
+		p->setFont( Ui::font( 13, QFont::Medium ) );
 		if ( addr.isEmpty() ) {
 			p->setPen( sel ? txt : tertiary() );
 			p->drawText( QRect( ax, r.top(), aw, r.height() ), Qt::AlignVCenter | Qt::AlignLeft, "host or host:port" );
@@ -111,7 +111,7 @@ public:
 	{
 		QLineEdit *e = new QLineEdit( parent );
 		e->setPlaceholderText( "host or host:port" );
-		e->setFont( font( 13, QFont::Medium ) );
+		e->setFont( Ui::font( 13, QFont::Medium ) );
 		return e;
 	}
 	void setEditorData( QWidget *e, const QModelIndex &idx ) const override
@@ -241,7 +241,7 @@ struct MasterDialog::Impl {
 		if ( QWidget *f = QApplication::focusWidget() )
 			if ( QLineEdit *e = qobject_cast<QLineEdit *>( f ) )
 				if ( list->isAncestorOf( e ) )
-					list->commitData( e ), list->closeEditor( e, QAbstractItemDelegate::NoHint );
+					e->clearFocus();
 	}
 
 	void edit( int row )

@@ -253,7 +253,7 @@ public:
 			QString name = U( r.info.hostname );
 			if ( name.isEmpty() )
 				name = U( r.info.name );
-			paintQ3( p, opt.rect.adjusted( px( 3 ), 0, -px( 3 ), 0 ), name, font( 13 ), txt, Qt::AlignLeft,
+			paintQ3( p, opt.rect.adjusted( px( 3 ), 0, -px( 3 ), 0 ), name, Ui::font( 13 ), txt, Qt::AlignLeft,
 				r.thisComputer ? QString( " (this %1)" ).arg( nounLc() ) : QString() );
 		}
 	}
@@ -273,7 +273,7 @@ public:
 		if ( ix.column() != 0 ) {
 			QStyleOptionViewItem o = opt;
 			o.state &= ~( QStyle::State_Selected | QStyle::State_HasFocus );
-			o.font = font( 11 );
+			o.font = Ui::font( 11 );
 			if ( ix.column() == 2 && ix.data( Qt::UserRole + 1 ).toBool() )
 				o.palette.setColor( QPalette::Text, tertiary() );
 			if ( ix.column() == 3 )
@@ -285,7 +285,7 @@ public:
 		o.text.clear();
 		o.state &= ~( QStyle::State_Selected | QStyle::State_HasFocus );
 		QApplication::style()->drawControl( QStyle::CE_ItemViewItem, &o, p, opt.widget );
-		paintQ3( p, opt.rect.adjusted( px( 2 ), 0, -px( 2 ), 0 ), ix.data( Qt::UserRole ).toString(), font( 11 ),
+		paintQ3( p, opt.rect.adjusted( px( 2 ), 0, -px( 2 ), 0 ), ix.data( Qt::UserRole ).toString(), Ui::font( 11 ),
 			opt.palette.color( QPalette::Text ), Qt::AlignLeft );
 	}
 	QSize sizeHint( const QStyleOptionViewItem &o, const QModelIndex &i ) const override
@@ -472,8 +472,7 @@ void BrowserDialog::Impl::build()
 	spinner->setFixedSize( px( 28 ), px( 8 ) );
 	spinner->hide();
 	sr->addWidget( spinner );
-	statusLabel = label( QString(), 11, QFont::Normal, secondary() );
-	statusLabel->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
+	statusLabel = elidedLabel( QString(), 11, QFont::Normal, secondary() );
 	sr->addWidget( statusLabel, 1 );
 	onlyFav = new QCheckBox( "Only favorites" );
 	onlyFav->setToolTip( "Star servers in the list to make them favorites" );

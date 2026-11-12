@@ -108,7 +108,13 @@ ModeCard::ModeCard( const QString &icn, const QString &title, const QString &det
 	v->addLayout( h );
 	m_detailLabel = label( detail, 12, QFont::Normal, secondary() );
 	m_detailLabel->setWordWrap( true );
-	m_detailLabel->setSizePolicy( QSizePolicy::Preferred, QSizePolicy::Minimum );
+	{
+		/* wraps at 150 points (LDC §2.3): fix its height so the card row is tall enough in a scroll area */
+		const int w = px( 150 );
+		m_detailLabel->setFixedWidth( w );
+		const QRect br = QFontMetrics( m_detailLabel->font() ).boundingRect( QRect( 0, 0, w, 1000 ), Qt::TextWordWrap, detail );
+		m_detailLabel->setFixedHeight( br.height() + 2 );
+	}
 	v->addWidget( m_detailLabel );
 	v->addStretch( 1 );
 	if ( accessory )
@@ -209,9 +215,9 @@ public:
 
 		QWidget *top = w->window();
 		auto move = [&]( bool next ) {
-			QWidget *before = QApplication::focusWidget();
-			top->focusNextPrevChild( next );
-			Q_UNUSED( before );
+			QKeyEvent tab( QEvent::KeyPress, next ? Qt::Key_Tab : Qt::Key_Backtab, next ? Qt::NoModifier : Qt::ShiftModifier );
+			QApplication::sendEvent( w, &tab );
+			Q_UNUSED( top );
 			return true;
 		};
 		const bool fwd = key == Qt::Key_Down || key == Qt::Key_Right;

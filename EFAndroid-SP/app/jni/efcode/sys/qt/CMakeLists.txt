@@ -27,7 +27,6 @@ endif()
 # JPEG decoding for the map thumbnails: the engine's bundled libjpeg (Qt is built with no
 # image-format plugins)
 file(GLOB EF_QT_JPEG_SRC ${EFROOT}/jpeg-8c/*.c)
-list(FILTER EF_QT_JPEG_SRC EXCLUDE REGEX "(jcapimin|jcapistd|jccoefct|jccolor|jcdctmgr|jchuff|jcinit|jcmainct|jcmarker|jcmaster|jcparam|jcprepct|jcsample|jctrans|jcarith|jdatadst|jfdct[a-z]*|jmemname|jmemansi|jmemdos|jmemmac)\\.c$")
 add_library(ef_qt_jpeg STATIC ${EF_QT_JPEG_SRC})
 target_include_directories(ef_qt_jpeg PUBLIC ${EFROOT}/jpeg-8c)
 set_target_properties(ef_qt_jpeg PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -47,6 +46,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${EF_QT_ICON})
 add_executable(ef-launcher
   main.cpp ui_common.cpp widgets.cpp launcher_window.cpp hud_dialog.cpp data_ui.cpp coop_dialog.cpp
   server_config.cpp master_dialog.cpp browser_dialog.cpp server_window.cpp instance.cpp levelshot.cpp
+  dialogs.h widgets.h launcher_window.h
   ${EF_QT_QRC})
 set_target_properties(ef-launcher PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${EF_ENGINE_OUTPUT_DIR}")
 target_include_directories(ef-launcher PRIVATE ${CMAKE_CURRENT_LIST_DIR})

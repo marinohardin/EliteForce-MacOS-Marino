@@ -67,11 +67,11 @@ public:
 		const int x = tr.right() + px( 9 );
 		const int w = r.right() - x - 6;
 		p->setPen( txt );
-		p->setFont( font( 13, QFont::Medium ) );
+		p->setFont( Ui::font( 13, QFont::Medium ) );
 		const QFontMetrics fm( p->font() );
 		p->drawText( QRect( x, r.top(), w, r.height() / 2 ), Qt::AlignLeft | Qt::AlignBottom,
 			fm.elidedText( title, Qt::ElideRight, w ) );
-		QFont df = font( 11 );
+		QFont df = Ui::font( 11 );
 		p->setFont( df );
 		const QFontMetrics dm( df );
 		int cx = x;

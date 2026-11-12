@@ -34,6 +34,7 @@ public:
 	~CoopDialog() override;
 	enum Result { Cancelled = 0, Host = 1, Connect = 2 };
 	int choice() const { return m_choice; }
+	void reject() override;
 	void runTestHooks();
 	QString playName() const { return m_playName; }
 private slots:
@@ -56,6 +57,7 @@ private:
 	QPushButton *m_copyInvite, *m_check, *m_connect, *m_host;
 	Ui::Segmented *m_munro;
 	QProgressBar *m_spinner;
+	QWidget *m_resultWidget;
 	QStringList m_lan;
 	int m_choice = 0;
 	bool m_checking = false;
@@ -78,6 +80,7 @@ class ServerConfigDialog : public QDialog {
 	Q_OBJECT
 public:
 	ServerConfigDialog( QWidget *parent, lc_server_settings *original, const QString &dataFolder );
+	~ServerConfigDialog() override { delete d; }
 	void selectTab( const QString &tab );
 	void setTickRate( int v );
 	void commit();							/* Done without closing (tests) */
