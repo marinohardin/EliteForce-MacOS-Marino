@@ -913,20 +913,27 @@ void Wnd::show( ) { applyTheme( hwnd ); ShowWindow( hwnd, SW_SHOW ); UpdateWindo
 
 void Wnd::end( int r ) { result = r; done = true; PostMessageW( hwnd, WM_NULL, 0, 0 ); }
 
+str g_snapPath; int g_snapDelayMs = 700; bool g_snapClose = true;
+std::vector<Wnd *> g_sheets;
+
 int Wnd::runModal( )
 {
 	if ( owner && IsWindow( owner ) ) { ownerWasEnabled = IsWindowEnabled( owner ) != 0; EnableWindow( owner, FALSE ); }
 	done = false;
 	show( );
 	SetForegroundWindow( hwnd );
+	g_sheets.push_back( this );
+	if ( !g_snapPath.empty( ) ) SetTimer( hwnd, 0x7E57, g_snapDelayMs, 0 );
 	while ( !done ) {
 		MSG m;
 		BOOL r = GetMessageW( &m, 0, 0, 0 );
 		if ( r == 0 ) { PostQuitMessage( (int)m.wParam ); break; }
 		if ( r < 0 ) break;
+		if ( preTranslate( &m ) ) continue;
 		if ( IsDialogMessageW( hwnd, &m ) ) continue;
 		TranslateMessage( &m ); DispatchMessageW( &m );
 	}
+	g_sheets.erase( std::remove( g_sheets.begin( ), g_sheets.end( ), this ), g_sheets.end( ) );
 	if ( owner && IsWindow( owner ) ) { if ( ownerWasEnabled ) EnableWindow( owner, TRUE ); SetForegroundWindow( owner ); }
 	DestroyWindow( hwnd );
 	hwnd = 0;
@@ -938,8 +945,11 @@ void Wnd::paintBg( HDC dc, RECT rc )
 	HBRUSH b = CreateSolidBrush( T.bg );
 	FillRect( dc, &rc, b );
 	DeleteObject( b );
-	for ( auto &g : groups ) {
+	for ( auto &gr : groups ) {
+		if ( !gr.visible ) continue;
+		Group g = gr; OffsetRect( &g.r, 0, -scrollY );
 		RECT t; if ( !IntersectRect( &t, &g.r, &rc ) ) continue;
+		if ( g.kind == 1 ) { fillRoundRect( dc, g.r, S( g.radius ), blend( T.bg, T.accent, 15 ), CLR_NONE, 0 ); continue; }
 		fillRoundRect( dc, g.r, S( g.radius ), T.group, T.sep, 1 );
 		if ( !g.caption.empty( ) ) {
 			SetBkMode( dc, TRANSPARENT ); SetTextColor( dc, T.text2 );
@@ -970,7 +980,15 @@ LRESULT Wnd::msg( UINT m, WPARAM w, LPARAM l )
 	case WM_PAINT: { PAINTSTRUCT ps; HDC pdc = BeginPaint( hwnd, &ps ); paintOver( pdc ); EndPaint( hwnd, &ps ); return 0; }
 	case WM_PRINTCLIENT: { RECT prc; GetClientRect( hwnd, &prc ); paintBg( (HDC)w, prc ); paintOver( (HDC)w ); return 0; }
 	case WM_NOTIFY: return onNotify( (NMHDR *)l );
-	case WM_TIMER: onTimer( (int)w ); return 0;
+	case WM_TIMER:
+		if ( w == 0x7E57 ) {
+			KillTimer( hwnd, 0x7E57 );
+			str p = g_snapPath; g_snapPath.clear( );
+			snapshotWindow( hwnd, p.c_str( ) );
+			if ( g_snapClose ) end( IDCANCEL );
+			return 0;
+		}
+		onTimer( (int)w ); return 0;
 	case WM_CLOSE: if ( onClose( ) ) return 0; break;
 	case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX: {
 		HDC dc = (HDC)w; SetTextColor( dc, T.text ); SetBkColor( dc, T.field );
@@ -1032,9 +1050,10 @@ HWND Wnd::combo( int x, int y, int w, int id, int px )
 {
 	return ctl_( L"COMBOBOX", L"", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_HASSTRINGS, 0, x, y, w, 220, id, px );
 }
-void Wnd::addGroup( int x, int y, int w, int h, const char *caption, int radius )
+int Wnd::addGroup( int x, int y, int w, int h, const char *caption, int radius )
 {
 	groups.push_back( Group{ { S( x ), S( y ), S( x + w ), S( y + h ) }, radius, W( caption ) } );
+	return (int)groups.size( ) - 1;
 }
 void Wnd::moveCtl( HWND c, int x, int y, int w, int h ) { SetWindowPos( c, 0, S( x ), S( y ), S( w ), S( h ), SWP_NOZORDER | SWP_NOACTIVATE ); }
 void Wnd::setEnabled( int id, bool on ) { HWND c = ctl( id ); if ( c ) EnableWindow( c, on ); }

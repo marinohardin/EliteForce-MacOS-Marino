@@ -100,11 +100,11 @@ bool savePng( HBITMAP bmp, const char *path );
 HBITMAP scaledBitmap( HBITMAP src, int w, int h );
 
 /* ---- window base ---- */
-struct Group { RECT r; int radius; ws caption; };
+struct Group { RECT r; int radius; ws caption; bool visible = true; int kind = 0; };
 struct Wnd {
 	HWND hwnd = 0, owner = 0;
 	bool done = false, ownerWasEnabled = false;
-	int result = 0;
+	int result = 0, scrollY = 0;
 	std::vector<Group> groups;
 	std::map<int, HWND> ids;
 	virtual ~Wnd( ) {}
@@ -118,6 +118,7 @@ struct Wnd {
 	virtual void onCommand( int id, int code, HWND ctl ) { (void)id; (void)code; (void)ctl; }
 	virtual void onTimer( int id ) { (void)id; }
 	virtual void onUser( UINT m, WPARAM w, LPARAM l ) { (void)m; (void)w; (void)l; }
+	virtual bool preTranslate( MSG *m ) { (void)m; return false; }
 	virtual bool onClose( ) { end( IDCANCEL ); return true; }
 	virtual void onDpiChanged( ) {}
 	virtual LRESULT onNotify( NMHDR *h ) { (void)h; return 0; }
@@ -133,7 +134,7 @@ struct Wnd {
 	HWND combo( int x, int y, int w, int id, int px = 13 );
 	HWND ctl_( const wchar_t *cls, const wchar_t *text, DWORD style, DWORD ex, int x, int y, int w, int h, int id,
 		int px = 13, int weight = 400 );
-	void addGroup( int x, int y, int w, int h, const char *caption, int radius = 10 );
+	int addGroup( int x, int y, int w, int h, const char *caption, int radius = 10 );
 	void moveCtl( HWND c, int x, int y, int w, int h );
 	void setEnabled( int id, bool on );
 	void showCtl( int id, bool on );
@@ -163,6 +164,10 @@ void spinnerRun( HWND spin, bool on );
    icon 0 info, 1 warning, 2 critical, 3 none. Honours VOYAGERSP_TEST_NODIALOG / _CONFIRM. */
 int Alert( HWND owner, const str &msg, const str &info, const std::vector<str> &buttons, int icon = 1,
 	int cancelIdx = -1, bool destructiveFirst = false );
+extern str g_snapPath;			// the next modal window is rendered to this PNG after g_snapDelayMs (and closed if g_snapClose)
+extern int g_snapDelayMs;
+extern bool g_snapClose;
+extern std::vector<Wnd *> g_sheets;	// open modal windows (a link closes them)
 extern str g_alertSnapshotPath;		/* when set, the next alert is rendered to it, then answered */
 int PromptText( HWND owner, const str &msg, const str &info, const str &placeholder, bool secret,
 	const std::vector<str> &buttons, str *outText );		/* returns button index */
