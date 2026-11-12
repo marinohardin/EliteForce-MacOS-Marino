@@ -8,7 +8,8 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 */
 
 #include "wl_app.h"
-#include "win_launcher.h"
+/* win_launcher.h declares this with the engine's qboolean (an enum, int-sized); this file stays free of q_shared.h */
+enum { qfalse = 0, qtrue = 1 };
 #include <tlhelp32.h>
 
 extern "C" void Sys_CoopSetLaunchPassword( const char *pw ) __attribute__(( weak ));
@@ -20,7 +21,7 @@ str appVersion( ) { return EF_APP_VERSION; }
 
 enum {
 	IDC_CARD0 = 200, IDC_COOP = 210, IDC_BROWSE, IDC_CONFIG,
-	IDC_QUALITY = 220, IDC_DISPLAY, IDC_SIZE, IDC_HIGHDPI, IDC_AA, IDC_PICMIP, IDC_VSYNC, IDC_BRIGHT, IDC_BRIGHTHINT,
+	IDC_QUALITY = 220, IDC_DISPLAY, IDC_WINSIZE, IDC_HIGHDPI, IDC_AA, IDC_PICMIP, IDC_VSYNC, IDC_BRIGHT, IDC_BRIGHTHINT,
 	IDC_SRV0 = 230,		/* 230..236 value labels */
 	IDC_NAME = 240, IDC_NAMEHINT, IDC_MASTERSUM, IDC_SERVERS, IDC_LOOPBACK, IDC_LOOPHINT, IDC_CMOD, IDC_HUD, IDC_MODLABEL, IDC_NAMELABEL, IDC_INETLABEL,
 	IDC_PATH = 260, IDC_STATUS, IDC_EXPANSION, IDC_SHOW, IDC_ADD, IDC_CHANGE, IDC_VERSION,
@@ -234,7 +235,7 @@ struct Launcher : Wnd {
 		label( 98, y + 0, 330, 16, "Star Trek: Voyager", 12, 600, R_TEXT2, DT_SINGLELINE );
 		label( 98, y + 16, 330, 30, "Elite Force", 24, 700, R_TEXT, DT_SINGLELINE );
 		label( 98, y + 46, 330, 17, "Choose how you want to play.", 13, 400, R_TEXT2, DT_SINGLELINE );
-		HWND gear = mkIconButton( hwnd, 620 - MX - 28, y + 17, 28, 26, IDC_GEAR, G_DOT, "More: About, Check for Updates\xE2\x80\xA6" );
+		HWND gear = mkIconButton( hwnd, 620 - MX - 28, y + 17, 28, 26, IDC_GEAR, G_MORE, "More: About, Check for Updates\xE2\x80\xA6" );
 		(void)gear;
 		/* update badge: built hidden */
 		gBadge = addGroup( 620 - MX - 28 - 8 - 260, y + 8, 260, 46, "", 9 );
@@ -285,7 +286,7 @@ struct Launcher : Wnd {
 			SendMessageW( c, CB_ADDSTRING, 0, (LPARAM)L"Window" ); SendMessageW( c, CB_ADDSTRING, 0, (LPARAM)L"Full Screen" );
 			gy += 22 + 5;
 			lab( gy, "Window size:" );
-			combo( cx, gy, cwid, IDC_SIZE );
+			combo( cx, gy, cwid, IDC_WINSIZE );
 			gy += 22 + 5;
 			check( cx, gy, 340, 18, "Full resolution (high DPI)", IDC_HIGHDPI );
 			gy += 18 + 5;
@@ -385,7 +386,7 @@ struct Launcher : Wnd {
 		SendMessageW( ctl( IDC_QUALITY ), SEG_SETSEL, (WPARAM)p, 0 );
 		SendMessageW( ctl( IDC_DISPLAY ), CB_SETCURSEL, gfx.fullscreen ? 1 : 0, 0 );
 		/* window sizes */
-		HWND sz = ctl( IDC_SIZE );
+		HWND sz = ctl( IDC_WINSIZE );
 		SendMessageW( sz, CB_RESETCONTENT, 0, 0 );
 		RECT wa; SystemParametersInfoW( SPI_GETWORKAREA, 0, &wa, 0 );
 		int sizes[16][2];
@@ -411,8 +412,8 @@ struct Launcher : Wnd {
 	void readGfx( )
 	{
 		gfx.fullscreen = (int)SendMessageW( ctl( IDC_DISPLAY ), CB_GETCURSEL, 0, 0 ) == 1;
-		int i = (int)SendMessageW( ctl( IDC_SIZE ), CB_GETCURSEL, 0, 0 );
-		if ( i >= 0 ) { int d = (int)SendMessageW( ctl( IDC_SIZE ), CB_GETITEMDATA, i, 0 ); gfx.width = d / 10000; gfx.height = d % 10000; }
+		int i = (int)SendMessageW( ctl( IDC_WINSIZE ), CB_GETCURSEL, 0, 0 );
+		if ( i >= 0 ) { int d = (int)SendMessageW( ctl( IDC_WINSIZE ), CB_GETITEMDATA, i, 0 ); gfx.width = d / 10000; gfx.height = d % 10000; }
 		gfx.highdpi = SendMessageW( ctl( IDC_HIGHDPI ), BM_GETCHECK, 0, 0 ) == BST_CHECKED;
 		static const int aa[4] = { 0, 2, 4, 8 };
 		int a = (int)SendMessageW( ctl( IDC_AA ), CB_GETCURSEL, 0, 0 ); gfx.msaa = aa[max( 0, min( 3, a ) )];
@@ -436,7 +437,7 @@ struct Launcher : Wnd {
 		setText( ctl( IDC_NAMEHINT ), hint );
 		setText( ctl( IDOK ), mode == 0 ? "Play" : mode == 1 ? "Play Holomatch" : "Start Server" );
 		groups[gGfx].visible = mode != 2; groups[gSrv].visible = mode == 2;
-		for ( int id : { IDC_QUALITY, IDC_DISPLAY, IDC_SIZE, IDC_HIGHDPI, IDC_AA, IDC_PICMIP, IDC_VSYNC, IDC_BRIGHT, IDC_BRIGHTHINT } ) showCtl( id, mode != 2 );
+		for ( int id : { IDC_QUALITY, IDC_DISPLAY, IDC_WINSIZE, IDC_HIGHDPI, IDC_AA, IDC_PICMIP, IDC_VSYNC, IDC_BRIGHT, IDC_BRIGHTHINT } ) showCtl( id, mode != 2 );
 		showGfxLabels( mode != 2 );
 		for ( int i = 0; i < 6; i++ ) { showCtl( IDC_SRV0 + i, mode == 2 ); showCtl( IDC_SRV0 + 20 + i, mode == 2 ); }
 		if ( mode == 2 ) syncServer( );
@@ -832,7 +833,7 @@ struct Launcher : Wnd {
 			int s = (int)SendMessageW( ctl( IDC_QUALITY ), SEG_GETSEL, 0, 0 );
 			if ( s >= 0 && s <= 2 ) { lc_gfx_apply_preset( &gfx, (lc_preset)s ); }
 			syncGfx( ); break; }
-		case IDC_DISPLAY: case IDC_SIZE: case IDC_AA: case IDC_PICMIP: case IDC_BRIGHT:
+		case IDC_DISPLAY: case IDC_WINSIZE: case IDC_AA: case IDC_PICMIP: case IDC_BRIGHT:
 			if ( code == CBN_SELCHANGE ) { readGfx( ); syncGfx( ); }
 			break;
 		case IDC_HIGHDPI: case IDC_VSYNC: readGfx( ); syncGfx( ); break;
@@ -935,7 +936,7 @@ struct Launcher : Wnd {
 
 using namespace wl;
 
-extern "C" qboolean Sys_WinLauncher( int argc, char **argv, char *commandLine, int size )
+extern "C" int Sys_WinLauncher( int argc, char **argv, char *commandLine, int size )
 {
 	for ( int i = 1; i < argc; i++ )
 		if ( !lc_stricmp( argv[i], "com_holomatch" ) ) return qfalse;

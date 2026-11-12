@@ -126,29 +126,23 @@ bool dataCopyJobRun( HWND owner, lc_copyjob *job, const str &homeBase )
 	if ( d.th ) lc_thread_join( d.th );
 	bool ok = d.rc == 1;
 	if ( d.rc == 0 ) {
+		char t[256], x[1024];
+		lc_copyjob_failure_texts( job, d.err, t, sizeof t, x, sizeof x );
 		lc_log( "Copy failed: %s", d.err );
-		if ( d.isUnpack )
-			Alert( owner, "Unpacking the GOG installer failed",
-				fmt( "%s.\n\nThe partly unpacked files were removed. If the download is damaged, download it again from GOG; otherwise: %s", d.err, MSG_USE_BASEEF ), { "OK" }, 1 );
-		else
-			Alert( owner, "Copying the game files failed", fmt( "%s\n\nThe partial copy was removed.", d.err ), { "OK" }, 1 );
+		Alert( owner, t, x, { "OK" }, 1 );
 	} else if ( d.rc < 0 ) lc_log( "Copy cancelled" );
 	(void)rc;
 	lc_copyjob_free( job );
 	return ok;
 }
 
-static bool checkSpace( HWND owner, unsigned long long total, const str &homeBase, const char *title, const str &text )
+static bool checkSpace( HWND owner, const lc_copyjob *job )
 {
-	lc_mkdir_p( homeBase.c_str( ) );
-	unsigned long long freeB = lc_free_space( homeBase.c_str( ) );
-	if ( freeB && freeB < total + ( 64ull << 20 ) ) {
-		Alert( owner, title, text, { "OK" }, 1 );
-		return false;
-	}
-	return true;
+	char t[256], x[1024];
+	if ( lc_copyjob_check_space( job, t, sizeof t, x, sizeof x ) ) return true;
+	Alert( owner, t, x, { "OK" }, 1 );
+	return false;
 }
-static str bytes( unsigned long long n ) { char b[64]; lc_format_bytes( n, b, sizeof b ); return b; }
 
 /* ------------------------------------------------------------ copy and unpack */
 
@@ -157,59 +151,37 @@ static bool copyGameFiles( HWND owner, const str &srcBase )
 	int pk3s = 0, saves = 0, kept = 0;
 	lc_copyjob *job = lc_plan_copy_game_files( srcBase.c_str( ), G.homeBase.c_str( ), &pk3s, &saves, &kept );
 	if ( !job ) { Alert( owner, "Copying the game files failed", "Nothing to copy was found in that folder.", { "OK" }, 1 ); return false; }
-	unsigned long long total = lc_copyjob_total( job );
-	lc_log( "Copying %d .pk3 files and %d saves (%d existing saves kept) from \"%s\" to \"%s\": %s", pk3s, saves, kept,
-		srcBase.c_str( ), G.homeBase.c_str( ), bytes( total ).c_str( ) );
-	if ( !checkSpace( owner, total, G.homeBase, "Not enough disk space",
-		fmt( "Copying the game files needs %s, but only %s is free on the disk containing\n%s.\n\nFree up some space, or tick \"Use BaseEF files in place rather than copy\" to use the game folder directly.",
-			bytes( total + ( 64ull << 20 ) ).c_str( ), bytes( lc_free_space( G.homeBase.c_str( ) ) ).c_str( ), G.homeBase.c_str( ) ) ) ) {
-		lc_copyjob_free( job ); return false;
-	}
-	if ( !dataCopyJobRun( owner, job, G.homeBase ) ) return false;
-	char p0[LC_MAX_PATH];
-	if ( !lc_child_ci( G.homeBase.c_str( ), "pak0.pk3", p0, sizeof p0 ) ) {
-		Alert( owner, "Copying the game files failed", "pak0.pk3 did not end up in the destination folder.", { "OK" }, 1 );
-		return false;
-	}
-	lc_log( "Copied %s of game files to \"%s\"", bytes( total ).c_str( ), G.homeBase.c_str( ) );
-	return true;
+	if ( !checkSpace( owner, job ) ) { lc_copyjob_free( job ); return false; }
+	return dataCopyJobRun( owner, job, G.homeBase );
 }
 
 static str externalBase( )
 {
-	const char *f = lc_store_get( lc_store_shared( ), LC_KEY_GAMEFOLDER );
-	char b[LC_MAX_PATH];
-	if ( f && *f && lc_child_ci( f, LC_BASEGAME, b, sizeof b ) ) return b;
-	return str( );
+	char b[LC_MAX_PATH] = "";
+	lc_data_external_base( b, sizeof b );
+	return b;
 }
 
 /* returns the number of files unpacked, 0 for nothing to do, -1 for a failure (already shown) */
 static int unpackInstaller( HWND owner, const str &exe, bool onlyNew )
 {
-	lc_log( "GOG installer: reading \"%s\"", exe.c_str( ) );
-	char err[256] = ""; int present = 0;
+	char err[256] = "", t[256], x[1024]; int present = 0;
 	str ext = externalBase( );
 	lc_copyjob *job = lc_plan_unpack_installer( exe.c_str( ), onlyNew ? 1 : 0, G.homeBase.c_str( ), ext.empty( ) ? 0 : ext.c_str( ), &present, err, sizeof err );
 	if ( !job && err[0] ) {
-		lc_log( "GOG installer: %s", err );
-		Alert( owner, "This installer can't be used",
-			fmt( "%s\n\nThis app can't unpack it: %s.\n\n%s", lc_path_basename( exe.c_str( ) ), err, MSG_USE_BASEEF ), { "OK" }, 1 );
+		lc_installer_error_alert( exe.c_str( ), err, t, sizeof t, x, sizeof x );
+		Alert( owner, t, x, { "OK" }, 1 );
 		return -1;
 	}
 	if ( !job || lc_copyjob_count( job ) == 0 ) {
 		if ( job ) lc_copyjob_free( job );
-		Alert( owner, "Nothing to add", "The game already has all of this installer's .pk3 files.", { "OK" }, 0 );
+		lc_nothing_to_add_alert( 1, present, t, sizeof t, x, sizeof x );
+		Alert( owner, t, x, { "OK" }, 0 );
 		return 0;
 	}
-	unsigned long long total = lc_copyjob_total( job );
 	int count = lc_copyjob_count( job );
-	lc_log( "GOG installer: %d .pk3 files (%s to unpack), %d already present", count, bytes( total ).c_str( ), present );
-	if ( !checkSpace( owner, total, G.homeBase, "Not enough disk space",
-		fmt( "Unpacking the game files needs %s, but only %s is free.", bytes( total + ( 64ull << 20 ) ).c_str( ), bytes( lc_free_space( G.homeBase.c_str( ) ) ).c_str( ) ) ) ) {
-		lc_copyjob_free( job ); return -1;
-	}
+	if ( !checkSpace( owner, job ) ) { lc_copyjob_free( job ); return -1; }
 	if ( !dataCopyJobRun( owner, job, G.homeBase ) ) return -1;
-	lc_log( "GOG installer: unpacked %d files (%s) to \"%s\"", count, bytes( total ).c_str( ), G.homeBase.c_str( ) );
 	return count;
 }
 
@@ -277,8 +249,10 @@ bool dataRunChooser( HWND owner )
 		}
 		char base[LC_MAX_PATH], problem[512] = "";
 		if ( lc_validate_choice( path.c_str( ), inPlace ? 1 : 0, base, sizeof base, problem, sizeof problem ) != 0 ) {
+			char t[256], x[1024];
 			lc_log( "Rejected \"%s\": %s", path.c_str( ), problem );
-			Alert( owner, "That folder can't be used", path + "\n\n" + problem, { "OK" }, 1 );
+			lc_choice_alert( path.c_str( ), problem, t, sizeof t, x, sizeof x );
+			Alert( owner, t, x, { "OK" }, 1 );
 			if ( test ) return false;
 			continue;
 		}
@@ -336,22 +310,14 @@ int dataAddGameFiles( HWND owner )
 	lc_copyjob *job = lc_plan_add_files( cp.data( ), (int)cp.size( ), G.homeBase.c_str( ), ext.empty( ) ? 0 : ext.c_str( ), &present );
 	if ( !job || lc_copyjob_count( job ) == 0 ) {
 		if ( job ) lc_copyjob_free( job );
-		lc_log( "Add game files: 0 new .pk3, %d already present", present );
-		Alert( owner, "Nothing to add", present == 1 ? "The game already has that .pk3 file." :
-			present > 1 ? "The game already has all of those .pk3 files." :
-			"No .pk3 files were found there. Choose .pk3 files, or the BaseEF folder that contains them.", { "OK" }, 0 );
+		char t[256], x[1024];
+		lc_nothing_to_add_alert( 0, present, t, sizeof t, x, sizeof x );
+		Alert( owner, t, x, { "OK" }, 0 );
 		return total;
 	}
-	unsigned long long size = lc_copyjob_total( job ); int n = lc_copyjob_count( job );
-	lc_log( "Add game files: %d new .pk3 (%s), %d already present", n, bytes( size ).c_str( ), present );
-	if ( !checkSpace( owner, size, G.homeBase, "Not enough disk space",
-		fmt( "Adding the files needs %s, but only %s is free.", bytes( size ).c_str( ), bytes( lc_free_space( G.homeBase.c_str( ) ) ).c_str( ) ) ) ) {
-		lc_copyjob_free( job ); return total;
-	}
-	if ( dataCopyJobRun( owner, job, G.homeBase ) ) {
-		lc_log( "Added %d files (%s) to \"%s\"", n, bytes( size ).c_str( ), G.homeBase.c_str( ) );
-		total += n;
-	}
+	int n = lc_copyjob_count( job );
+	if ( !checkSpace( owner, job ) ) { lc_copyjob_free( job ); return total; }
+	if ( dataCopyJobRun( owner, job, G.homeBase ) ) total += n;
 	return total;
 }
 

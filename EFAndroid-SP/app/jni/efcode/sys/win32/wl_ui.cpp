@@ -378,6 +378,7 @@ void drawGlyph( HDC dc, int gl, int x, int y, int sz, COLORREF c )
 		Pen w( GC( RGB( 255, 255, 255 ) ), 1.8f ); w.SetStartCap( LineCapRound ); w.SetEndCap( LineCapRound );
 		g.DrawLine( &w, 8.0f, 7.2f, 8.0f, 12.2f );
 		break; }
+	case G_MORE: for ( int i = 0; i < 3; i++ ) g.FillEllipse( &br, 1.8f + i * 4.6f, 6.6f, 2.8f, 2.8f ); break;
 	case G_APP: {
 		GraphicsPath p; pathRound( p, 0.5f, 0.5f, 15, 15, 3.5f ); g.FillPath( &br, &p );
 		SolidBrush wb( GC( RGB( 255, 255, 255 ) ) );
@@ -949,8 +950,17 @@ void Wnd::paintBg( HDC dc, RECT rc )
 		if ( !gr.visible ) continue;
 		Group g = gr; OffsetRect( &g.r, 0, -scrollY );
 		RECT t; if ( !IntersectRect( &t, &g.r, &rc ) ) continue;
-		if ( g.kind == 1 ) { fillRoundRect( dc, g.r, S( g.radius ), blend( T.bg, T.accent, 15 ), CLR_NONE, 0 ); continue; }
-		fillRoundRect( dc, g.r, S( g.radius ), T.group, T.sep, 1 );
+		{
+			/* drawn off screen (GDI+ ignores the DC origin a child sets when it asks us for its background), then copied */
+			int gw = g.r.right - g.r.left, gh = g.r.bottom - g.r.top;
+			HDC md = CreateCompatibleDC( dc ); HBITMAP mb = CreateCompatibleBitmap( dc, gw, gh ); HGDIOBJ mo = SelectObject( md, mb );
+			RECT all = { 0, 0, gw, gh }; HBRUSH bb = CreateSolidBrush( T.bg ); FillRect( md, &all, bb ); DeleteObject( bb );
+			if ( g.kind == 1 ) fillRoundRect( md, all, S( g.radius ), blend( T.bg, T.accent, 15 ), CLR_NONE, 0 );
+			else fillRoundRect( md, all, S( g.radius ), T.group, T.sep, 1 );
+			BitBlt( dc, g.r.left, g.r.top, gw, gh, md, 0, 0, SRCCOPY );
+			SelectObject( md, mo ); DeleteObject( mb ); DeleteDC( md );
+			if ( g.kind == 1 ) continue;
+		}
 		if ( !g.caption.empty( ) ) {
 			SetBkMode( dc, TRANSPARENT ); SetTextColor( dc, T.text2 );
 			HGDIOBJ o = SelectObject( dc, F( 11, 600 ) );
@@ -1115,7 +1125,7 @@ static void printChildren( HWND parent, HDC dc, int ox, int oy )
 		MapWindowPoints( 0, parent, (POINT *)&r, 2 );
 		int w = r.right - r.left, h = r.bottom - r.top;
 		if ( w <= 0 || h <= 0 ) continue;
-		SaveDC( dc );
+		int savedDc = SaveDC( dc );
 		IntersectClipRect( dc, ox + r.left, oy + r.top, ox + r.left + w, oy + r.top + h );
 		SetViewportOrgEx( dc, ox + r.left, oy + r.top, 0 );
 		if ( !lstrcmpW( cls, L"EFLabel" ) || !lstrcmpW( cls, L"EFSpin" ) || !lstrcmpW( cls, L"EFCard" ) ||
@@ -1129,7 +1139,9 @@ static void printChildren( HWND parent, HDC dc, int ox, int oy )
 			wchar_t txt[512]; int n = GetWindowTextW( c, txt, 512 );
 			bool en = IsWindowEnabled( c ) != 0;
 			HDC m = CreateCompatibleDC( dc ); (void)m; DeleteDC( m );
+			SetViewportOrgEx( dc, ox, oy, 0 );
 			SendMessageW( GetParent( c ), WM_ERASEBKGND, (WPARAM)dc, 1 );
+			SetViewportOrgEx( dc, ox + r.left, oy + r.top, 0 );
 			SetBkMode( dc, TRANSPARENT );
 			SelectObject( dc, (HFONT)SendMessageW( c, WM_GETFONT, 0, 0 ) );
 			SetTextColor( dc, en ? T.text : T.text3 );
@@ -1148,11 +1160,27 @@ static void printChildren( HWND parent, HDC dc, int ox, int oy )
 				fillRoundRect( dc, rc, S( 4 ), def ? blend( T.btn, T.accent, 10 ) : T.btn, def ? T.accent : T.sep, def ? 2 : 1 );
 				DrawTextW( dc, txt, n, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX );
 			}
+		} else if ( !lstrcmpiW( cls, L"ListBox" ) && ( GetWindowLongW( c, GWL_STYLE ) & LBS_OWNERDRAWFIXED ) ) {
+			/* owner-drawn list: ask the owner to draw each visible item (Wine prints these with an empty clip) */
+			RECT cl; GetClientRect( c, &cl );
+			int bx = ( w - cl.right ) / 2, by = ( h - cl.bottom ) / 2;
+			RECT wr = { 0, 0, w, h }; HBRUSH fb = CreateSolidBrush( T.sep ); FillRect( dc, &wr, fb ); DeleteObject( fb );
+			SetViewportOrgEx( dc, ox + r.left + bx, oy + r.top + by, 0 );
+			HBRUSH bb = CreateSolidBrush( T.field ); FillRect( dc, &cl, bb ); DeleteObject( bb );
+			int top = (int)SendMessageW( c, LB_GETTOPINDEX, 0, 0 ), cnt = (int)SendMessageW( c, LB_GETCOUNT, 0, 0 );
+			for ( int i = top; i < cnt; i++ ) {
+				RECT ir; SendMessageW( c, LB_GETITEMRECT, i, (LPARAM)&ir );
+				if ( ir.top >= cl.bottom ) break;
+				DRAWITEMSTRUCT di = {}; di.CtlType = ODT_LISTBOX; di.CtlID = GetDlgCtrlID( c ); di.itemID = i; di.itemAction = ODA_DRAWENTIRE;
+				di.itemState = SendMessageW( c, LB_GETSEL, i, 0 ) > 0 ? ODS_SELECTED : 0; di.hwndItem = c; di.hDC = dc; di.rcItem = ir;
+				IntersectClipRect( dc, 0, 0, cl.right, cl.bottom );
+				SendMessageW( parent, WM_DRAWITEM, di.CtlID, (LPARAM)&di );
+			}
 		} else {
 			SendMessageW( c, WM_PRINT, (WPARAM)dc, PRF_CLIENT | PRF_NONCLIENT | PRF_ERASEBKGND );
 			printChildren( c, dc, ox + r.left, oy + r.top );
 		}
-		RestoreDC( dc, -1 );
+		RestoreDC( dc, savedDc );
 	}
 }
 

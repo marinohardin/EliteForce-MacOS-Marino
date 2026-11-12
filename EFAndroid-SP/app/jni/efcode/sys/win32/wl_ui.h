@@ -89,7 +89,7 @@ int textWidth( const ws &text, HFONT f );
 enum Glyph { G_CHECK_CIRCLE, G_X_CIRCLE, G_EXCL_CIRCLE, G_TRIANGLE, G_DOTTED, G_REFRESH, G_STAR, G_STAR_FILL,
 	G_LOCK, G_GLOBE, G_PLUS, G_MINUS, G_UP, G_DOWN, G_PERSON, G_PERSON3, G_SERVER, G_MAP, G_QUESTION, G_PLAY,
 	G_FORWARD, G_RESTART, G_BOTADD, G_BOTSDEL, G_BUBBLE, G_DOT, G_DOWN_CIRCLE, G_TERMINAL, G_PUZZLE,
-	G_PUZZLE_FILL, G_FOLDER, G_INFO, G_APP };
+	G_PUZZLE_FILL, G_FOLDER, G_INFO, G_APP, G_MORE };
 void drawGlyph( HDC dc, int glyph, int x, int y, int size, COLORREF c );	/* device pixels */
 void fillRoundRect( HDC dc, RECT r, int radius, COLORREF fill, COLORREF stroke, int strokeW );
 void drawAppIcon( HDC dc, int x, int y, int size );
