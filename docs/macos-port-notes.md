@@ -1247,3 +1247,15 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   its cgame predicts player 2's moves with no game entity, and the water/ladder depth check read that
   entity's NPC type (null). In co-op builds the check now treats "no entity" as not a biohulk, as the
   host does for player 2. Single player and builds without `EF_COOP` are unchanged.
+
+## Co-op: the guest sees breakables explode (2026-11-12, branch `1_4_0/coop-m1` only)
+- Some game code draws its effect by calling the cgame directly (one module in single player), with
+  no entity event: a breakable's fireball and debris (plasma filters, conduits, grates, func_breakable),
+  turrets' debris and lasers, the Borg head bot's explosion, stasis flier children, the psycho bolt, the
+  spawn shimmer. The guest's replica never saw them. In co-op builds `game/coop_fx.h` routes those calls
+  through `coop/coop_fx.cpp`: drawn as before, and on a host kept in a short ring that goes with the
+  level's globals (like the direct sounds); the guest draws the new ones. Sounds already came through
+  entity events.
+- Not forwarded: the stasis fliers' and fixits' client think functions (cgame per-frame thinks on
+  entities), debug drawing (CG_Cube/CG_Line).
+- Test hook: `coop_p2_damage <n> near` (player 2 damages the nearest breakable).

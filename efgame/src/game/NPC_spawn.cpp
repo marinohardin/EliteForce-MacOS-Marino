@@ -6,6 +6,7 @@
 #include "anims.h"
 #include "g_functions.h"
 #include "boltons.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern cvar_t *g_sex;
 

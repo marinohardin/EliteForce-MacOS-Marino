@@ -71,8 +71,9 @@ The M0 puppet controls (host console; reached through the game's ClientCommand):
 	coop_p2_use [frames]             press use once (or hold it for frames)
 	coop_p2_weapon <n>               switch to weapon n (if P2 has it)
 	coop_p2_tele [x y z]             move P2 next to P1 (or to x y z)
-	coop_p2_damage <n> [fall|pit] [p1] [npc]  hurt P2 (p1: player 1) by n (tests: death, down, respawn;
-	                                 fall: as falling damage, pit: as a trigger_hurt, npc: dealt by an NPC)
+	coop_p2_damage <n> [fall|pit] [p1] [npc] [near]  hurt P2 (p1: player 1) by n (tests: death, down, respawn;
+	                                 fall: as falling damage, pit: as a trigger_hurt, npc: dealt by an NPC;
+	                                 near: P2 deals it to the nearest breakable instead)
 	coop_p2_target <n|npc> [amp] [ms] (tests) put entity n (or the nearest NPC) in front of P2's view, swaying side to side
 	                                 amp units over a period of ms; "coop_p2_target off" lets it go
 	coop_p2_aim <n>                  (tests) turn player 2's view to entity n's chest
@@ -205,6 +206,31 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 			else if ( !Q_stricmp( gi.argv( i ), "p1" ) )
 			{
 				victim = &g_entities[0];
+			}
+			else if ( !Q_stricmp( gi.argv( i ), "near" ) )
+			{
+				// the nearest damageable thing that isn't a person (a breakable), dealt by player 2
+				float best = 0;
+				for ( int n = 1; n < globals.num_entities; n++ )
+				{
+					gentity_t	*t = &g_entities[n];
+					vec3_t		mid;
+					if ( !t->inuse || t->client || !t->takedamage )
+					{
+						continue;
+					}
+					VectorAdd( t->absmin, t->absmax, mid );
+					VectorScale( mid, 0.5f, mid );
+					float d = Distance( mid, ent->currentOrigin );
+					if ( victim == ent || d < best )
+					{
+						victim = t;
+						best = d;
+					}
+				}
+				attacker = ent;
+				gi.Printf( "co-op: damaging entity %d (%s), %.0f units from player 2\n", victim->s.number,
+					victim->classname ? victim->classname : "?", best );
 			}
 			else if ( !Q_stricmp( gi.argv( i ), "npc" ) )
 			{

@@ -8,6 +8,7 @@
 #include "objectives.h"
 #include "../cgame/cg_text.h"
 #include "../cgame/cg_local.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern	cvar_t	*g_debugDamage;
 extern qboolean	stop_icarus;

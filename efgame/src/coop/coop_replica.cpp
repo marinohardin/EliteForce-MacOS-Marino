@@ -378,6 +378,7 @@ static int REP_WriteGlobals( unsigned char *buf, int size )
 			gi.AppendToSaveGame( 'RSND', recent, n * sizeof( recent[0] ) );
 		}
 	}
+	COOP_FxWrite();		// effects the game drew directly (coop_fx.cpp)
 	return REP_EndWrite();
 }
 
@@ -612,6 +613,7 @@ static void REP_ApplyGlobals( const unsigned char *data, int len )
 		int			haveCam = gi.ReadFromSaveGameOptional( 'RCAM', &cam, sizeof( cam ), NULL ) == (int)sizeof( cam );
 		repSound_t	recent[REP_SOUNDS];
 		int			n = gi.ReadFromSaveGameOptional( 'RSND', recent, sizeof( recent ), NULL ) / (int)sizeof( recent[0] );
+		COOP_FxRead();
 		if ( !REP_EndRead() )
 		{
 			gi.Printf( S_COLOR_YELLOW "co-op: the host's level globals didn't read back; skipped\n" );
@@ -632,6 +634,7 @@ static void REP_ApplyGlobals( const unsigned char *data, int len )
 			}
 		}
 		rep_soundSynced = qtrue;	// joining: only the sounds that start from now on
+		COOP_FxAccept();
 		if ( haveCam )
 		{
 			REP_ApplyCamera( &cam );
@@ -660,6 +663,7 @@ static void REP_ApplyDone( qboolean cgameUp )
 	{
 		rep_p2Voice = qfalse;
 		rep_soundPendingCount = 0;
+		COOP_FxPlay( qfalse );
 		return;		// CG_Init registers every client's media itself
 	}
 	for ( int i = 0; i < globals.num_entities; i++ )
@@ -710,6 +714,7 @@ static void REP_ApplyDone( qboolean cgameUp )
 		}
 	}
 	rep_soundPendingCount = 0;
+	COOP_FxPlay( qtrue );
 }
 
 // host: the game started a sound itself (G_SoundOnEnt); the guest plays it too
@@ -751,6 +756,7 @@ void COOP_ReplicaInit( void )
 	memset( rep_sounds, 0, sizeof( rep_sounds ) );
 	rep_soundSeq = rep_soundSeen = rep_soundPendingCount = 0;
 	rep_soundSynced = qfalse;
+	COOP_FxInit();
 }
 
 // An entity player 2 can't see (outside the potentially visible set from its eyes) and is far

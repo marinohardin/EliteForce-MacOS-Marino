@@ -2,6 +2,7 @@
 #include "coop_public.h"
 #include "g_functions.h"
 #include "b_local.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern team_t TranslateTeamName( const char *name );
 extern	cvar_t	*g_spskill;

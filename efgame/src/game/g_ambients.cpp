@@ -4,6 +4,7 @@
 #include "g_functions.h"
 #include "b_local.h"
 #include "coop_public.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern void G_StartObjectMoving( gentity_t *object, vec3_t dir, float speed, trType_t trType );
 extern void G_RunObject( gentity_t *ent );

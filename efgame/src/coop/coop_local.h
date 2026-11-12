@@ -58,6 +58,11 @@ void		COOP_LagRecord( void );						// coop_lagcomp.cpp
 void		COOP_TestTargetFrame( void );
 qboolean	COOP_TestTargetCommand( void );
 void		COOP_AIInit( void );						// coop_ai.cpp
+void		COOP_FxInit( void );						// coop_fx.cpp: the game's direct effects for the guest
+void		COOP_FxWrite( void );
+void		COOP_FxRead( void );
+void		COOP_FxAccept( void );
+void		COOP_FxPlay( qboolean cgameUp );
 void		COOP_DownInit( void );						// coop_down.cpp
 void		COOP_DownFrame( void );
 qboolean	COOP_GameIsOver( void );
