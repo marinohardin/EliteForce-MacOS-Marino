@@ -1150,8 +1150,8 @@ static void printChildren( HWND parent, HDC dc, int ox, int oy )
 				int bs = S( 14 ), by = ( h - bs ) / 2;
 				RECT br = { 0, by, bs, by + bs };
 				fillRoundRect( dc, br, rad ? bs / 2 : S( 3 ), on && en ? T.accent : T.field, on && en ? T.accent : T.text3, 1 );
-				if ( on ) { if ( rad ) { RECT d = br; InflateRect( &d, -S( 4 ), -S( 4 ) ); fillRoundRect( dc, d, S( 3 ), RGB( 255, 255, 255 ), CLR_NONE, 0 ); }
-					else { HPEN p = CreatePen( PS_SOLID, max( 2, S( 2 ) ), RGB( 255, 255, 255 ) ); HGDIOBJ o = SelectObject( dc, p );
+				if ( on ) { if ( rad ) { RECT d = br; InflateRect( &d, -S( 4 ), -S( 4 ) ); fillRoundRect( dc, d, S( 3 ), en ? RGB( 255, 255, 255 ) : T.text3, CLR_NONE, 0 ); }
+					else { HPEN p = CreatePen( PS_SOLID, max( 2, S( 2 ) ), en ? RGB( 255, 255, 255 ) : T.text3 ); HGDIOBJ o = SelectObject( dc, p );
 						MoveToEx( dc, br.left + S( 3 ), by + S( 7 ), 0 ); LineTo( dc, br.left + S( 6 ), by + S( 10 ) ); LineTo( dc, br.left + S( 11 ), by + S( 4 ) ); SelectObject( dc, o ); DeleteObject( p ); } }
 				RECT tr = { bs + S( 6 ), 0, w, h };
 				DrawTextW( dc, txt, n, &tr, DT_VCENTER | ( ( st & BS_MULTILINE ) ? DT_WORDBREAK : DT_SINGLELINE ) | DT_NOPREFIX );
