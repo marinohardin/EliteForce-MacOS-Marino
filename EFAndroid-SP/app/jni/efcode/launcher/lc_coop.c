@@ -23,6 +23,11 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 #define COOP_RESPONSE	"coopInfoResponse"
 #define COOP_NAME_MAX	31
 
+const char *lc_coop_app_version( void )
+{
+	return EF_APP_VERSION;
+}
+
 /* a name the game can show and the command line can carry (LDC 6.2 CoopSafeName, without the
    transliteration: ASCII only, no quotes, backslash, semicolon or percent) */
 static void safe_name( const char *in, char *out, size_t size )
