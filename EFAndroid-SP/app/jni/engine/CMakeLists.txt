@@ -28,8 +28,9 @@ include(CheckCCompilerFlag)
 set(EF_APP_VERSION "1.3.0" CACHE STRING "App version shown in the console and to server browsers")
 option(EF_BINK "Bink cinematics via FFmpeg (OFF = stub, no movies)" ON)
 option(EF_VM_JIT "QVM JIT (aarch64: needs MAP_JIT work on macOS; x86_64: vm_x86.c, untested)" OFF)
-# single-player co-op (experimental). The engine side adds nothing yet; the game side is
-# efgame's option of the same name (make-app.sh passes both).
+# single-player co-op (experimental): the engine side is the Mac launcher's Co-op… sheet, the
+# host's answer to co-op checks and the co-op connection (sys/sys_osx_coop.m, sys_coop_net.c;
+# macOS only for now); the game side is efgame's option of the same name (make-app.sh passes both).
 option(EF_COOP "Single-player co-op (experimental)" OFF)
 # GOG installer extraction (sys_osx_gog.c + liblzma). Portable now, but only the Mac launcher
 # calls it until the Windows/Linux launchers (M2) exist, so it stays off there by default.
@@ -174,6 +175,10 @@ if(APPLE)
   endif()
   set_source_files_properties(${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m
     PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+  if(EF_COOP)
+    list(APPEND SYS_SRC ${EF}/sys/sys_osx_coop.m ${EF}/sys/sys_coop_net.c)
+    set_source_files_properties(${EF}/sys/sys_osx_coop.m PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+  endif()
 elseif(WIN32)
   set(SYS_SRC
     ${EF}/sys/sys_win32.c ${EF}/sys/con_win32.c ${EF}/sys/con_log.c ${EF}/sys/sys_main.c
@@ -240,7 +245,8 @@ target_compile_options(sp_game_bridge PRIVATE
 if(EF_COMPILER_GCC)
   target_compile_options(sp_game_bridge PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 endif()
-target_compile_definitions(sp_game_bridge PRIVATE NDEBUG EF_DYLIB_MODULES)
+target_compile_definitions(sp_game_bridge PRIVATE NDEBUG EF_DYLIB_MODULES
+  $<$<AND:$<BOOL:${APPLE}>,$<BOOL:${EF_COOP}>>:EF_COOP>)   # co-op's engine side is macOS only
 if(WIN32)
   target_compile_definitions(sp_game_bridge PRIVATE NOMINMAX)
 endif()
@@ -278,7 +284,8 @@ if(APPLE)
   set(EF_PLATFORM_DEFS
     USE_CURL USE_SYSTEM_CURL	# HTTP map downloads (sv_dlURL) via the macOS system libcurl
     MACOS_X
-    MACOS_HOMEPATH_NAME="${EF_HOMEPATH_NAME}")   # until the sys layer uses EF_HOMEPATH_NAME
+    MACOS_HOMEPATH_NAME="${EF_HOMEPATH_NAME}"
+    $<$<BOOL:${EF_COOP}>:EF_COOP>)   # until the sys layer uses EF_HOMEPATH_NAME
 else()
   set(EF_HOMEPATH_NAME "EliteForce-Marino")
   # libcurl loaded at runtime if present (libcurl-4.dll / libcurl.so.4); headers from
@@ -314,6 +321,10 @@ if(APPLE)
     target_link_libraries(efsp PRIVATE lzma)	# the system's liblzma, for GOG installers (sys_osx_gog.c)
   endif()
   target_link_libraries(efsp PRIVATE curl)	# the system's libcurl (/usr/lib/libcurl.4.dylib), for HTTP map downloads
+  if(EF_COOP)
+    # the system's Compression library (libcompression), for co-op's replica frames (sys_coop_net.c)
+    target_link_libraries(efsp PRIVATE compression)
+  endif()
 elseif(WIN32)
   target_link_libraries(efsp PRIVATE ws2_32 winmm iphlpapi dbghelp psapi advapi32 shell32 ole32)
   # libgcc / libstdc++ / winpthread linked in: no mingw runtime DLLs to ship

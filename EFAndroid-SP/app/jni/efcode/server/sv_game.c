@@ -920,18 +920,6 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 		return 0;
 #endif
 
-#ifdef ELITEFORCE
-	// cMod's qagame finds the GetValue call number in the cvar "//trap_GetValue", which the
-	// client registers for cMod's cgame and ui (CL_CmodGetValue, CL_CMOD_TRAP_GETVALUE), and
-	// makes the call too. The server answers no keys: an empty buffer and 0 (unknown) keep
-	// his game code on its stock behavior instead of dropping the server.
-	case 700:
-		if ( args[2] > 0 ) {
-			*(char *)VMA(1) = '\0';
-		}
-		return 0;
-#endif
-
 	default:
 #ifdef ELITEFORCE
 		// From cMod by Noah Metzger (Chomenor): his qagame finds the GetValue call through
