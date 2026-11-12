@@ -58,14 +58,18 @@ typedef struct {
 
 /* load the mode's values (fallback to the other mode's file, then defaults) as §2.5;
    *fromConfig = 1 when a config file supplied them. screenW/H = the usable screen size
-   (logical pixels) for the defaults. */
+   (logical pixels, 0 = unknown): when the config gives no custom size, the 1920x1080
+   default becomes the biggest listed size that fits (a small laptop screen), else 1024x768.
+   (A deliberate addition to the Mac rule, where every screen is big enough.) */
 void lc_gfx_load( const char *homeBase, int holomatch, int screenW, int screenH,
 	lc_gfx *g, int *fromConfig );
 lc_preset lc_gfx_match_preset( const lc_gfx *g );
 void lc_gfx_apply_preset( lc_gfx *g, lc_preset p );
 const char *lc_preset_title( lc_preset p );				/* "Performance", … , "Custom" */
-const char *lc_preset_help( lc_preset p );
-/* window size list for a usable screen area (§2.4); returns the count */
+const char *lc_preset_help( lc_preset p );		/* (the spec has no text for these: short tooltips) */
+/* window size list for a usable screen area (§2.4); returns the count. maxW/maxH = the
+   usable area (work area, no taskbar) with maxH ALREADY minus the title bar (Mac: 28);
+   the current size is always listed, appended at the end if it isn't a candidate. */
 int lc_window_sizes( int maxW, int maxH, int curW, int curH, int (*out)[2], int max );
 
 /* ---- brightness presets (§2.6, from cMod) -------------------------------------------- */

@@ -78,29 +78,41 @@ static void AppendEarly( const char *line )
 	earlyLog[earlyLen] = '\0';
 }
 
+static lc_mutex *logLock;			// the launcher's worker threads log too
+
 static void DataLogLine( const char *line, void *user )
 {
+	if ( logLock )
+		lc_mutex_lock( logLock );
 	fprintf( stderr, "%s\n", line );
 	if ( logLive )
 		Com_Printf( "%s\n", line );
 	else
 		AppendEarly( line );
+	if ( logLock )
+		lc_mutex_unlock( logLock );
 }
 
 // the launcher core logs through lc_log: into the early log, then the console
 void Sys_DataInstallLog( void )
 {
+	if ( !logLock )
+		logLock = lc_mutex_new( );
 	lc_set_log_sink( DataLogLine, NULL );
 }
 
 void Sys_DataPrintEarlyLog( void )
 {
+	if ( logLock )
+		lc_mutex_lock( logLock );
 	if ( earlyLog && earlyLen )
 		Com_Printf( "%s", earlyLog );
 	earlyLen = 0;
 	if ( earlyLog )
 		earlyLog[0] = '\0';
 	logLive = qtrue;
+	if ( logLock )
+		lc_mutex_unlock( logLock );
 }
 
 static qboolean TestEnv( const char *name )
