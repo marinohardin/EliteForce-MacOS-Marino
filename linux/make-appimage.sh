@@ -62,7 +62,8 @@ APPIMAGETOOL_SHA256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb38
 
 # ---- 1. build -------------------------------------------------------------------
 if [ -z "${NO_BUILD:-}" ]; then
-	cmake --preset "$PRESET"
+	# the version shown in the game (console, menus, server browsers), as make-app.sh does on macOS
+	cmake --preset "$PRESET" -DEF_APP_VERSION="$VERSION"
 	cmake --build "$BUILD" -j"$(nproc)"
 fi
 for f in efsp libefgame.so libefui.so; do

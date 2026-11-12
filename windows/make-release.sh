@@ -32,7 +32,8 @@ STAGE="$DIST/$NAME"
 
 # ---- 1. build ---------------------------------------------------------------
 if [ -z "${NO_BUILD:-}" ]; then
-	cmake --preset "$PRESET"
+	# the version shown in the game (console, menus, server browsers), as make-app.sh does on macOS
+	cmake --preset "$PRESET" -DEF_APP_VERSION="$VERSION"
 	cmake --build "$BUILD" -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 fi
 for f in efsp.exe efgame.dll efui.dll; do
