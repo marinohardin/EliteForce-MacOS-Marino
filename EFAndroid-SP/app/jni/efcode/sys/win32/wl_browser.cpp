@@ -11,6 +11,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 
 #include "wl_app.h"
 #include <commctrl.h>
+#include <time.h>
 
 namespace wl {
 
@@ -36,6 +37,8 @@ struct BrowserDlg : Wnd {
 	std::vector<lc_player> shownPlayers; bool tagBots = false;
 	int lastSource = -1;
 	str snapOut;
+	std::set<str> fail3D;
+	bool inShow = false;
 	enum { ID_SEG = 10, ID_GLOBE, ID_REFRESH, ID_STATUS, ID_SPIN, ID_ONLYFAV, ID_ONLYPEOPLE, ID_TABLE, ID_PTITLE, ID_PNOTE, ID_PREFRESH,
 		ID_MAPINFO, ID_MAP3D, ID_PLAYERS, ID_LINKTXT, ID_LINKBTN, ID_ADDR, ID_CONNECT, ID_JOIN = IDOK };
 	static const int WM_RELOAD = WM_APP + 30, WM_STATUS = WM_APP + 31, WM_3D = WM_APP + 32;
@@ -80,6 +83,7 @@ struct BrowserDlg : Wnd {
 		const lc_browser_row *out = 0;
 		int n = lc_browser_rows( b, source, onlyFav, onlyPeople, fp.data( ), (int)fp.size( ), keys, nKeys, &out );
 		rows.assign( out, out + n );
+		inShow = true;
 		ListView_SetItemCountEx( table, n, LVSICF_NOINVALIDATEALL );
 		InvalidateRect( table, 0, TRUE );
 		int sel = -1;
@@ -87,6 +91,7 @@ struct BrowserDlg : Wnd {
 		ListView_SetItemState( table, -1, 0, LVIS_SELECTED | LVIS_FOCUSED );
 		if ( sel >= 0 ) { ListView_SetItemState( table, sel, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED ); ListView_EnsureVisible( table, sel, FALSE ); }
 		else selAddr.clear( );
+		inShow = false;
 		setText( status, lc_browser_status_text( b, source ) );
 		spinnerRun( spin, lc_browser_is_busy( b, source ) != 0 );
 		EnableWindow( ctl( ID_JOIN ), !selAddr.empty( ) );
@@ -180,7 +185,7 @@ struct BrowserDlg : Wnd {
 			if ( i->second != "none" ) { showCtl( ID_MAP3D, true ); setTooltip( hwnd, ctl( ID_MAP3D ), fmt( "Look around %s in 3D, on efservers.com", map.c_str( ) ).c_str( ) ); }
 			return;
 		}
-		if ( checking3D == map ) return;
+		if ( checking3D == map || fail3D.count( map ) ) return;
 		checking3D = map;
 		DRes *r = new DRes{ this, map, "", 0 };
 		lc_thread *t = lc_thread_start( worker3D, r );
@@ -189,7 +194,7 @@ struct BrowserDlg : Wnd {
 	void on3D( DRes *r )
 	{
 		if ( checking3D == r->map ) checking3D.clear( );
-		if ( r->state >= 0 ) view3D[r->map] = r->state == 1 ? r->url : "none";
+		if ( r->state >= 0 ) view3D[r->map] = r->state == 1 ? r->url : "none"; else fail3D.insert( r->map );
 		lc_log( "Browser: 3D view of %s: %s", r->map.c_str( ), r->state > 0 ? r->url.c_str( ) : r->state == 0 ? "none" : "error" );
 		const lc_browser_row *sel = selectedRow( );
 		if ( sel && r->map == sel->info.map ) showPlayers( );
@@ -324,9 +329,9 @@ struct BrowserDlg : Wnd {
 				return CDRF_DODEFAULT; }
 			case LVN_COLUMNCLICK: { int c = ( (NMLISTVIEW *)h )->iSubItem; if ( c >= 0 && c <= LC_COL_PING ) sortClick( c ); return 0; }
 			case LVN_ITEMCHANGED: {
-				NMLISTVIEW *n = (NMLISTVIEW *)h;
+				NMLISTVIEW *n = (NMLISTVIEW *)h; if ( inShow ) return 0;
 				if ( ( n->uChanged & LVIF_STATE ) && ( n->uNewState & LVIS_SELECTED ) && !( n->uOldState & LVIS_SELECTED ) && n->iItem >= 0 && n->iItem < (int)rows.size( ) ) {
-					if ( selAddr != rows[n->iItem].info.address ) { selAddr = rows[n->iItem].info.address; EnableWindow( ctl( ID_JOIN ), TRUE ); showPlayers( ); }
+					if ( selAddr != rows[n->iItem].info.address ) { fail3D.clear( ); selAddr = rows[n->iItem].info.address; EnableWindow( ctl( ID_JOIN ), TRUE ); showPlayers( ); }
 				}
 				return 0; }
 			case NM_CLICK: {
@@ -454,7 +459,7 @@ bool showBrowser( HWND owner, const str &dataFolder, str *address, str *password
 	mkIconButton( d.hwnd, W0 - 20 - 28, y, 28, 26, BrowserDlg::ID_REFRESH, G_REFRESH, "Ask again" ); d.ids[BrowserDlg::ID_REFRESH] = GetDlgItem( d.hwnd, BrowserDlg::ID_REFRESH );
 	y += 26 + 8;
 	d.spin = mkSpinner( d.hwnd, 22, y + 3, 14, BrowserDlg::ID_SPIN );
-	d.status = d.label( 44, y + 2, 420, 16, "", 11, 400, R_TEXT2, DT_SINGLELINE | DT_END_ELLIPSIS, BrowserDlg::ID_STATUS );
+	d.status = d.label( 44, y + 2, 380, 16, "", 11, 400, R_TEXT2, DT_SINGLELINE | DT_END_ELLIPSIS, BrowserDlg::ID_STATUS );
 	HWND c1 = d.check( W0 - 20 - 190, y, 190, 18, "Only servers with people", BrowserDlg::ID_ONLYPEOPLE, d.onlyPeople, 12 );
 	setTooltip( d.hwnd, c1, "Hide servers with only bots, or no one. Servers that don't say (?) stay when they have players" );
 	HWND c2 = d.check( W0 - 20 - 190 - 14 - 110, y, 110, 18, "Only favorites", BrowserDlg::ID_ONLYFAV, d.onlyFav, 12 );
@@ -499,7 +504,7 @@ bool showBrowser( HWND owner, const str &dataFolder, str *address, str *password
 	d.button( W0 - 20 - 84 - 8 - 84, y - 1, 84, 26, "Cancel", IDCANCEL );
 	d.button( W0 - 20 - 84, y - 1, 84, 26, "Join", IDOK, true );
 	EnableWindow( d.ctl( BrowserDlg::ID_CONNECT ), FALSE ); EnableWindow( d.ctl( BrowserDlg::ID_JOIN ), FALSE );
-	showCtl( BrowserDlg::ID_MAPINFO, false ); showCtl( BrowserDlg::ID_MAP3D, false ); showCtl( BrowserDlg::ID_PREFRESH, false );
+	d.showCtl( BrowserDlg::ID_MAPINFO, false ); d.showCtl( BrowserDlg::ID_MAP3D, false ); d.showCtl( BrowserDlg::ID_PREFRESH, false );
 	/* the note sits right of the title: position it from the title's text width after it is known */
 	applyTheme( d.hwnd );
 	d.setLinkRow( );

@@ -1160,6 +1160,34 @@ static void printChildren( HWND parent, HDC dc, int ox, int oy )
 				fillRoundRect( dc, rc, S( 4 ), def ? blend( T.btn, T.accent, 10 ) : T.btn, def ? T.accent : T.sep, def ? 2 : 1 );
 				DrawTextW( dc, txt, n, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX );
 			}
+		} else if ( !lstrcmpiW( cls, L"SysListView32" ) ) {
+			/* report-mode list: header and rows drawn through the owner's custom draw */
+			RECT wr = { 0, 0, w, h }; HBRUSH fb = CreateSolidBrush( T.sep ); FillRect( dc, &wr, fb ); DeleteObject( fb );
+			RECT cl = { 1, 1, w - 1, h - 1 }; HBRUSH bb = CreateSolidBrush( T.field ); FillRect( dc, &cl, bb ); DeleteObject( bb );
+			IntersectClipRect( dc, 1, 1, w - 1, h - 1 );
+			SetViewportOrgEx( dc, ox + r.left + 1, oy + r.top + 1, 0 );
+			HWND hd = ListView_GetHeader( c ); RECT hr = { 0, 0, 0, 0 }; if ( hd ) GetWindowRect( hd, &hr );
+			int hh = hr.bottom - hr.top; bool hdrShown = ( GetWindowLongW( c, GWL_STYLE ) & LVS_NOSORTHEADER ) == 0 || true;
+			int nc = hd ? Header_GetItemCount( hd ) : 0, x = 0;
+			for ( int i = 0; i < nc; i++ ) {
+				wchar_t tx[64] = L""; LVCOLUMNW lc = {}; lc.mask = LVCF_TEXT | LVCF_WIDTH; lc.pszText = tx; lc.cchTextMax = 64; ListView_GetColumn( c, i, &lc );
+				RECT hc = { x, 0, x + lc.cx, hh }; HBRUSH hb2 = CreateSolidBrush( blend( T.field, T.text, 5 ) ); FillRect( dc, &hc, hb2 ); DeleteObject( hb2 );
+				SetBkMode( dc, TRANSPARENT ); SetTextColor( dc, T.text2 ); SelectObject( dc, F( 12 ) ); RECT tr = hc; tr.left += S( 4 );
+				DrawTextW( dc, tx, -1, &tr, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX );
+				x += lc.cx;
+			}
+			(void)hdrShown;
+			int cnt = ListView_GetItemCount( c ), top = ListView_GetTopIndex( c ), id = GetDlgCtrlID( c );
+			for ( int i = top; i < cnt && i < top + 40; i++ ) {
+				RECT ir; if ( !ListView_GetItemRect( c, i, &ir, LVIR_BOUNDS ) ) break;
+				if ( ir.top >= h ) break;
+				for ( int j = 0; j < nc; j++ ) {
+					RECT sr; if ( !ListView_GetSubItemRect( c, i, j, LVIR_BOUNDS, &sr ) ) continue;
+					NMLVCUSTOMDRAW cd = {}; cd.nmcd.hdr.hwndFrom = c; cd.nmcd.hdr.idFrom = id; cd.nmcd.hdr.code = NM_CUSTOMDRAW;
+					cd.nmcd.dwDrawStage = CDDS_ITEMPREPAINT | CDDS_SUBITEM; cd.nmcd.hdc = dc; cd.nmcd.rc = sr; cd.nmcd.dwItemSpec = i; cd.iSubItem = j;
+					SendMessageW( parent, WM_NOTIFY, id, (LPARAM)&cd );
+				}
+			}
 		} else if ( !lstrcmpiW( cls, L"ListBox" ) && ( GetWindowLongW( c, GWL_STYLE ) & LBS_OWNERDRAWFIXED ) ) {
 			/* owner-drawn list: ask the owner to draw each visible item (Wine prints these with an empty clip) */
 			RECT cl; GetClientRect( c, &cl );

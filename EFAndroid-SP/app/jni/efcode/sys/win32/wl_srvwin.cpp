@@ -118,8 +118,8 @@ struct SrvWin : Wnd {
 	int stateRole = R_ORANGE; double stopAt = 0;
 	bool childExited = false;
 	int exitSig = 0, exitCode = 0;
-	enum { ID_ADDR = 10, ID_COPY, ID_HINT, ID_INETVAL, ID_INETCOPY, ID_INETHINT, ID_LISTSTAT, ID_LISTCHECK, ID_LISTHINT, ID_MAP, ID_GAME, ID_PLAYERS, ID_NEXT, ID_RESTART, ID_CHANGE, ID_ADDBOT, ID_RMBOTS, ID_MSG,
-		ID_KICK, ID_TABLE, ID_CMD, ID_SEND, ID_PLAY, ID_STOP, ID_TITLE, ID_STATE, ID_MASTERLBL = 100 };
+	enum { SID_ADDR = 10, SID_COPY, SID_HINT, SID_INETVAL, SID_INETCOPY, SID_INETHINT, SID_LISTSTAT, SID_LISTCHECK, SID_LISTHINT, SID_MAP, SID_GAME, SID_PLAYERS, SID_NEXT, SID_RESTART, SID_CHANGE, SID_ADDBOT, SID_RMBOTS, SID_MSG,
+		SID_KICK, SID_TABLE, SID_CMD, SID_SEND, SID_PLAY, SID_STOP, SID_TITLE, SID_STATE, SID_MASTERLBL = 100 };
 	static const int WM_OUT = WM_APP + 50, WM_EXIT = WM_APP + 51, WM_NATRES = WM_APP + 52, WM_LISTRES = WM_APP + 53, WM_LOOKUP = WM_APP + 54;
 
 	/* ---- core callbacks (all on the UI thread) ---- */
@@ -143,46 +143,46 @@ struct SrvWin : Wnd {
 		case LC_SRV_FAILED: t = "Stopped"; stateRole = R_RED; role = R_RED; break;
 		}
 		if ( !stateDetail.empty( ) ) t += " \xC2\xB7 " + stateDetail;
-		setText( ctl( ID_STATE ), t ); setRole( ctl( ID_STATE ), role );
+		setText( ctl( SID_STATE ), t ); setRole( ctl( SID_STATE ), role );
 		bool run = state == LC_SRV_RUNNING;
-		EnableWindow( ctl( ID_PLAY ), run );
+		EnableWindow( ctl( SID_PLAY ), run );
 		bool cmd = state == LC_SRV_STARTING || state == LC_SRV_RUNNING || state == LC_SRV_IDLE;
-		EnableWindow( ctl( ID_CMD ), cmd ); EnableWindow( ctl( ID_SEND ), cmd );
+		EnableWindow( ctl( SID_CMD ), cmd ); EnableWindow( ctl( SID_SEND ), cmd );
 		bool done = state == LC_SRV_STOPPED || state == LC_SRV_FAILED;
-		setText( ctl( ID_STOP ), done ? "Close" : "Stop Server" ); EnableWindow( ctl( ID_STOP ), state != LC_SRV_STOPPING );
+		setText( ctl( SID_STOP ), done ? "Close" : "Stop Server" ); EnableWindow( ctl( SID_STOP ), state != LC_SRV_STOPPING );
 		bool ctrl = hasChild && state == LC_SRV_RUNNING;
-		for ( int id : { ID_NEXT, ID_RESTART, ID_CHANGE, ID_ADDBOT, ID_RMBOTS, ID_MSG } ) EnableWindow( ctl( id ), ctrl );
+		for ( int id : { SID_NEXT, SID_RESTART, SID_CHANGE, SID_ADDBOT, SID_RMBOTS, SID_MSG } ) EnableWindow( ctl( id ), ctrl );
 		updateKick( );
 		showInternet( ); showListing( );
 		InvalidateRect( hwnd, 0, TRUE );
 	}
-	void updateKick( ) { int s = (int)SendMessageW( table, LVM_GETNEXTITEM, -1, LVNI_SELECTED ); EnableWindow( ctl( ID_KICK ), hasChild && state == LC_SRV_RUNNING && s >= 0 && s < (int)plist.size( ) ); }
+	void updateKick( ) { int s = (int)SendMessageW( table, LVM_GETNEXTITEM, -1, LVNI_SELECTED ); EnableWindow( ctl( SID_KICK ), hasChild && state == LC_SRV_RUNNING && s >= 0 && s < (int)plist.size( ) ); }
 
 	void showInfo( )
 	{
 		str addr = ( lanAddress.empty( ) ? str( "127.0.0.1" ) : lanAddress ) + fmt( ":%d", port );
-		setText( ctl( ID_ADDR ), addr );
+		setText( ctl( SID_ADDR ), addr );
 		bool disc = port >= 27960 && port <= 27963; str hint; int role = R_TEXT2;
 		if ( lanAddress.empty( ) ) hint = fmt( "This %s isn't on a network: only Play on This %s can join.", PLATFORM_NOUN, PLATFORM_NOUN );
 		else if ( !disc ) { hint = fmt( "Port %d is outside 27960\xE2\x80\x93" "27963, so Holomatch's Join menu won't list it on your network: players connect to this address.%s", port, internet ? " From the internet: your public address, with the port forwarded." : "" ); role = R_ORANGE; }
 		else if ( internet ) hint = "On your network, players find it in Holomatch's Join menu, or connect to this address.";
 		else hint = "Players on your network find it in Holomatch's Join menu, or connect to this address.";
-		setText( ctl( ID_HINT ), hint ); setRole( ctl( ID_HINT ), role ); setTooltip( hwnd, ctl( ID_HINT ), hint.c_str( ) );
+		setText( ctl( SID_HINT ), hint ); setRole( ctl( SID_HINT ), role ); setTooltip( hwnd, ctl( SID_HINT ), hint.c_str( ) );
 		str map = "\xE2\x80\x94";
 		if ( !curMap.empty( ) ) {
 			const lc_map_info *mi = cat ? lc_map_find( cat, curMap.c_str( ) ) : 0;
 			if ( mi ) { str dn = lc_map_display_name( mi ); map = dn == mi->name ? dn : fmt( "%s (%s)", dn.c_str( ), mi->name ); } else map = curMap;
 			if ( settings->rotationCount > 1 ) map += fmt( " \xC2\xB7 %d maps in rotation", settings->rotationCount );
 		}
-		setText( ctl( ID_MAP ), map );
+		setText( ctl( SID_MAP ), map );
 		str game = lc_gametype_name( settings->gametype ), mods;
 		for ( int m = 0; m < LC_MOD_COUNT; m++ ) if ( settings->mods[m] ) { if ( !mods.empty( ) ) mods += ", "; mods += lc_modifier_name( m ); }
 		if ( !mods.empty( ) ) game += " \xC2\xB7 " + mods;
-		setText( ctl( ID_GAME ), game );
+		setText( ctl( SID_GAME ), game );
 		str pl;
 		if ( state == LC_SRV_STARTING || curMap.empty( ) ) pl = fmt( "Up to %d", settings->maxPlayers );
 		else { pl = fmt( "%d of %d", (int)plist.size( ), settings->maxPlayers ); if ( shownBots > 0 ) pl += fmt( " \xC2\xB7 %d bot%s", shownBots, shownBots == 1 ? "" : "s" ); }
-		setText( ctl( ID_PLAYERS ), pl );
+		setText( ctl( SID_PLAYERS ), pl );
 	}
 	void showPlayersTable( )
 	{
@@ -336,10 +336,10 @@ struct SrvWin : Wnd {
 		else if ( !settings->openPort ) { val = "Your public address"; hint = "Automatic port opening is off. " + manual; }
 		else val = hasChild ? "Waiting for the server\xE2\x80\xA6" : "\xE2\x80\x94";
 		inetGlyph = glyph; inetRole = role;
-		HWND v = ctl( ID_INETVAL ); setText( v, val );
+		HWND v = ctl( SID_INETVAL ); setText( v, val );
 		SendMessageW( v, WM_SETFONT, (WPARAM)( copy ? F( 15, 600, true ) : F( 13 ) ), TRUE );
-		setText( ctl( ID_INETHINT ), hint ); setRole( ctl( ID_INETHINT ), hrole ); showCtl( ID_INETHINT, !hint.empty( ) );
-		showCtl( ID_INETCOPY, copy );
+		setText( ctl( SID_INETHINT ), hint ); setRole( ctl( SID_INETHINT ), hrole ); showCtl( SID_INETHINT, !hint.empty( ) );
+		showCtl( SID_INETCOPY, copy );
 		InvalidateRect( hwnd, 0, TRUE );
 	}
 
@@ -410,22 +410,22 @@ struct SrvWin : Wnd {
 		str st;
 		if ( checking && checkCount == 0 ) st = "Checking the masters\xE2\x80\xA6"; else if ( checking ) st = fmt( "Checking again\xE2\x80\xA6 (%d of 9)", checkCount );
 		else if ( !checkEnded && checkCount == 0 ) st = hasChild ? "Waiting for the server\xE2\x80\xA6" : "";
-		setText( ctl( ID_LISTSTAT ), st ); showCtl( ID_LISTSTAT, !st.empty( ) );
+		setText( ctl( SID_LISTSTAT ), st ); showCtl( SID_LISTSTAT, !st.empty( ) );
 		str hint;
 		if ( checkEnded && !listedAny && !allDown ) hint = fmt( "No master could reach your server, so players outside your network can't either%s. Forward UDP %d to %s in your router's settings, or use Tailscale (see the README).",
 			natHad && !publicAddr.empty( ) ? " (your router accepted the port request but doesn't forward it)" : "", port, lanAddress.empty( ) ? ( str( "this " ) + PLATFORM_NOUN ).c_str( ) : lanAddress.c_str( ) );
-		setText( ctl( ID_LISTHINT ), hint ); showCtl( ID_LISTHINT, !hint.empty( ) );
+		setText( ctl( SID_LISTHINT ), hint ); showCtl( SID_LISTHINT, !hint.empty( ) );
 		bool listedAll = true; for ( int i = 0; i < nListRows; i++ ) if ( lstate[i] == 2 || lstate[i] == 0 ) listedAll = false;
-		showCtl( ID_LISTCHECK, hasChild && !checking && !listedAll );
+		showCtl( SID_LISTCHECK, hasChild && !checking && !listedAll );
 		InvalidateRect( hwnd, 0, TRUE );
 	}
 
 	/* ---- commands ---- */
 	void doCmd( )
 	{
-		str c = getText( ctl( ID_CMD ) ); lc_trim( &c[0] ); c = c.c_str( );
+		str c = getText( ctl( SID_CMD ) ); lc_trim( &c[0] ); c = c.c_str( );
 		if ( c.empty( ) || !hasChild ) return;
-		SetWindowTextW( ctl( ID_CMD ), L"" );
+		SetWindowTextW( ctl( SID_CMD ), L"" );
 		if ( !lc_stricmp( c.c_str( ), "quit" ) ) { stopThen( IDCANCEL ); return; }
 		lc_srv_user_command( srv, c.c_str( ) );
 	}
@@ -458,7 +458,7 @@ struct SrvWin : Wnd {
 				AppendMenuW( m, MF_STRING | ( curMap == mi->name ? MF_CHECKED : 0 ), 1000 + (int)cmd.size( ) - 1, W( "   " + t ).c_str( ) );
 			}
 		}
-		RECT r; GetWindowRect( ctl( ID_CHANGE ), &r );
+		RECT r; GetWindowRect( ctl( SID_CHANGE ), &r );
 		int c = TrackPopupMenu( m, TPM_RETURNCMD, r.left, r.bottom, 0, hwnd, 0 );
 		DestroyMenu( m );
 		if ( c >= 1000 && c - 1000 < (int)cmd.size( ) ) {
@@ -497,20 +497,20 @@ struct SrvWin : Wnd {
 	void onCommand( int id, int code, HWND ) override
 	{
 		switch ( id ) {
-		case ID_COPY: copyToClipboard( hwnd, getText( ctl( ID_ADDR ) ) ); break;
-		case ID_INETCOPY: copyToClipboard( hwnd, getText( ctl( ID_INETVAL ) ) ); break;
-		case ID_LISTCHECK: if ( hasChild ) { lc_srv_heartbeat( srv ); startListCheck( ); } break;
-		case ID_NEXT: lc_srv_next_map( srv ); break;
-		case ID_RESTART: lc_srv_restart_map( srv ); break;
-		case ID_CHANGE: changeMapMenu( ); break;
-		case ID_ADDBOT: lc_srv_add_bot( srv, settings->botSkill ); break;
-		case ID_RMBOTS: lc_srv_remove_bots( srv ); break;
-		case ID_MSG: doMessage( ); break;
-		case ID_KICK: doKick( (int)SendMessageW( table, LVM_GETNEXTITEM, -1, LVNI_SELECTED ) ); break;
-		case ID_SEND: doCmd( ); break;
-		case ID_PLAY: playHere( ); break;
-		case ID_STOP: stopThen( IDCANCEL ); break;
-		case IDOK: if ( GetFocus( ) == ctl( ID_CMD ) ) doCmd( ); break;
+		case SID_COPY: copyToClipboard( hwnd, getText( ctl( SID_ADDR ) ) ); break;
+		case SID_INETCOPY: copyToClipboard( hwnd, getText( ctl( SID_INETVAL ) ) ); break;
+		case SID_LISTCHECK: if ( hasChild ) { lc_srv_heartbeat( srv ); startListCheck( ); } break;
+		case SID_NEXT: lc_srv_next_map( srv ); break;
+		case SID_RESTART: lc_srv_restart_map( srv ); break;
+		case SID_CHANGE: changeMapMenu( ); break;
+		case SID_ADDBOT: lc_srv_add_bot( srv, settings->botSkill ); break;
+		case SID_RMBOTS: lc_srv_remove_bots( srv ); break;
+		case SID_MSG: doMessage( ); break;
+		case SID_KICK: doKick( (int)SendMessageW( table, LVM_GETNEXTITEM, -1, LVNI_SELECTED ) ); break;
+		case SID_SEND: doCmd( ); break;
+		case SID_PLAY: playHere( ); break;
+		case SID_STOP: stopThen( IDCANCEL ); break;
+		case IDOK: if ( GetFocus( ) == ctl( SID_CMD ) ) doCmd( ); break;
 		case IDCANCEL: break;
 		}
 	}
@@ -582,9 +582,9 @@ struct SrvWin : Wnd {
 	void paintOver( HDC dc ) override
 	{
 		drawAppIcon( dc, S( 28 ), S( 20 ), S( 52 ) );
-		RECT r; if ( ctl( ID_STATE ) ) { GetWindowRect( ctl( ID_STATE ), &r ); POINT p = { r.left, r.top }; ScreenToClient( hwnd, &p );
+		RECT r; if ( ctl( SID_STATE ) ) { GetWindowRect( ctl( SID_STATE ), &r ); POINT p = { r.left, r.top }; ScreenToClient( hwnd, &p );
 			drawGlyph( dc, G_DOT, p.x - S( 16 ), p.y + S( 4 ), S( 10 ), roleColor( stateRole ) ); }
-		if ( internet && inetGlyph >= 0 && ctl( ID_INETVAL ) ) { GetWindowRect( ctl( ID_INETVAL ), &r ); POINT p = { r.left, r.top }; ScreenToClient( hwnd, &p );
+		if ( internet && inetGlyph >= 0 && ctl( SID_INETVAL ) ) { GetWindowRect( ctl( SID_INETVAL ), &r ); POINT p = { r.left, r.top }; ScreenToClient( hwnd, &p );
 			drawGlyph( dc, inetGlyph, p.x - S( 20 ), p.y + S( 2 ), S( 14 ), roleColor( inetRole ) ); }
 		if ( internet ) for ( int i = 0; i < nListRows; i++ ) {
 			int gl = lstate[i] == 1 ? G_CHECK_CIRCLE : lstate[i] == 2 ? G_X_CIRCLE : lstate[i] == 3 ? G_EXCL_CIRCLE : G_DOTTED;
@@ -609,21 +609,21 @@ void runServerWindow( lc_server_settings *settings, const str &basepath, const s
 	str title = fmt( "%s \xC2\xB7 Elite Force Server", settings->hostname );
 	w.create( W( title ).c_str( ), W0, 900, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, 0, 0 );
 	int y = 20;
-	w.ids[SrvWin::ID_TITLE] = w.label( 92, y + 2, W0 - 92 - 28, 30, settings->hostname, 22, 700, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, SrvWin::ID_TITLE );
-	w.label( 108, y + 36, W0 - 92 - 28, 18, "", 13, 400, R_TEXT2, DT_SINGLELINE, SrvWin::ID_STATE );
+	w.ids[SrvWin::SID_TITLE] = w.label( 92, y + 2, W0 - 92 - 28, 30, settings->hostname, 22, 700, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, SrvWin::SID_TITLE );
+	w.label( 108, y + 36, W0 - 92 - 28, 18, "", 13, 400, R_TEXT2, DT_SINGLELINE, SrvWin::SID_STATE );
 	y += 52 + 16 + 18;
 	/* server group */
 	int gTop = y; const int lx = 44, vx = 44 + 80 + 8;
 	int gy = gTop + 12;
 	w.label( lx, gy + 2, 80, 18, "Address:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE );
-	w.label( vx, gy, 300, 22, "", 15, 600, R_TEXT, DT_SINGLELINE, SrvWin::ID_ADDR );
-	w.button( vx + 300, gy, 60, 22, "Copy", SrvWin::ID_COPY, false, 12 ); gy += 26;
-	w.label( vx, gy, 520, 30, "", 11, 400, R_TEXT2, DT_WORDBREAK | DT_END_ELLIPSIS, SrvWin::ID_HINT ); gy += 32;
+	w.label( vx, gy, 300, 22, "", 15, 600, R_TEXT, DT_SINGLELINE, SrvWin::SID_ADDR );
+	w.button( vx + 300, gy, 60, 22, "Copy", SrvWin::SID_COPY, false, 12 ); gy += 26;
+	w.label( vx, gy, 520, 30, "", 11, 400, R_TEXT2, DT_WORDBREAK | DT_END_ELLIPSIS, SrvWin::SID_HINT ); gy += 32;
 	if ( w.internet ) {
 		w.label( lx, gy + 2, 80, 18, "Internet:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE );
-		w.label( vx + 20, gy, 300, 22, "", 13, 400, R_TEXT, DT_SINGLELINE, SrvWin::ID_INETVAL );
-		w.button( vx + 330, gy, 60, 22, "Copy", SrvWin::ID_INETCOPY, false, 12 ); gy += 26;
-		w.label( vx + 20, gy, 500, 44, "", 11, 400, R_TEXT2, DT_WORDBREAK, SrvWin::ID_INETHINT ); gy += 48;
+		w.label( vx + 20, gy, 300, 22, "", 13, 400, R_TEXT, DT_SINGLELINE, SrvWin::SID_INETVAL );
+		w.button( vx + 330, gy, 60, 22, "Copy", SrvWin::SID_INETCOPY, false, 12 ); gy += 26;
+		w.label( vx + 20, gy, 500, 44, "", 11, 400, R_TEXT2, DT_WORDBREAK, SrvWin::SID_INETHINT ); gy += 48;
 		w.label( lx, gy + 2, 80, 18, "Listed:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE );
 		w.nListRows = w.nMasters;
 		if ( w.nMasters == 0 ) { w.label( vx, gy, 400, 16, "No master servers (see Servers\xE2\x80\xA6 in the launcher)", 12, 400, R_ORANGE, DT_SINGLELINE ); gy += 20; }
@@ -631,48 +631,48 @@ void runServerWindow( lc_server_settings *settings, const str &basepath, const s
 			str lab = w.masterLabel( i ), host = w.masters[i];
 			bool same = lab == host;
 			w.rowsY[i] = gy;
-			if ( !same ) { w.label( vx + 28, gy + 1, 90, 16, lab.c_str( ), 13, 400, R_TEXT, DT_SINGLELINE, SrvWin::ID_MASTERLBL + i ); w.label( vx + 28 + 92, gy + 2, 300, 16, host.c_str( ), 12, 400, R_TEXT2, DT_SINGLELINE ); }
+			if ( !same ) { w.label( vx + 28, gy + 1, 90, 16, lab.c_str( ), 13, 400, R_TEXT, DT_SINGLELINE, SrvWin::SID_MASTERLBL + i ); w.label( vx + 28 + 92, gy + 2, 300, 16, host.c_str( ), 12, 400, R_TEXT2, DT_SINGLELINE ); }
 			else w.label( vx + 28, gy + 1, 300, 16, host.c_str( ), 13, 400, R_TEXT, DT_SINGLELINE );
 			gy += 20;
 		}
-		w.label( vx, gy + 2, 300, 16, "", 11, 400, R_TEXT2, DT_SINGLELINE, SrvWin::ID_LISTSTAT );
-		w.button( vx + 300, gy, 100, 22, "Check Again", SrvWin::ID_LISTCHECK, false, 12 ); gy += 26;
-		w.label( vx, gy, 520, 44, "", 11, 400, R_ORANGE, DT_WORDBREAK, SrvWin::ID_LISTHINT ); gy += 48;
+		w.label( vx, gy + 2, 300, 16, "", 11, 400, R_TEXT2, DT_SINGLELINE, SrvWin::SID_LISTSTAT );
+		w.button( vx + 300, gy, 100, 22, "Check Again", SrvWin::SID_LISTCHECK, false, 12 ); gy += 26;
+		w.label( vx, gy, 520, 44, "", 11, 400, R_ORANGE, DT_WORDBREAK, SrvWin::SID_LISTHINT ); gy += 48;
 	}
-	w.label( lx, gy + 2, 80, 18, "Map:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE ); w.label( vx, gy + 2, 520, 18, "", 13, 400, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, SrvWin::ID_MAP ); gy += 22;
-	w.label( lx, gy + 2, 80, 18, "Game:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE ); w.label( vx, gy + 2, 520, 18, "", 13, 400, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, SrvWin::ID_GAME ); gy += 22;
-	w.label( lx, gy + 2, 80, 18, "Players:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE ); w.label( vx, gy + 2, 520, 18, "", 13, 400, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, SrvWin::ID_PLAYERS ); gy += 22;
+	w.label( lx, gy + 2, 80, 18, "Map:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE ); w.label( vx, gy + 2, 520, 18, "", 13, 400, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, SrvWin::SID_MAP ); gy += 22;
+	w.label( lx, gy + 2, 80, 18, "Game:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE ); w.label( vx, gy + 2, 520, 18, "", 13, 400, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, SrvWin::SID_GAME ); gy += 22;
+	w.label( lx, gy + 2, 80, 18, "Players:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE ); w.label( vx, gy + 2, 520, 18, "", 13, 400, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, SrvWin::SID_PLAYERS ); gy += 22;
 	gy += 10;
 	w.addGroup( 28, gTop, W0 - 56, gy - gTop, "SERVER" );
 	y = gy + 16;
 	/* controls */
 	int bw = ( W0 - 56 - 16 ) / 3;
 	struct { int id; const char *t, *tip; } bt[6] = {
-		{ SrvWin::ID_NEXT, "Next Map", "Go to the next map in the rotation" }, { SrvWin::ID_RESTART, "Restart Map", "Restart the current map; scores start over" },
-		{ SrvWin::ID_CHANGE, "Change Map \xE2\x96\xBE", "Switch to another map now" }, { SrvWin::ID_ADDBOT, "Add Bot", "Add one bot at the skill set in Config\xE2\x80\xA6" },
-		{ SrvWin::ID_RMBOTS, "Remove Bots", "Kick all bots (and stop filling the game with bots)" }, { SrvWin::ID_MSG, "Message\xE2\x80\xA6", "Send a message to everyone on the server" } };
+		{ SrvWin::SID_NEXT, "Next Map", "Go to the next map in the rotation" }, { SrvWin::SID_RESTART, "Restart Map", "Restart the current map; scores start over" },
+		{ SrvWin::SID_CHANGE, "Change Map \xE2\x96\xBE", "Switch to another map now" }, { SrvWin::SID_ADDBOT, "Add Bot", "Add one bot at the skill set in Config\xE2\x80\xA6" },
+		{ SrvWin::SID_RMBOTS, "Remove Bots", "Kick all bots (and stop filling the game with bots)" }, { SrvWin::SID_MSG, "Message\xE2\x80\xA6", "Send a message to everyone on the server" } };
 	for ( int i = 0; i < 6; i++ ) { w.button( 28 + ( i % 3 ) * ( bw + 8 ), y + ( i / 3 ) * 36, bw, 28, bt[i].t, bt[i].id, false, 13 ); setTooltip( w.hwnd, w.ctl( bt[i].id ), bt[i].tip ); }
 	y += 72 + 10;
 	/* players + console */
 	int areaH = 200;
-	w.label( 28, y, 120, 14, "PLAYERS", 11, 600, R_TEXT2, DT_SINGLELINE ); w.button( 28 + 230 - 60, y - 4, 60, 22, "Kick", SrvWin::ID_KICK, false, 12 );
-	setTooltip( w.hwnd, w.ctl( SrvWin::ID_KICK ), "Kick the selected player or bot" );
+	w.label( 28, y, 120, 14, "PLAYERS", 11, 600, R_TEXT2, DT_SINGLELINE ); w.button( 28 + 230 - 60, y - 4, 60, 22, "Kick", SrvWin::SID_KICK, false, 12 );
+	setTooltip( w.hwnd, w.ctl( SrvWin::SID_KICK ), "Kick the selected player or bot" );
 	w.label( 28 + 230 + 14, y, 120, 14, "CONSOLE", 11, 600, R_TEXT2, DT_SINGLELINE );
 	y += 20;
-	w.table = w.ctl_( WC_LISTVIEWW, L"", LVS_REPORT | LVS_OWNERDATA | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_TABSTOP | WS_BORDER, 0, 28, y, 230, areaH, SrvWin::ID_TABLE );
-	ListView_SetBkColor( w.table, T.field ); w.ids[SrvWin::ID_TABLE] = w.table;
+	w.table = w.ctl_( WC_LISTVIEWW, L"", LVS_REPORT | LVS_OWNERDATA | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_TABSTOP | WS_BORDER, 0, 28, y, 230, areaH, SrvWin::SID_TABLE );
+	ListView_SetBkColor( w.table, T.field ); w.ids[SrvWin::SID_TABLE] = w.table;
 	{ static const char *pt[3] = { "Player", "Score", "Ping" }; static const int pw[3] = { 112, 54, 46 };
 	  for ( int i = 0; i < 3; i++ ) { ws t = W( pt[i] ); LVCOLUMNW c = {}; c.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT; c.fmt = i ? LVCFMT_RIGHT : LVCFMT_LEFT; c.cx = S( pw[i] ); c.pszText = (LPWSTR)t.c_str( ); SendMessageW( w.table, LVM_INSERTCOLUMNW, i, (LPARAM)&c ); } }
 	w.con = w.ctl_( L"EFConsole", L"", WS_VSCROLL | WS_BORDER, 0, 28 + 230 + 14, y, W0 - 56 - 230 - 14, areaH, 60 ); w.ids[60] = w.con;
 	conMeasure( w.con, (ConData *)GetWindowLongPtrW( w.con, GWLP_USERDATA ) );
 	y += areaH + 10;
-	HWND cmd = w.edit( 28, y, W0 - 56 - 8 - 70, 24, SrvWin::ID_CMD, "" );
+	HWND cmd = w.edit( 28, y, W0 - 56 - 8 - 70, 24, SrvWin::SID_CMD, "" );
 	SendMessageW( cmd, EM_SETCUEBANNER, TRUE, (LPARAM)L"Console command, such as say Hello, map hm_borg1 or kick <name>" );
-	w.button( W0 - 28 - 70, y - 1, 70, 26, "Send", SrvWin::ID_SEND, false, 13 );
+	w.button( W0 - 28 - 70, y - 1, 70, 26, "Send", SrvWin::SID_SEND, false, 13 );
 	y += 24 + 18;
 	str pt = fmt( "Play on This %s", PLATFORM_NOUN );
-	w.button( 28, y, 190, 32, ( "\xE2\x96\xB6  " + pt ).c_str( ), SrvWin::ID_PLAY, false, 13 ); setTooltip( w.hwnd, w.ctl( SrvWin::ID_PLAY ), "Start Elite Force in Holomatch and join this server" );
-	w.button( W0 - 28 - 120, y, 120, 32, "Stop Server", SrvWin::ID_STOP, true, 13 );
+	w.button( 28, y, 190, 32, ( "\xE2\x96\xB6  " + pt ).c_str( ), SrvWin::SID_PLAY, false, 13 ); setTooltip( w.hwnd, w.ctl( SrvWin::SID_PLAY ), "Start Elite Force in Holomatch and join this server" );
+	w.button( W0 - 28 - 120, y, 120, 32, "Stop Server", SrvWin::SID_STOP, true, 13 );
 	y += 32 + 22;
 	/* resize to fit */
 	{ RECT r = { 0, 0, S( W0 ), S( y ) }; AdjustWindowRectEx( &r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0 ); SetWindowPos( w.hwnd, 0, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER ); }

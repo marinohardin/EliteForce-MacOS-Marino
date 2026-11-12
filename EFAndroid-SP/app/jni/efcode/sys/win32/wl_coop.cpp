@@ -212,7 +212,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	int y = 18;
 	const int H = 770;
 	d.create( L"Co-op", W0, H, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner );
-	d.label( 20, y, 90, 24, "Co-op", 17, 700, R_TEXT, DT_SINGLELINE );
+	d.label( 20, y, 70, 24, "Co-op", 17, 700, R_TEXT, DT_SINGLELINE );
 	d.label( 100, y + 6, 120, 14, "EXPERIMENTAL", 10, 600, R_ORANGE, DT_SINGLELINE );
 	y += 24 + 4;
 	d.label( 20, y, 520, 34, "Play the campaign with a friend. The host is player 1 and plays the story; the friend joins as player 2.", 12, 400, R_TEXT2 ); y += 36 + 6;

@@ -41,8 +41,8 @@ else()
 endif()
 if(WIN32)
   option(EF_WIN_GUI "Windows GUI-subsystem executable (-mwindows, like ioq3's client)" ON)
-  # the in-process Win32 launcher (efcode/sys/win32/, Sys_WinLauncher); off until its sources exist
-  option(EF_WIN_LAUNCHER "Windows: the in-process Win32 launcher (Sys_WinLauncher)" OFF)
+  # the in-process Win32 launcher (efcode/sys/win32/wl_*.cpp, Sys_WinLauncher)
+  option(EF_WIN_LAUNCHER "Windows: the in-process Win32 launcher (Sys_WinLauncher)" ON)
 endif()
 # where efsp lands: the top of the build tree, so the top-level build puts it next to the
 # game modules and macos/make-app.sh finds it at $ENGINE_BUILD/efsp as before
@@ -347,6 +347,7 @@ if(NOT APPLE)
   target_link_libraries(efsp PRIVATE eflauncher)	# the launcher core (GOG's sys_osx_gog.c and liblzma come with it)
   if(WIN32 AND EF_WIN_LAUNCHER)
     target_compile_definitions(efsp PRIVATE EF_WIN_LAUNCHER)
+    target_link_libraries(efsp PRIVATE gdiplus comctl32 uxtheme dwmapi oleaut32 uuid shlwapi gdi32 secur32)
   endif()
 endif()
 if(EF_BINK)
