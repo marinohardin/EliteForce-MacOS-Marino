@@ -8,8 +8,8 @@ main() calls these at fixed points; each desktop platform implements them:
   macOS          sys_osx.m: thin wrappers around the Sys_Mac* functions
                  (bundle environment, homepath migration, Cocoa launcher,
                  game-data chooser, File menu)
-  Windows/Linux  sys_platform_stub.c: own homepath name, game-data lookup
-                 (sys_data.c), no launcher yet
+  Windows/Linux  sys_platform_desktop.c: own homepath name, game-data lookup
+                 (sys_data.c), the launchers' hooks
 Android and Emscripten have no implementation: the inline no-ops below.
 ===========================================================================
 */
@@ -77,6 +77,7 @@ static ID_INLINE void Sys_PlatformQuitToLauncher( void ) { }
 const char *Sys_DataResolve( int argc, char **argv, qboolean headless );
 const char *Sys_DataHomePath( void );
 void Sys_DataPrintEarlyLog( void );
+void Sys_DataInstallLog( void );
 qboolean Sys_DataOverridden( int argc, char **argv );
 #endif
 

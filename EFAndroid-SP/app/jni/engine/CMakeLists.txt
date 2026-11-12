@@ -32,15 +32,17 @@ option(EF_VM_JIT "QVM JIT (aarch64: needs MAP_JIT work on macOS; x86_64: vm_x86.
 # host's answer to co-op checks and the co-op connection (sys/sys_osx_coop.m, sys_coop_net.c;
 # macOS only for now); the game side is efgame's option of the same name (make-app.sh passes both).
 option(EF_COOP "Single-player co-op (experimental)" OFF)
-# GOG installer extraction (sys_osx_gog.c + liblzma). Portable now, but only the Mac launcher
-# calls it until the Windows/Linux launchers (M2) exist, so it stays off there by default.
+# GOG installer extraction (sys_osx_gog.c + liblzma). On macOS the Mac launcher calls it; on
+# Windows/Linux the launcher core (efcode/launcher, target eflauncher) compiles it and links liblzma.
 if(APPLE)
   option(EF_GOG "GOG offline-installer extraction (sys_osx_gog.c, liblzma)" ON)
 else()
-  option(EF_GOG "GOG offline-installer extraction (sys_osx_gog.c, liblzma; no caller until M2)" OFF)
+  option(EF_GOG "GOG offline-installer extraction in the launcher core (sys_osx_gog.c, liblzma)" ON)
 endif()
 if(WIN32)
   option(EF_WIN_GUI "Windows GUI-subsystem executable (-mwindows, like ioq3's client)" ON)
+  # the in-process Win32 launcher (efcode/sys/win32/, Sys_WinLauncher); off until its sources exist
+  option(EF_WIN_LAUNCHER "Windows: the in-process Win32 launcher (Sys_WinLauncher)" OFF)
 endif()
 # where efsp lands: the top of the build tree, so the top-level build puts it next to the
 # game modules and macos/make-app.sh finds it at $ENGINE_BUILD/efsp as before
@@ -182,7 +184,7 @@ if(APPLE)
 elseif(WIN32)
   set(SYS_SRC
     ${EF}/sys/sys_win32.c ${EF}/sys/con_win32.c ${EF}/sys/con_log.c ${EF}/sys/sys_main.c
-    ${EF}/sys/sys_autoupdater.c ${EF}/sys/sys_platform_stub.c ${EF}/sys/sys_data.c
+    ${EF}/sys/sys_autoupdater.c ${EF}/sys/sys_platform_desktop.c ${EF}/sys/sys_data.c
     ${EF}/sys/win_resource.rc)
   # win_resource.rc: its manifest is next to it; under mingw it wants the icon at
   # "misc/lilium.ico", which cmake/windows/misc/lilium.ico provides via the include path
@@ -193,10 +195,7 @@ elseif(WIN32)
 else()
   set(SYS_SRC
     ${EF}/sys/sys_unix.c ${EF}/sys/con_tty.c ${EF}/sys/con_log.c ${EF}/sys/sys_main.c
-    ${EF}/sys/sys_autoupdater.c ${EF}/sys/sys_platform_stub.c ${EF}/sys/sys_data.c)
-endif()
-if(EF_GOG AND NOT APPLE)
-  list(APPEND SYS_SRC ${EF}/sys/sys_osx_gog.c)
+    ${EF}/sys/sys_autoupdater.c ${EF}/sys/sys_platform_desktop.c ${EF}/sys/sys_data.c)
 endif()
 
 file(GLOB RENDERCOMMON_SRC ${EF}/renderercommon/*.c)
@@ -293,6 +292,14 @@ else()
   set(EF_PLATFORM_DEFS USE_CURL USE_CURL_DLOPEN)
 endif()
 
+if(NOT APPLE)
+  # The Windows/Linux launcher core (efcode/launcher). efsp compiles the zlib sources
+  # itself, so the core doesn't bundle its own; GOG unpacking follows EF_GOG.
+  set(LC_BUNDLE_ZLIB OFF CACHE BOOL "" FORCE)
+  set(LC_GOG ${EF_GOG} CACHE BOOL "" FORCE)
+  add_subdirectory(${EF}/launcher eflauncher)
+endif()
+
 target_compile_definitions(efsp PRIVATE
   ELITEFORCE BOTLIB NDEBUG
   USE_CODEC_MP3 USE_INTERNAL_MP3 ${EF_LIBMAD_FPM}
@@ -336,8 +343,11 @@ else()
   set_target_properties(efsp PROPERTIES BUILD_RPATH "\$ORIGIN;\$ORIGIN/../lib"
     INSTALL_RPATH "\$ORIGIN;\$ORIGIN/../lib")
 endif()
-if(EF_GOG AND NOT APPLE)
-  target_link_libraries(efsp PRIVATE lzma)	# static liblzma from the deps prefix
+if(NOT APPLE)
+  target_link_libraries(efsp PRIVATE eflauncher)	# the launcher core (GOG's sys_osx_gog.c and liblzma come with it)
+  if(WIN32 AND EF_WIN_LAUNCHER)
+    target_compile_definitions(efsp PRIVATE EF_WIN_LAUNCHER)
+  endif()
 endif()
 if(EF_BINK)
   target_link_libraries(efsp PRIVATE PkgConfig::FFMPEG)

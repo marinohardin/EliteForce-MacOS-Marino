@@ -41,7 +41,10 @@ int lc_launch_append_args( const lc_launch *o, const char *homeBase, char *comma
    NULL-terminated; *argc set. Free with lc_argv_free. room for brightness as if
    the engine's 1024-byte command line held them (same overflow → cfg rule). */
 char **lc_launch_build_argv( const lc_launch *o, const char *homeBase, const char *program, int *argc );
-/* §3.3: Play on This PC/Computer from the server window */
+/* §3.3: Play on This PC/Computer from the server window: argv[0] = program, then the Holomatch
+   client arguments (graphics, name, brightness with room 600, cMod, fs_basepath, masters cfg,
+   loopback), one token per value, NULL-terminated. Uses o->gfx, name, cmod, basepath,
+   mastersCfgWritten, loopbackIP. */
 char **lc_launch_client_argv( const lc_launch *o, const char *homeBase, const char *program, int *argc );
 void lc_argv_free( char **argv );
 void lc_mask_for_log( const char *args, const char *password, char *out, size_t size );
