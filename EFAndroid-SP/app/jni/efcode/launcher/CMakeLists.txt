@@ -74,6 +74,7 @@ set_target_properties(eflauncher PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_C
 target_compile_definitions(eflauncher PUBLIC LC_HAVE_GOG=${LC_HAVE_GOG})
 if(LC_HAVE_GOG)
   target_link_libraries(eflauncher PUBLIC ${LC_LZMA_LIBRARY})
+endif()
 if(DEFINED EF_APP_VERSION)
   target_compile_definitions(eflauncher PRIVATE EF_APP_VERSION="${EF_APP_VERSION}")
 endif()
