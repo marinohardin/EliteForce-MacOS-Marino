@@ -344,7 +344,7 @@ int lc_brightness_args( int b, size_t room, const char *homeBase, char *out, siz
 		return 0;
 	/* "+set name value" joined by single spaces */
 	for ( i = 0; i < n; i++ )
-		joined += ( i ? 1 : 0 ) + 4 + strlen( names[i] ) + 1 + strlen( values[i] );
+		joined += ( i ? 1 : 0 ) + 5 + strlen( names[i] ) + 1 + strlen( values[i] );	/* "+set name value" */
 	if ( joined + 2 < room ) {
 		for ( i = 0; i < n; i++ ) {
 			char tok[96];

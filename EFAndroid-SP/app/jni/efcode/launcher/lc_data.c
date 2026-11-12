@@ -428,12 +428,13 @@ inplace:
 
 int lc_data_external_base( char *out, size_t size )
 {
-	char remembered[LC_MAX_PATH], base[LC_MAX_PATH];
+	char remembered[LC_MAX_PATH];
+	found_t f;
 
 	out[0] = 0;
 	RememberedFolder( remembered, sizeof( remembered ) );
-	if ( *remembered && lc_is_dir( remembered ) && lc_child_ci( remembered, LC_BASEGAME, base, sizeof( base ) ) && lc_is_dir( base ) ) {
-		lc_strlcpy( out, base, size );
+	if ( *remembered && GameFolder( remembered, &f ) ) {
+		lc_strlcpy( out, f.base, size );
 		return 1;
 	}
 	return 0;
