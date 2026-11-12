@@ -1245,8 +1245,9 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 ## Co-op: guest closed on ladders (2026-11-12, branch `1_4_0/coop-m1` only)
 - The guest's game quit (crash, no report) as soon as player 2 was on a ladder or waist-deep in water:
   its cgame predicts player 2's moves with no game entity, and the water/ladder depth check read that
-  entity's NPC type (null). In co-op builds the check now treats "no entity" as not a biohulk, as the
-  host does for player 2. Single player and builds without `EF_COOP` are unchanged.
+  entity's NPC type (null). The check now treats "no entity" as not a biohulk, as the host does for
+  player 2. Since the merge of the single-player fix below, this is one unconditional guard (no
+  `EF_COOP` switch).
 
 ## Co-op: the guest sees breakables explode (2026-11-12, branch `1_4_0/coop-m1` only)
 - Some game code draws its effect by calling the cgame directly (one module in single player), with
@@ -1259,3 +1260,13 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 - Not forwarded: the stasis fliers' and fixits' client think functions (cgame per-frame thinks on
   entities), debug drawing (CG_Cube/CG_Line).
 - Test hook: `coop_p2_damage <n> near` (player 2 damages the nearest breakable).
+
+## SP: no crash on a ladder or in water while the player is predicted (2026-11-12)
+
+With `timescale` below 1 the SP cgame predicts the player itself (`CG_PredictPlayerState`) with no
+game entity (`cg_pmove.gent = NULL`). `PM_SetWaterLevel` then read `pm->gent->NPC_type` (the biohulk
+check) as soon as the player was waist-deep on a ladder or in water, and the game closed. A missing
+entity (or NPC type) now counts as "not a biohulk", so the result is the same wherever it didn't
+crash before. Reproduced on borg1 (`timescale 0.5`, `setviewpos 371 571 100 0` into the ladder):
+SIGNAL 11 in `PM_SetWaterLevel` before, climbs normally after. Regression harness: all five
+scenarios identical to a baseline recorded at 4dd6eac.
