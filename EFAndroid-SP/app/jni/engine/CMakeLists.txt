@@ -30,8 +30,14 @@ option(EF_BINK "Bink cinematics via FFmpeg (OFF = stub, no movies)" ON)
 option(EF_VM_JIT "QVM JIT (aarch64: needs MAP_JIT work on macOS; x86_64: vm_x86.c, untested)" OFF)
 # single-player co-op (experimental): the engine side is the Mac launcher's Co-op… sheet, the
 # host's answer to co-op checks and the co-op connection (sys/sys_osx_coop.m, sys_coop_net.c;
-# macOS only for now); the game side is efgame's option of the same name (make-app.sh passes both).
-option(EF_COOP "Single-player co-op (experimental)" OFF)
+# macOS first; Windows/Linux have sys/sys_coop_host.c); the game side is efgame's option of the
+# same name (make-app.sh passes both). Windows/Linux build it by default (their launchers keep the
+# Co-op button hidden: LC_COOP_UI_ENABLED); macOS stays OFF unless asked.
+if(APPLE)
+  option(EF_COOP "Single-player co-op (experimental)" OFF)
+else()
+  option(EF_COOP "Single-player co-op (experimental)" ON)
+endif()
 # GOG installer extraction (sys_osx_gog.c + liblzma). On macOS the Mac launcher calls it; on
 # Windows/Linux the launcher core (efcode/launcher, target eflauncher) compiles it and links liblzma.
 if(APPLE)
@@ -204,6 +210,23 @@ if(WIN32 AND EF_WIN_LAUNCHER)
   set_source_files_properties(${WINL_SRC} PROPERTIES COMPILE_OPTIONS "-fpermissive;-std=gnu++17;-w")
 endif()
 
+# Co-op engine side on Windows/Linux: sys_coop_host.c is the portable port of sys_osx_coop.m's
+# engine half; sys_coop_net.c (the macOS one) compiles unchanged with sys_coop_compat.h forced in
+# (zlib raw deflate for libcompression, arc4random, Winsock) and zlib's deflate sources.
+if(EF_COOP AND NOT APPLE)
+  list(APPEND SYS_SRC ${EF}/sys/sys_coop_host.c ${EF}/sys/sys_coop_net.c
+    ${EF}/zlib-deflate/deflate.c ${EF}/zlib-deflate/trees.c ${EF}/zlib-deflate/compress.c)
+  set(EF_COOP_COMPAT_INC ${EF}/sys/coop_compat)
+  if(WIN32)
+    list(APPEND EF_COOP_COMPAT_INC ${EF}/sys/coop_compat/win32)
+  endif()
+  set_source_files_properties(${EF}/sys/sys_coop_net.c PROPERTIES
+    COMPILE_OPTIONS "-include;${EF}/sys/sys_coop_compat.h"
+    INCLUDE_DIRECTORIES "${EF_COOP_COMPAT_INC}")
+  set_source_files_properties(${EF}/sys/sys_coop_host.c PROPERTIES
+    INCLUDE_DIRECTORIES "${EF_COOP_COMPAT_INC}")
+endif()
+
 file(GLOB RENDERCOMMON_SRC ${EF}/renderercommon/*.c)
 file(GLOB RENDERER_SRC ${EF}/renderervk/*.c)
 list(REMOVE_ITEM RENDERER_SRC ${EF}/renderervk/tr_subs.c)
@@ -251,9 +274,13 @@ if(EF_COMPILER_GCC)
   target_compile_options(sp_game_bridge PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 endif()
 target_compile_definitions(sp_game_bridge PRIVATE NDEBUG EF_DYLIB_MODULES
-  $<$<AND:$<BOOL:${APPLE}>,$<BOOL:${EF_COOP}>>:EF_COOP>)   # co-op's engine side is macOS only
+  $<$<BOOL:${EF_COOP}>:EF_COOP>)   # co-op's engine side: macOS (sys_osx_coop.m), Windows/Linux (sys_coop_host.c)
 if(WIN32)
   target_compile_definitions(sp_game_bridge PRIVATE NOMINMAX)
+  if(EF_COOP)
+    # sys_coop_net.h includes <netinet/in.h>: Winsock stand-ins
+    target_include_directories(sp_game_bridge PRIVATE ${EF}/sys/coop_compat/win32)
+  endif()
 endif()
 set_property(TARGET sp_game_bridge PROPERTY CXX_STANDARD 17)
 
@@ -295,7 +322,8 @@ else()
   set(EF_HOMEPATH_NAME "EliteForce-Marino")
   # libcurl loaded at runtime if present (libcurl-4.dll / libcurl.so.4); headers from
   # efcode/curl-7.54.0/include (USE_LOCAL_HEADERS without USE_SYSTEM_CURL)
-  set(EF_PLATFORM_DEFS USE_CURL USE_CURL_DLOPEN)
+  set(EF_PLATFORM_DEFS USE_CURL USE_CURL_DLOPEN
+    $<$<BOOL:${EF_COOP}>:EF_COOP>)
 endif()
 
 if(NOT APPLE)

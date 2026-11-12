@@ -44,6 +44,12 @@ static void ip_string( unsigned hostOrder, char *out, size_t n )
 
 unsigned lc_default_gateway( void )
 {
+	const char *test = lc_env( "LC_TEST_GATEWAY" );		/* unit tests: a fake router on loopback */
+	if ( test ) {
+		struct in_addr ia;
+		if ( inet_pton( AF_INET, test, &ia ) == 1 )
+			return ntohl( ia.s_addr );
+	}
 #ifdef _WIN32
 	MIB_IPFORWARDROW row;
 	memset( &row, 0, sizeof( row ) );
@@ -339,6 +345,12 @@ static void sleep_stoppable( lc_nat *n, int ms )
 
 /* ---- NAT-PMP --------------------------------------------------------------------------------------------- */
 
+static int pmp_port( void )
+{
+	const char *t = lc_env( "LC_TEST_PMP_PORT" );		/* unit tests */
+	return t ? atoi( t ) : PMP_PORT;
+}
+
 /* send req to the gateway, wait for the matching response; tries with 250 ms doubling. len or -1 */
 static int pmp_exchange( lc_nat *n, const unsigned char *req, size_t reqLen, unsigned char *resp, size_t respMax, int tries )
 {
@@ -351,7 +363,7 @@ static int pmp_exchange( lc_nat *n, const unsigned char *req, size_t reqLen, uns
 		return -1;
 	memset( &to, 0, sizeof( to ) );
 	to.sin_family = AF_INET;
-	to.sin_port = htons( PMP_PORT );
+	to.sin_port = htons( (unsigned short)pmp_port( ) );
 	to.sin_addr.s_addr = htonl( n->gw );
 	for ( t = 0; t < tries && got < 0 && !n->stop; t++ ) {
 		double until = lc_now( ) + wait / 1000.0;
@@ -415,13 +427,18 @@ static int ssdp_discover( lc_nat *n, char locations[][256], int max )
 		"urn:schemas-upnp-org:device:InternetGatewayDevice:2",
 		"urn:schemas-upnp-org:service:WANIPConnection:1",
 		"upnp:rootdevice" };
-	lc_sock s = socket( AF_INET, SOCK_DGRAM, 0 );
+	lc_sock s;
 	struct sockaddr_in to, local;
 	int count = 0, i, round;
 	char req[512], buf[2048];
 	double until;
 	unsigned char ttl = 2;
 
+	if ( lc_env( "LC_TEST_UPNP_LOCATION" ) ) {		/* unit tests: skip the multicast search */
+		lc_strlcpy( locations[0], lc_env( "LC_TEST_UPNP_LOCATION" ), 256 );
+		return 1;
+	}
+	s = socket( AF_INET, SOCK_DGRAM, 0 );
 	if ( s == LC_BADSOCK )
 		return 0;
 	memset( &local, 0, sizeof( local ) );
@@ -696,9 +713,9 @@ static void report( lc_nat *n, lc_nat_result r, const char *ip, int extPort, int
 
 static void do_delete( lc_nat *n )
 {
+	n->stop = 0;		/* the exchanges below poll stop: the worker is done, they must run */
 	if ( n->pmpMapped && n->gw ) {
 		int code, ext, granted;
-		n->stop = 0;		/* the exchange polls stop */
 		pmp_map( n, n->port, 0, 0, 2, &code, &ext, &granted );
 		n->pmpMapped = 0;
 	}
@@ -938,7 +955,13 @@ static void pub_cb( lc_nat_result r, const char *ip, int err, void *u )
 		lc_log( "Public address (from the router): %s", ip );
 	}
 	g_pubPending = 0;
-	lc_mutex_unlock( pub_mutex( ) );
+	{
+		lc_nat *me = g_pubNat;
+		g_pubNat = NULL;
+		lc_mutex_unlock( pub_mutex( ) );
+		if ( me )
+			lc_nat_release( me );		/* from inside the callback: cleaned up when it returns */
+	}
 }
 
 void lc_public_address_start( void )

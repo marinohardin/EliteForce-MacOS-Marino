@@ -18,7 +18,11 @@ if(APPLE)
 endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/EFPlatform.cmake)
 
-option(EF_COOP "Single-player co-op (experimental)" OFF)
+if(APPLE)
+  option(EF_COOP "Single-player co-op (experimental)" OFF)
+else()
+  option(EF_COOP "Single-player co-op (experimental)" ON)   # Windows/Linux: built in, the launchers hide the button
+endif()
 option(EF_BUILD_ENGINE "Build the engine (efsp)" ON)
 option(EF_BUILD_GAME "Build the game modules (efgame, efui)" ON)
 

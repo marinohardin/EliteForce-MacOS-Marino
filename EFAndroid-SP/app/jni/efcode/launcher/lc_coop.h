@@ -34,6 +34,8 @@ typedef struct {
 	char info[1024];			/* the coopInfoResponse infostring */
 } lc_coop_query;
 
+/* the app version this build was compiled with (EF_APP_VERSION): co-op needs host and guest to match */
+const char *lc_coop_app_version( void );
 /* §6.4, blocking (run on a thread) */
 void lc_coop_query_run( const char *address, double timeoutSeconds, lc_coop_query *out );
 /* infostring value; "" if absent */

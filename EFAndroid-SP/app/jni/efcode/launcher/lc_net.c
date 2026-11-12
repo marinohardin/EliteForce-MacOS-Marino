@@ -1141,7 +1141,7 @@ static void fetch_worker( void *u )
 			if ( f->publicIP[0] )
 				lc_strlcpy( own, f->publicIP, sizeof( own ) );
 			else {
-				for ( i = 0; i < 20 && !f->cancel && !lc_public_address( ); i++ )
+				for ( i = 0; i < 20 && !f->cancel && !lc_public_address( ) && lc_public_address_pending( ); i++ )
 					lc_sleep_ms( 50 );
 				if ( lc_public_address( ) )
 					lc_strlcpy( own, lc_public_address( ), sizeof( own ) );
@@ -1283,6 +1283,12 @@ static void reap_fetches( lc_browser *b, int all )
 			if ( all )
 				f->cancel = 1;
 			*pp = f->next;
+			{
+				int k;
+				for ( k = 0; k < SRC_COUNT; k++ )
+					if ( b->src[k].cur == f )
+						b->src[k].cur = NULL;
+			}
 			if ( f->thr )
 				lc_thread_join( f->thr );
 			free( f );
