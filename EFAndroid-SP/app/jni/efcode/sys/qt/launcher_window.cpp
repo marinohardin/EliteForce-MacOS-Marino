@@ -78,6 +78,8 @@ LauncherWindow::LauncherWindow( bool hostOnly ) : QDialog( nullptr, Qt::Window |
 	const QRect avail = QGuiApplication::primaryScreen() ? QGuiApplication::primaryScreen()->availableGeometry()
 		: QRect( 0, 0, 1920, 1080 );
 	lc_gfx_load( B( m_homeBase ).constData(), m_mode != LC_MODE_SP, avail.width(), avail.height(), &m_gfx, &m_fromConfig );
+	if ( deck() && !m_fromConfig )
+		m_gfx.fullscreen = 1;
 
 	/* cMod values, player name */
 	char path[LC_MAX_PATH];
@@ -1066,6 +1068,41 @@ void LauncherWindow::doPlay()
 	if ( !argv ) {
 		alert( this, Critical, "The game couldn't be started.", "The launcher couldn't build the game's command line." );
 		return;
+	}
+	/* Steam Deck / EF_JOYSTICK (what AppRun does for the game): enable the pad, and on the first run
+	   of each mode apply deck.cfg's controller bindings once */
+	QList<QByteArray> extra;
+	if ( deck() || lc_env( "EF_JOYSTICK" ) ) {
+		extra << "+set" << "in_joystick" << "1";
+		const QString marker = U( lc_homepath() ) + ( m_mode == 0 ? "/.deck-applied-sp" : "/.deck-applied-hm" );
+		char cfg[LC_MAX_PATH] = "";
+		lc_path_join( cfg, sizeof cfg, lc_exe_dir(), "../share/eliteforce-marino/deck.cfg" );
+		if ( deck() && !lc_is_file( B( marker ).constData() ) && lc_is_file( cfg ) ) {
+			char dst[LC_MAX_PATH];
+			lc_path_join( dst, sizeof dst, lc_homebase(), "deck.cfg" );
+			lc_mkdir_p( lc_homebase() );
+			if ( !lc_is_file( dst ) ) {
+				size_t n = 0;
+				char *data = lc_read_file( cfg, &n );
+				if ( data ) {
+					lc_write_file_atomic( dst, data, n );
+					free( data );
+				}
+			}
+			lc_write_file_atomic( B( marker ).constData(), "", 0 );
+			extra << "+exec" << "deck.cfg";
+		}
+	}
+	if ( !extra.isEmpty() ) {
+		char **nv = static_cast<char **>( calloc( size_t( argc + extra.size() + 1 ), sizeof( char * ) ) );
+		int k = 0;
+		nv[k++] = argv[0];
+		for ( const QByteArray &e : extra )
+			nv[k++] = strdup( e.constData() );
+		for ( int i = 1; i < argc; ++i )
+			nv[k++] = argv[i];
+		argv = nv;		/* leaks the old vector: the process is about to exec or quit */
+		argc = k;
 	}
 	log( "Launcher: " + maskedArgs( argv, argc, m_joinPassword ) );
 
