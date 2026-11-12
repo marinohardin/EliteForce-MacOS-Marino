@@ -24,7 +24,11 @@ extern "C" {
 #define LC_COOP_PROTOCOL	6
 
 typedef struct {
-	char status[12];			/* "ok", "bad" (address problem), "noanswer", "error" */
+	/* "ok" (a co-op game of this version answered), "mismatch" (answered, other co-op/app version:
+	   `error` has the sentence, `info` is filled), "noanswer" (silence), "error" (silence and the
+	   send failed: show `error` like the no-answer text), "bad" (address problem: `error`).
+	   The sheet's found / mismatch / none / bad of §6.1 map to ok / mismatch / noanswer+error / bad. */
+	char status[12];
 	char address[64];			/* normalized a.b.c.d:port */
 	char error[512];			/* the sentence to show (§6.4) */
 	char info[1024];			/* the coopInfoResponse infostring */
