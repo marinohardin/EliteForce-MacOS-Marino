@@ -71,14 +71,12 @@ endif()
 add_library(eflauncher STATIC ${LC_SOURCES})
 target_include_directories(eflauncher PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 set_target_properties(eflauncher PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
-<<<<<<< HEAD
 target_compile_definitions(eflauncher PUBLIC LC_HAVE_GOG=${LC_HAVE_GOG})
 if(LC_HAVE_GOG)
   target_link_libraries(eflauncher PUBLIC ${LC_LZMA_LIBRARY})
-=======
+endif()
 if(DEFINED EF_APP_VERSION)
   target_compile_definitions(eflauncher PRIVATE EF_APP_VERSION="${EF_APP_VERSION}")
->>>>>>> 1_4_0/xplat-launcher-core-b
 endif()
 if(DEFINED EF_HOMEPATH_NAME)
   target_compile_definitions(eflauncher PUBLIC EF_HOMEPATH_NAME="${EF_HOMEPATH_NAME}")
