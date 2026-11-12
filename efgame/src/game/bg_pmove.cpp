@@ -1288,7 +1288,7 @@ static void PM_SetWaterLevel( void ) {
 		cont = pm->pointcontents (point, pm->ps->clientNum );
 		if ( cont & (MASK_WATER|CONTENTS_LADDER) ) 
 		{
-			if ( Q_stricmp( "biohulk", pm->gent->NPC_type ) != 0 )
+			if ( !pm->gent || !pm->gent->NPC_type || Q_stricmp( "biohulk", pm->gent->NPC_type ) != 0 )
 			{//special hack for biohulk- they're never waist-high in water
 				pm->waterlevel = 2;
 			}

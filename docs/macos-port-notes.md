@@ -1041,3 +1041,13 @@ captured the launcher and the game window.
 
 Regression harness (in background mode): all five scenarios identical to a baseline recorded at
 2e80964 before the change.
+
+## SP: no crash on a ladder or in water while the player is predicted (2026-11-12)
+
+With `timescale` below 1 the SP cgame predicts the player itself (`CG_PredictPlayerState`) with no
+game entity (`cg_pmove.gent = NULL`). `PM_SetWaterLevel` then read `pm->gent->NPC_type` (the biohulk
+check) as soon as the player was waist-deep on a ladder or in water, and the game closed. A missing
+entity (or NPC type) now counts as "not a biohulk", so the result is the same wherever it didn't
+crash before. Reproduced on borg1 (`timescale 0.5`, `setviewpos 371 571 100 0` into the ladder):
+SIGNAL 11 in `PM_SetWaterLevel` before, climbs normally after. Regression harness: all five
+scenarios identical to a baseline recorded at 4dd6eac.
