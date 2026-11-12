@@ -49,6 +49,8 @@ void lc_server_settings_save(const lc_server_settings *s, lc_store *st);
 
 /* ---- pk3 / map catalog (3) ---- */
 typedef struct { char name[64]; unsigned method, csize, usize, offset; } lc_zip_entry;
+/* raw inflate (RFC 1951), self-contained; returns bytes written or -1 */
+long lc_inflate_raw(const unsigned char *in, size_t inLen, unsigned char *out, size_t outLen);
 int  lc_zip_list(const char *path, int (*want)(const char *lowerName, void *u), void *u,
                   lc_zip_entry **out, int *count);          /* free with free() */
 unsigned char *lc_zip_read(const char *path, const lc_zip_entry *e, size_t *len);

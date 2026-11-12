@@ -8,11 +8,20 @@
 
 set(LC_SOURCES
   ${CMAKE_CURRENT_LIST_DIR}/lc_common.c
+  # core-b: servers, queries, hosting, router port mapping, co-op
+  ${CMAKE_CURRENT_LIST_DIR}/lc_server.c
+  ${CMAKE_CURRENT_LIST_DIR}/lc_net.c
+  ${CMAKE_CURRENT_LIST_DIR}/lc_host.c
+  ${CMAKE_CURRENT_LIST_DIR}/lc_nat.c
+  ${CMAKE_CURRENT_LIST_DIR}/lc_coop.c
 )
 
 add_library(eflauncher STATIC ${LC_SOURCES})
 target_include_directories(eflauncher PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 set_target_properties(eflauncher PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+if(DEFINED EF_APP_VERSION)
+  target_compile_definitions(eflauncher PRIVATE EF_APP_VERSION="${EF_APP_VERSION}")
+endif()
 if(DEFINED EF_HOMEPATH_NAME)
   target_compile_definitions(eflauncher PUBLIC EF_HOMEPATH_NAME="${EF_HOMEPATH_NAME}")
 endif()
