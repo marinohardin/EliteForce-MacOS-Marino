@@ -1283,6 +1283,12 @@ static void reap_fetches( lc_browser *b, int all )
 			if ( all )
 				f->cancel = 1;
 			*pp = f->next;
+			{
+				int k;
+				for ( k = 0; k < SRC_COUNT; k++ )
+					if ( b->src[k].cur == f )
+						b->src[k].cur = NULL;
+			}
 			if ( f->thr )
 				lc_thread_join( f->thr );
 			free( f );

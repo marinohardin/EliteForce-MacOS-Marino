@@ -27,3 +27,8 @@ target_include_directories(test_coop_compat PRIVATE ${EFCODE}/sys ${ZL})
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(test_coop_compat PRIVATE -w)
 endif()
+
+# a manual check, not a ctest test: the real dedicated server through lc_proc_spawn
+add_executable(check_dedicated ${CMAKE_CURRENT_LIST_DIR}/check_dedicated.c)
+target_link_libraries(check_dedicated PRIVATE eflauncher)
+target_include_directories(check_dedicated PRIVATE ${CMAKE_CURRENT_LIST_DIR})
