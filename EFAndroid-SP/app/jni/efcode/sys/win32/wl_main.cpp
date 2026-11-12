@@ -265,6 +265,14 @@ struct Launcher : Wnd {
 		setTooltip( hwnd, ctl( IDC_BROWSE ), "See the games on your network and the internet, and join one" );
 		button( MX + 2 * ( cw + 10 ) + 14, by, 76, 22, "Config\xE2\x80\xA6", IDC_CONFIG, false, 12 );
 		setTooltip( hwnd, ctl( IDC_CONFIG ), "Maps, game type, bots and the server's name, password and network" );
+		/* the buttons sit on the cards: put each just above its card in the Z order (siblings created
+		   earlier are on top, so the card would take the click and paint over the button) */
+		{ const int bids[3] = { IDC_COOP, IDC_BROWSE, IDC_CONFIG };
+		  for ( int i = 0; i < 3; i++ ) {
+			HWND bt = ctl( bids[i] ); if ( !bt ) continue;
+			HWND prev = GetWindow( cards[i], GW_HWNDPREV );
+			SetWindowPos( bt, prev ? prev : HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
+		  } }
 		y += chh + 14;
 
 		/* graphics / server group */

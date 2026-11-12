@@ -1085,7 +1085,7 @@ void segSetItems( HWND seg, const std::vector<str> &items, const std::vector<str
 HWND mkCard( HWND p, int x, int y, int w, int h, int id, int glyph, const char *title, const char *detail )
 {
 	registerClasses( );
-	HWND c = CreateWindowExW( 0, L"EFCard", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, S( x ), S( y ), S( w ), S( h ), p, (HMENU)(INT_PTR)id, GetModuleHandleW( 0 ), 0 );
+	HWND c = CreateWindowExW( 0, L"EFCard", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS, S( x ), S( y ), S( w ), S( h ), p, (HMENU)(INT_PTR)id, GetModuleHandleW( 0 ), 0 );
 	CardData *d = (CardData *)GetWindowLongPtrW( c, GWLP_USERDATA );
 	d->glyph = glyph; d->title = W( title ); d->detail = W( detail );
 	return c;
