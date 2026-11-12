@@ -82,7 +82,7 @@ static int ValidAddress( const char *a )
 			return 0;
 		i++;
 	} else {
-		while ( a[i] && ( isalnum( (unsigned char)a[i] ) && (unsigned char)a[i] < 128 || a[i] == '.' || a[i] == '-' ) )
+		while ( a[i] && ( ( isalnum( (unsigned char)a[i] ) && (unsigned char)a[i] < 128 ) || a[i] == '.' || a[i] == '-' ) )
 			i++;
 		if ( i == 0 )
 			return 0;
