@@ -12,10 +12,12 @@
 #
 # The AppImage bundles only what the host can't be trusted to have: the engine, the
 # game modules, SDL3 + sdl2-compat and FFmpeg's libav*/libsw* (from build-deps/linux and
-# build-ffmpeg/linux, see linux/build-deps.sh and linux/build-ffmpeg.sh). The X11 / Wayland /
-# audio libraries are dlopened by SDL and the Vulkan loader (libvulkan.so.1) by the
-# renderer, all from the host. A final audit fails the build when any ELF file needs a shared
-# library that is neither bundled nor on the host allowlist below.
+# build-ffmpeg/linux, see linux/build-deps.sh and linux/build-ffmpeg.sh), and for the launcher
+# (ef-launcher, Qt 6, src efcode/sys/qt) Qt's libraries and plugins (build-deps/linux/qt, see
+# linux/build-qt.sh) with the xcb helper libraries hosts don't reliably have (libxcb-cursor0,
+# libxkbcommon-x11, ...). The X11 / Wayland / audio libraries are dlopened by SDL and the Vulkan
+# loader (libvulkan.so.1) by the renderer, all from the host. A final audit fails the build when
+# any ELF file needs a shared library that is neither bundled nor on the host allowlist below.
 #
 # Environment: VERSION (default EF_APP_VERSION from the engine's CMakeLists), CMAKE_PRESET
 # (linux-x64), CMOD_PAK (default the newest macos/cmod/pakcmod-release-*.pk3), SDK_IMAGE.
@@ -39,6 +41,9 @@ PRESET="${CMAKE_PRESET:-linux-x64}"
 BUILD="$ROOT/build/$PRESET"
 DEPS="$ROOT/build-deps/linux/install"
 FFMPEG="$ROOT/build-ffmpeg/linux/install"
+QT="$ROOT/build-deps/linux/qt"				# Qt 6 (linux/build-qt.sh); without it the AppImage has no launcher
+HAVE_QT=0
+[ -f "$QT/lib/cmake/Qt6Widgets/Qt6WidgetsConfig.cmake" ] && HAVE_QT=1
 DIST="$ROOT/dist"
 cmake_version() {
 	for f in "$ROOT/CMakeLists.txt" "$ROOT/EFAndroid-SP/app/jni/macos/CMakeLists.txt"; do
@@ -55,6 +60,15 @@ TOOLS="$ROOT/build/appimage/tools"
 # libstdc++ / libgcc_s are tolerated with a warning: the build should link them statically.
 HOST_OK='ld-linux-x86-64.so.2 libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1 libresolv.so.2 libutil.so.1'
 HOST_WARN='libstdc++.so.6 libgcc_s.so.1'
+# What Qt's libraries and plugins may take from the host: ubiquitous desktop libraries (X11 core,
+# fontconfig / freetype, glib, dbus, wayland client) and, for the optional GTK platform theme plugin
+# only, GTK itself (the plugin simply doesn't load on a host without GTK 3).
+HOST_OK_QT='libX11.so.6 libxcb.so.1 libXau.so.6 libXdmcp.so.6 libSM.so.6 libICE.so.6 libfontconfig.so.1 libfreetype.so.6 libz.so.1 libglib-2.0.so.0 libgobject-2.0.so.0 libgio-2.0.so.0 libgmodule-2.0.so.0 libdbus-1.so.3 libwayland-client.so.0 libwayland-cursor.so.0 libexpat.so.1 libuuid.so.1 libpcre2-8.so.0 libffi.so.7 libmount.so.1 libselinux.so.1'
+HOST_OK_GTK='libgtk-3.so.0 libgdk-3.so.0 libpango-1.0.so.0 libgdk_pixbuf-2.0.so.0 libcairo.so.2 libatk-1.0.so.0 libpangocairo-1.0.so.0'
+# helper libraries Qt's xcb platform plugin needs that hosts don't reliably have, copied from the build
+# container (the Steam Runtime SDK's own libraries, so the glibc requirement is the same)
+SYS_BUNDLE='libxcb-cursor.so.0 libxcb-icccm.so.4 libxcb-image.so.0 libxcb-keysyms.so.1 libxcb-randr.so.0 libxcb-render.so.0 libxcb-render-util.so.0 libxcb-shape.so.0 libxcb-shm.so.0 libxcb-sync.so.1 libxcb-xfixes.so.0 libxcb-xkb.so.1 libxcb-util.so.1 libxcb-xinerama.so.0 libxkbcommon.so.0 libxkbcommon-x11.so.0 libX11-xcb.so.1 libbrotlidec.so.1 libbrotlicommon.so.1'
+SYS_LIBDIR=/usr/lib/x86_64-linux-gnu
 GLIBC_MAX="${GLIBC_MAX:-2.31}"
 
 APPIMAGETOOL_VERSION=1.9.1
@@ -69,6 +83,11 @@ fi
 for f in efsp libefgame.so libefui.so; do
 	[ -f "$BUILD/$f" ] || { echo "$BUILD/$f is missing (build it first; modules must sit next to efsp)" >&2; exit 1; }
 done
+if [ "$HAVE_QT" = 1 ]; then
+	[ -f "$BUILD/ef-launcher" ] || { echo "$BUILD/ef-launcher is missing (Qt is in $QT: configure with the linux-x64 preset again)" >&2; exit 1; }
+else
+	echo "Note: no Qt in $QT (linux/build-qt.sh): building the AppImage without the launcher"
+fi
 # the sniper SDK image has no patchelf; install it when we are root in a container
 if ! command -v patchelf >/dev/null 2>&1 && [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null 2>&1; then
 	apt-get update -qq >/dev/null && apt-get install -y -qq patchelf >/dev/null
@@ -89,6 +108,10 @@ cp "$BUILD/libefgame.so" "$BUILD/libefui.so" "$APPDIR/usr/lib/"
 ln -s ../lib/libefgame.so "$APPDIR/usr/bin/libefgame.so"
 ln -s ../lib/libefui.so "$APPDIR/usr/bin/libefui.so"
 strip --strip-unneeded "$APPDIR/usr/bin/efsp" "$APPDIR/usr/lib/libefgame.so" "$APPDIR/usr/lib/libefui.so" 2>/dev/null || true
+if [ "$HAVE_QT" = 1 ]; then
+	cp "$BUILD/ef-launcher" "$APPDIR/usr/bin/ef-launcher"
+	strip --strip-unneeded "$APPDIR/usr/bin/ef-launcher" 2>/dev/null || true
+fi
 
 # Copy a NEEDED library from our own dependency prefixes (not the host) into usr/lib,
 # recursively. SDL3 is dlopened by sdl2-compat by name, so it is copied explicitly.
@@ -96,7 +119,7 @@ needed() { readelf -d "$1" 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p';
 bundle() {
 	for lib in $(needed "$1"); do
 		[ -e "$APPDIR/usr/lib/$lib" ] && continue
-		for dir in "$DEPS/lib" "$FFMPEG/lib"; do
+		for dir in "$DEPS/lib" "$FFMPEG/lib" "$QT/lib"; do
 			if [ -e "$dir/$lib" ]; then
 				cp -L "$dir/$lib" "$APPDIR/usr/lib/$lib"
 				chmod u+w "$APPDIR/usr/lib/$lib"
@@ -112,9 +135,53 @@ for lib in libSDL3.so.0; do
 	[ -e "$APPDIR/usr/lib/$lib" ] || { cp -L "$DEPS/lib/$lib" "$APPDIR/usr/lib/$lib"; chmod u+w "$APPDIR/usr/lib/$lib"; bundle "$APPDIR/usr/lib/$lib"; }
 done
 
+# ---- the launcher: Qt libraries, plugins, qt.conf ----------------------------------------------
+if [ "$HAVE_QT" = 1 ]; then
+	bundle "$APPDIR/usr/bin/ef-launcher"
+	# plugins: platforms (xcb for X11 / XWayland / gamescope, wayland, offscreen for tests), platform
+	# themes (follow GNOME / KDE: dark mode, accent), input methods, Wayland shell integration
+	for pl in platforms/libqxcb.so platforms/libqwayland-generic.so platforms/libqoffscreen.so \
+		platformthemes/libqgtk3.so platformthemes/libqxdgdesktopportal.so \
+		platforminputcontexts/libcomposeplatforminputcontextplugin.so platforminputcontexts/libibusplatforminputcontextplugin.so \
+		imageformats/libqgif.so imageformats/libqico.so; do
+		[ -f "$QT/plugins/$pl" ] || { echo "$QT/plugins/$pl is missing (linux/build-qt.sh)" >&2; exit 1; }
+		mkdir -p "$APPDIR/usr/plugins/$(dirname "$pl")"
+		cp "$QT/plugins/$pl" "$APPDIR/usr/plugins/$pl"
+	done
+	for d in wayland-shell-integration wayland-decoration-client; do
+		mkdir -p "$APPDIR/usr/plugins/$d"
+		cp "$QT/plugins/$d"/*.so "$APPDIR/usr/plugins/$d/"
+	done
+	chmod -R u+w "$APPDIR/usr/plugins"
+	# libraries the plugins need from our prefixes (Qt's own), then the xcb helpers from the container
+	for f in "$APPDIR"/usr/plugins/*/*.so; do bundle "$f"; done
+	for lib in $SYS_BUNDLE; do
+		[ -e "$APPDIR/usr/lib/$lib" ] && continue
+		if [ -e "$SYS_LIBDIR/$lib" ]; then
+			cp -L "$SYS_LIBDIR/$lib" "$APPDIR/usr/lib/$lib"
+			chmod u+w "$APPDIR/usr/lib/$lib"
+		else
+			echo "Note: $SYS_LIBDIR/$lib not found: not bundled" >&2
+		fi
+	done
+	# qt.conf next to the binary: plugins and libraries inside the AppImage, whatever the host has
+	cat > "$APPDIR/usr/bin/qt.conf" <<'EOF_QTCONF'
+[Paths]
+Prefix = ..
+Plugins = plugins
+Libraries = lib
+EOF_QTCONF
+	for pf in "$APPDIR"/usr/plugins/*/*.so; do
+		strip --strip-unneeded "$pf" 2>/dev/null || true
+		patchelf --force-rpath --set-rpath '$ORIGIN/../../lib' "$pf"
+	done
+	strip --strip-unneeded "$APPDIR"/usr/lib/libQt6*.so.* 2>/dev/null || true
+fi
+
 # rpath $ORIGIN/../lib for the binary, $ORIGIN for the libraries. DT_RPATH (not RUNPATH),
 # so it also applies to what sdl2-compat dlopens (libSDL3) and to transitive dependencies.
 patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$APPDIR/usr/bin/efsp"
+[ "$HAVE_QT" = 1 ] && patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "$APPDIR/usr/bin/ef-launcher"
 for f in "$APPDIR"/usr/lib/*.so*; do
 	[ -L "$f" ] || patchelf --force-rpath --set-rpath '$ORIGIN' "$f"
 done
@@ -152,6 +219,20 @@ for f in "$ROOT/build-deps/linux"/sdl2-compat-*/LICENSE.txt "$ROOT/build-deps/sd
 done
 [ -f "$LIC/SDL3-zlib-LICENSE.txt" ] || echo "Note: SDL's LICENSE.txt not found under build-deps; the zlib license text is not in the AppImage" >&2
 
+if [ "$HAVE_QT" = 1 ]; then
+	# Qt is LGPL-3.0: the license texts and the note on where the source is (THIRD_PARTY_LICENSES.md)
+	cp "$ROOT/linux/licenses/Qt-LGPL-3.0.txt" "$ROOT/linux/licenses/GPL-3.0.txt" "$LIC/"
+	QT_VERSION="$(sed -n 's/^QT_VERSION="\{0,1\}\([0-9.]*\)"\{0,1\}.*/\1/p' "$ROOT/deps/versions.sh" | head -1)"
+	cat > "$LIC/Qt-README.txt" <<EOF_QT
+ef-launcher (the launcher window) uses Qt ${QT_VERSION:-6} (QtCore, QtGui, QtWidgets, QtNetwork, QtDBus,
+QtWaylandClient and the xcb / Wayland platform plugins), licensed under the GNU LGPL 3.0 (Qt-LGPL-3.0.txt, which
+refers to the GPL 3.0 in GPL-3.0.txt). Qt is unmodified: it is built from the official source tarballs
+https://download.qt.io/archive/qt/${QT_VERSION%.*}/${QT_VERSION:-6}/submodules/qtbase-everywhere-src-${QT_VERSION:-6}.tar.xz and
+qtwayland-everywhere-src-${QT_VERSION:-6}.tar.xz by linux/build-qt.sh in the project's source repository, which holds the exact
+configure options. The libraries are shared (usr/lib/libQt6*.so*, usr/plugins): you may replace them with your own
+build of the same Qt version.
+EOF_QT
+fi
 cp "$ROOT/linux/deck.cfg" "$APPDIR/usr/share/eliteforce-marino/deck.cfg"
 cp "$ROOT/linux/AppRun" "$APPDIR/AppRun"
 chmod 755 "$APPDIR/AppRun"
@@ -170,11 +251,20 @@ command -v desktop-file-validate >/dev/null 2>&1 && desktop-file-validate "$APPD
 echo "Auditing shared-library dependencies"
 bad=0
 glibc_ver_gt() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$2" ]; }
-for f in "$APPDIR/usr/bin/efsp" "$APPDIR"/usr/lib/*.so*; do
+AUDIT_FILES="$APPDIR/usr/bin/efsp $APPDIR/usr/bin/ef-launcher $(ls "$APPDIR"/usr/lib/*.so* "$APPDIR"/usr/plugins/*/*.so 2>/dev/null | tr '\n' ' ')"
+for f in $AUDIT_FILES; do
 	[ -L "$f" ] && continue
+	[ -f "$f" ] || continue
+	isqt=0
+	case "$f" in */libQt6*|*/usr/plugins/*|*/ef-launcher) isqt=1 ;; esac
+	case " $SYS_BUNDLE " in *" $(basename "$f") "*) isqt=1 ;; esac
 	for lib in $(needed "$f"); do
 		[ -e "$APPDIR/usr/lib/$lib" ] && continue
 		case " $HOST_OK " in *" $lib "*) continue ;; esac
+		if [ "$isqt" = 1 ]; then
+			case " $HOST_OK_QT " in *" $lib "*) continue ;; esac
+			case "$f" in */libqgtk3.so) case " $HOST_OK_GTK " in *" $lib "*) continue ;; esac ;; esac
+		fi
 		case " $HOST_WARN " in
 			*" $lib "*) echo "warning: $(basename "$f") needs host $lib (link libstdc++/libgcc statically)" >&2; continue ;;
 		esac
@@ -190,11 +280,14 @@ for f in "$APPDIR/usr/bin/efsp" "$APPDIR"/usr/lib/*.so*; do
 done
 # every NEEDED the dynamic loader can see must resolve (catches a missing transitive lib)
 if command -v ldd >/dev/null 2>&1; then
-	if ldd "$APPDIR/usr/bin/efsp" 2>&1 | grep -q 'not found'; then
-		ldd "$APPDIR/usr/bin/efsp" 2>&1 | grep 'not found' >&2
-		echo "error: ldd reports unresolved libraries for efsp" >&2
-		bad=1
-	fi
+	for exe in efsp ef-launcher; do
+		[ -f "$APPDIR/usr/bin/$exe" ] || continue
+		if ldd "$APPDIR/usr/bin/$exe" 2>&1 | grep -q 'not found'; then
+			ldd "$APPDIR/usr/bin/$exe" 2>&1 | grep 'not found' >&2
+			echo "error: ldd reports unresolved libraries for $exe" >&2
+			bad=1
+		fi
+	done
 fi
 [ "$bad" = 0 ] || { echo "dependency audit failed" >&2; exit 1; }
 
