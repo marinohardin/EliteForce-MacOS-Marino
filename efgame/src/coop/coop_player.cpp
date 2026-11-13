@@ -36,6 +36,7 @@ static gclient_t	coop_p2Client;
 #define COOP_FOLLOW_TELEPORT	1024	// follow: further than this, jump to P1
 #define COOP_STUCK_FRAMES		60		// follow: 3 s without progress, jump to P1
 #define COOP_CROWDED_TIME		3000	// no free spot next to P1 for this long: spawn P2 on P1's spot
+#define COOP_STUCK_CROUCH		30		// follow: 1.5 s without progress, crouch instead of hopping
 
 gentity_t *COOP_P2( void )
 {
@@ -529,7 +530,11 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 			if ( DotProduct( moved, dir ) < dist )	// less than 1 unit toward P1 this frame
 			{
 				coop_p2.stuckFrames++;
-				if ( coop_p2.stuckFrames % 10 == 5 )
+				if ( coop_p2.stuckFrames > COOP_STUCK_CROUCH )
+				{
+					cmd->upmove = -127;	// hopping did not help: try to crouch under it
+				}
+				else if ( coop_p2.stuckFrames % 10 == 5 )
 				{
 					cmd->upmove = 127;	// try to hop over it
 				}
@@ -551,6 +556,21 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 		else
 		{
 			coop_p2.stuckFrames = 0;
+		}
+		if ( p1->client->ps.pm_flags & PMF_DUCKED )
+		{
+			cmd->upmove = -127;	// P1 crouches (a vent, a low gap): so does P2
+		}
+		// on a ladder: climb toward P1 (ladder movement takes the vertical part from upmove)
+		if ( ( ent->watertype & CONTENTS_LADDER ) && ent->waterlevel && ( dz > 32 || dz < -32 ) )
+		{
+			cmd->forwardmove = 0;
+			if ( dist > 16 && !coop_p2.haveAngles )
+			{
+				view[YAW] = vectoyaw( dir );	// toward P1, which is toward the ladder's top or foot
+				cmd->forwardmove = 64;
+			}
+			cmd->upmove = dz > 0 ? 127 : -127;
 		}
 	}
 	VectorCopy( ent->currentOrigin, coop_p2.lastOrigin );
