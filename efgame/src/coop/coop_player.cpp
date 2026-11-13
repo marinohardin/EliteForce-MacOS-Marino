@@ -59,7 +59,7 @@ COOP_FindSpotNear
 
 A clear standing spot next to P1 that P1 could walk to in a straight line (so never through a
 wall; NPCs on the way do not count), with floor under it. Behind P1 first, then the sides, then in
-front, then further out.
+front, then further out. When P1 crouches (a vent, a crawlspace) a crouching spot will do.
 */
 static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out );
 
@@ -88,9 +88,15 @@ static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out )
 		{ -64, 0 }, { 0, 64 }, { 0, -64 }, { -64, 64 }, { -64, -64 }, { 64, 0 }, { 64, 64 }, { 64, -64 },
 		{ -128, 0 }, { 0, 128 }, { 0, -128 }, { 128, 0 }, { -96, 96 }, { -96, -96 }, { 96, 96 }, { 96, -96 },
 	};
-	vec3_t	yawOnly, forward, right, start, spot, below;
+	vec3_t	yawOnly, forward, right, start, spot, below, maxs;
 	trace_t	tr;
 	int		ignore = p1->s.number;
+
+	VectorCopy( playerMaxs, maxs );
+	if ( p1->client && ( p1->client->ps.pm_flags & PMF_DUCKED ) && p1->client->crouchheight > 0 )
+	{
+		maxs[2] = p1->client->crouchheight;
+	}
 
 	VectorSet( yawOnly, 0, p1->client ? p1->client->ps.viewangles[YAW] : p1->currentAngles[YAW], 0 );
 	AngleVectors( yawOnly, forward, right, NULL );
@@ -102,20 +108,20 @@ static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out )
 		VectorMA( spot, offsets[i][1], right, spot );
 
 		// the way there: walls only (the squad standing around P1 is not a wall; P1 could step past)
-		gi.trace( &tr, start, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID & ~CONTENTS_BODY );
+		gi.trace( &tr, start, playerMins, maxs, spot, ignore, MASK_PLAYERSOLID & ~CONTENTS_BODY );
 		if ( tr.startsolid || tr.allsolid || tr.fraction < 1.0f )
 		{
 			continue;
 		}
 		// the spot itself: free of bodies too
-		gi.trace( &tr, spot, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID );
+		gi.trace( &tr, spot, playerMins, maxs, spot, ignore, MASK_PLAYERSOLID );
 		if ( tr.startsolid || tr.allsolid )
 		{
 			continue;
 		}
 		VectorCopy( spot, below );
 		below[2] -= 96;
-		gi.trace( &tr, spot, playerMins, playerMaxs, below, ignore, MASK_PLAYERSOLID );
+		gi.trace( &tr, spot, playerMins, maxs, below, ignore, MASK_PLAYERSOLID );
 		if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f )
 		{
 			continue;	// no floor (ledge, pit)
@@ -131,6 +137,14 @@ void COOP_PlaceP2( gentity_t *ent, const vec3_t org )
 	vec3_t	o;
 
 	VectorCopy( org, o );
+	// no room to stand here (a crawlspace): arrive crouching, and stay so until there is room
+	trace_t	tr;
+	gi.trace( &tr, o, playerMins, playerMaxs, o, ent->s.number, MASK_PLAYERSOLID );
+	if ( ( tr.startsolid || tr.allsolid ) && ent->client->crouchheight > 0 )
+	{
+		ent->client->ps.pm_flags |= PMF_DUCKED;
+		ent->maxs[2] = ent->client->crouchheight;
+	}
 	G_SetOrigin( ent, o );
 	VectorCopy( o, ent->client->ps.origin );
 	VectorClear( ent->client->ps.velocity );
