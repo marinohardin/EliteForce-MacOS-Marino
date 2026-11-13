@@ -1304,3 +1304,40 @@ check. The flag is defined in `renderercommon/tr_types.h` (ELITEFORCE only); not
   regress.sh check coop-m2-base` ALL IDENTICAL (the harness hashes game state, not pixels).
 - The issue had been filed as a shader `animMap` problem; the shader animations were fine, it was
   the model frames.
+
+## Co-op: pak check by name, Expansion Pack only warns (2026-11-12, branch `1_4_0/coop-m1`)
+The first test between two Macs was refused ("host: 3 single-player .pk3 files, you: 5"): the guest
+had pak3 (Expansion Pack) and `tfgpak.pk3`, which only holds Holomatch text tables and QVMs but has
+`ext_data/` files, so it counted as a pack that changes single player (the earlier pack signature rule, above).
+- Only the game's own paks count now, by checksum (`FS_CoopCorePakIndex`, the `pak_checksums`
+  table): `FS_CoopPaks()` lists them as `pak0.pk3:<checksum> ...`. Community packs, Holomatch maps
+  and mods never block co-op.
+- `CoopNet_ComparePaks` (sys_coop_net.c): pak0-pak2 must be the same (else the host refuses);
+  pak3 may differ (a note on both consoles: it replaces the NPC/weapon/item tables, some texts,
+  the tricorder model and two scripts, but the host runs the game, so on the guest it is mostly
+  cosmetic). Its sentences name each pack ("You're missing pak2.pk3 (the host has it).") for the
+  guest's or the host's console; the host's notify line shows them in game.
+- Co-op protocol 7: the check's answer (`getcoopinfo`), `coopConnect` and `coopAccept` carry
+  `paks`. The Join sheet's Check compares the host's list with this Mac's before connecting: the
+  launcher computes the pack checksums itself from each pk3's central directory
+  (`VSP_PakChecksum`, the CRCs of the non-empty files through `Com_BlockChecksum`, as
+  `FS_LoadZipFile`), over the homepath's baseEF and the game's BaseEF. pak0-pak2 differ: a red
+  refusal naming the packs, no Connect. Only pak3: a yellow warning and the button reads
+  **Join Anyway** (the engine never refuses for pak3).
+- Test hook `VOYAGERSP_TEST_COOP_JOIN=1` (with `..._COOP_QUERY`): after the Check, press
+  Connect/Join Anyway when enabled.
+- Tested with two copies on one Mac (scratch homes, symlinks to the real paks): pak0-2 vs pak0-2 +
+  tfgpak: joins; pak0-3 + tfgpak guest vs pak0-2 host: Check warns, Join Anyway joins, notes on
+  both; guest without pak2 (Check) and with a non-original pak2 (engine): refused naming pak2;
+  host with a non-original pak2: "The host is missing pak2.pk3".
+
+## Launcher fits a 13" MacBook Air (2026-11-12)
+The launcher was 964 points tall and not resizable, so on a 1280x800 / 1440x900 screen Quit and
+Play were below the Dock. Now the header and mode cards stay at the top and the footer (Quit/Play)
+at the bottom; Graphics/Server, Holomatch and Game Files sit in a scroll view between them. The
+window is resizable in height (from about 520 points up to all of its content; the width stays
+620), opens as tall as its content or the screen's visible part, whichever is smaller, and is kept
+inside the visible part (`fitToScreen`). The Co-op sheet does the same: its name/Host/Join part
+scrolls, the sheet is at most the screen's visible height, and a Check's answer is scrolled into
+view with Connect. Test hook `VOYAGERSP_TEST_LAUNCHER_HEIGHT=<points>` sizes both as if the
+visible screen were that tall (checked at 500, 600 and 700 with `screencapture -l`).

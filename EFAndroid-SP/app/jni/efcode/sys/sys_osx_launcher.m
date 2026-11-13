@@ -40,6 +40,8 @@ Test hooks (environment variables):
                                 quit (or go on with ..._PLAY)
   VOYAGERSP_TEST_LAUNCHER_APPEARANCE=dark|light
   VOYAGERSP_TEST_LAUNCHER_MODE=sp|hm|host     preselect the mode
+  VOYAGERSP_TEST_LAUNCHER_HEIGHT=<points>     size the window as if the screen's
+                                visible part were that tall (a small laptop)
   (Host a Server's hooks are listed in sys_osx_server.m, Co-op…'s in sys_osx_coop.m)
   VOYAGERSP_TEST_LAUNCHER_PRESET=performance|balanced|best
   VOYAGERSP_TEST_LAUNCHER_BRIGHTNESS=standard|plain|contrast|bright|fullbright
@@ -465,6 +467,13 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 @class VSPLauncher;
 
 // A big selectable card for one of the modes.
+// the launcher's scrolling middle: its content starts at the top
+@interface VSPFlippedView : NSView
+@end
+@implementation VSPFlippedView
+- (BOOL)isFlipped	{ return YES; }
+@end
+
 @interface VSPModeCard : NSView
 @property (nonatomic) BOOL selected;
 @property (nonatomic, weak) VSPLauncher *owner;
@@ -476,6 +485,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 @interface VSPLauncher : NSObject <NSWindowDelegate>
 - (void)selectMode: (launchMode_t)mode;
 - (void)play: (id)sender;
+- (void)fitToScreen;
 - (void)addFiles: (id)sender;
 - (void)joinAddress: (NSString *)address password: (NSString *)password;
 - (void)browseServers: (id)sender;
@@ -728,6 +738,7 @@ static NSStackView *HStackOf( NSArray *views )
 			gfx.brightness = (int)i;
 			[self showGraphics];
 		}
+	[self fitToScreen];
 	return self;
 }
 
@@ -755,7 +766,9 @@ static NSStackView *HStackOf( NSArray *views )
 - (void)buildWindow
 {
 	NSView *content;
-	NSStackView *root, *header, *headerText, *cardRow, *folderRow, *folderText, *footer;
+	NSStackView *root, *header, *headerText, *cardRow, *folderRow, *folderText, *footer, *middle;
+	NSScrollView *scroll;
+	NSView *document;
 	NSGridView *grid, *nameGrid, *serverGrid;
 	NSButton *config, *browse;
 	NSImageView *appIcon;
@@ -763,7 +776,8 @@ static NSStackView *HStackOf( NSArray *views )
 	NSButton *quit;
 
 	window = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 620, 600 )
-		styleMask: NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskFullSizeContentView
+		styleMask: NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskFullSizeContentView |
+			NSWindowStyleMaskResizable
 		backing: NSBackingStoreBuffered defer: NO];
 	[window setTitle: @"Elite Force"];
 	[window setTitlebarAppearsTransparent: YES];
@@ -1017,13 +1031,52 @@ static NSStackView *HStackOf( NSArray *views )
 		]];
 		serverGroup = VSP_Group( @"Server", box );
 	}
-	root = [NSStackView stackViewWithViews: @[ header, cardRow, graphicsGroup, serverGroup,
-		VSP_Group( @"Holomatch", nameGrid ), VSP_Group( @"Game Files", folderRow ), footer ]];
+	// The header and the cards stay at the top and Quit/Play at the bottom; the settings between
+	// them scroll when the window is shorter than all of them (a 13" MacBook Air's screen). The
+	// window can be made taller up to all of them, and shorter down to a few rows of them.
+	middle = [NSStackView stackViewWithViews: @[ graphicsGroup, serverGroup,
+		VSP_Group( @"Holomatch", nameGrid ), VSP_Group( @"Game Files", folderRow ) ]];
+	[middle setOrientation: NSUserInterfaceLayoutOrientationVertical];
+	[middle setAlignment: NSLayoutAttributeLeading];
+	[middle setSpacing: 16];
+	[middle setEdgeInsets: NSEdgeInsetsMake( 0, 0, 2, 28 )];	// (right: room for the scroller)
+	[middle setTranslatesAutoresizingMaskIntoConstraints: NO];
+	for( NSView *v in [middle views] )
+		[[v widthAnchor] constraintEqualToAnchor: [middle widthAnchor] constant: -28].active = YES;
+	document = [[VSPFlippedView alloc] init];
+	[document setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[document addSubview: middle];
+	scroll = [[NSScrollView alloc] init];
+	[scroll setHasVerticalScroller: YES];
+	[scroll setAutohidesScrollers: YES];
+	[scroll setDrawsBackground: NO];
+	[scroll setBorderType: NSNoBorder];
+	[scroll setDocumentView: document];
+	[NSLayoutConstraint activateConstraints: @[
+		[[middle leadingAnchor] constraintEqualToAnchor: [document leadingAnchor]],
+		[[middle trailingAnchor] constraintEqualToAnchor: [document trailingAnchor]],
+		[[middle topAnchor] constraintEqualToAnchor: [document topAnchor]],
+		[[middle bottomAnchor] constraintEqualToAnchor: [document bottomAnchor]],
+		[[document leadingAnchor] constraintEqualToAnchor: [[scroll contentView] leadingAnchor]],
+		[[document topAnchor] constraintEqualToAnchor: [[scroll contentView] topAnchor]],
+		[[document widthAnchor] constraintEqualToAnchor: [[scroll contentView] widthAnchor]],
+		// never taller than its content, at least a few rows of it
+		[[scroll heightAnchor] constraintLessThanOrEqualToAnchor: [document heightAnchor]],
+		[[scroll heightAnchor] constraintGreaterThanOrEqualToConstant: 200],
+	]];
+	{
+		// as tall as its content unless the window is made (or placed) shorter
+		NSLayoutConstraint *all = [[scroll heightAnchor] constraintEqualToAnchor: [document heightAnchor]];
+		[all setPriority: NSLayoutPriorityDefaultLow];
+		[all setActive: YES];
+	}
+
+	root = [NSStackView stackViewWithViews: @[ header, cardRow, scroll, footer ]];
 	[root setOrientation: NSUserInterfaceLayoutOrientationVertical];
 	[root setAlignment: NSLayoutAttributeLeading];
 	[root setSpacing: 16];
 	[root setCustomSpacing: 20 afterView: header];
-	[root setCustomSpacing: 20 afterView: [root views][5]];
+	[root setCustomSpacing: 18 afterView: scroll];
 	[root setEdgeInsets: NSEdgeInsetsMake( 30, 28, 20, 28 )];
 	// both take the same room, so the window keeps its size when they swap
 	[[[(NSStackView *)serverGroup views][1] heightAnchor] constraintEqualToAnchor:
@@ -1032,7 +1085,7 @@ static NSStackView *HStackOf( NSArray *views )
 	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
 	[content addSubview: root];
 	for( NSView *v in [root views] )
-		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -56].active = YES;
+		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: v == scroll ? -28 : -56].active = YES;
 	[NSLayoutConstraint activateConstraints: @[
 		[[root leadingAnchor] constraintEqualToAnchor: [content leadingAnchor]],
 		[[root trailingAnchor] constraintEqualToAnchor: [content trailingAnchor]],
@@ -1041,6 +1094,34 @@ static NSStackView *HStackOf( NSArray *views )
 		[[root widthAnchor] constraintEqualToConstant: 620],
 	]];
 	[window setInitialFirstResponder: cards[mode]];
+}
+
+// All of the launcher when the screen has room for it, else as tall as the screen's visible part
+// (below the menu bar, above the Dock); the settings in the middle scroll. Test hook:
+// VOYAGERSP_TEST_LAUNCHER_HEIGHT=<points> pretends the visible part is that tall.
+- (void)fitToScreen
+{
+	NSScreen *screen = [window screen] ?: [NSScreen mainScreen];
+	NSRect visible = [screen visibleFrame], frame;
+	NSSize want;
+
+	if( getenv( "VOYAGERSP_TEST_LAUNCHER_HEIGHT" ) )
+		visible.size.height = atof( getenv( "VOYAGERSP_TEST_LAUNCHER_HEIGHT" ) );
+	[[window contentView] layoutSubtreeIfNeeded];
+	want = [[window contentView] fittingSize];
+	frame = [window frameRectForContentRect: NSMakeRect( 0, 0, want.width, want.height )];
+	if( frame.size.height > visible.size.height )
+		want.height -= frame.size.height - visible.size.height;
+	[window setContentSize: want];
+	frame = [window frame];
+	if( frame.size.height > visible.size.height + 0.5 )
+		LLog( @"Launcher: the window (%.0f points tall) is taller than the screen's %.0f", frame.size.height, visible.size.height );
+	// all of it on the screen: its top below the menu bar, its bottom above the Dock
+	if( NSMaxY( frame ) > NSMaxY( visible ) )
+		frame.origin.y = NSMaxY( visible ) - frame.size.height;
+	if( frame.origin.y < NSMinY( visible ) )
+		frame.origin.y = NSMinY( visible );
+	[window setFrameOrigin: frame.origin];
 }
 
 // Window sizes (points) that fit the screen, plus the configured one.
@@ -2404,6 +2485,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 					[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
 				}
 				[[l window] center];
+				[l fitToScreen];
 				VSP_ActivateApp( );
 				VSP_ShowWindow( [l window] );
 				VSP_KeepBehindWhenModal( [l window] );
