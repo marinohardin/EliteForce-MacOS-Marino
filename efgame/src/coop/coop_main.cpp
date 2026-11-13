@@ -30,6 +30,7 @@ void COOP_Init( void )
 	memset( &coop_p2, 0, sizeof( coop_p2 ) );
 	coop_p2.follow = qtrue;
 	COOP_ReadCarry();
+	COOP_FixesInit();
 	if ( coop_enabled )
 	{
 		gi.Printf( "co-op: on (player 2 is a local puppet)\n" );
@@ -113,10 +114,22 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 	}
 	if ( !Q_stricmp( cmd, "coop_p2" ) )
 	{
-		gi.Printf( "co-op: player 2 = entity %d, health %d, armor %d, weapon %d, origin %s, %s%s%s\n",
+		extern qboolean player_locked;
+		extern bool in_camera;
+		gentity_t *p1 = &g_entities[0];
+		gi.Printf( "co-op: player 2 = entity %d, health %d, armor %d, weapon %d (has 0x%x), origin %s, %s%s%s%s\n",
 			ent->s.number, ent->health, ent->client->ps.stats[STAT_ARMOR], ent->client->ps.weapon,
-			vtos( ent->currentOrigin ), coop_p2.follow ? "following" : "idle",
-			coop_p2.hidden ? ", hidden (camera)" : "", ent->client->ps.pm_type == PM_DEAD ? ", dead" : "" );
+			ent->client->ps.stats[STAT_WEAPONS], vtos( ent->currentOrigin ),
+			coop_p2.guestSteering ? "guest" : ( coop_p2.follow ? "following" : "idle" ),
+			coop_p2.hidden ? ", hidden (camera)" : "", ent->client->ps.pm_type == PM_DEAD ? ", dead" : "",
+			COOP_IsDowned( ent ) ? ", down" : "" );
+		if ( p1->client )
+		{
+			gi.Printf( "co-op: player 1 health %d, weapon %d (has 0x%x), origin %s, distance %.0f%s%s%s\n",
+				p1->health, p1->client->ps.weapon, p1->client->ps.stats[STAT_WEAPONS], vtos( p1->currentOrigin ),
+				Distance( p1->currentOrigin, ent->currentOrigin ), player_locked ? ", locked" : "",
+				in_camera ? ", camera" : "", COOP_IsDowned( p1 ) ? ", down" : "" );
+		}
 	}
 	else if ( !Q_stricmp( cmd, "coop_p2_move" ) )
 	{

@@ -529,6 +529,7 @@ void COOP_RunFrame( void )
 		coop_p2.rejoinAt = 0;
 		COOP_CameraRejoin( ent );
 	}
+	COOP_FixesFrame();
 	COOP_UpdatePassable( ent );
 	COOP_BuildCmd( ent, &cmd );
 	ClientThink( ent->s.number, &cmd );

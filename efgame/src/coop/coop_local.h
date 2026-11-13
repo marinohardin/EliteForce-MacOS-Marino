@@ -69,5 +69,7 @@ void		COOP_DownFrame( void );
 qboolean	COOP_GameIsOver( void );
 void		COOP_ListNPCs( void );
 void		COOP_ReplicaInit( void );					// coop_replica.cpp				// a guest is connected, steering or not
+void		COOP_FixesInit( void );						// coop_fixes.cpp: this map's fixes
+void		COOP_FixesFrame( void );
 
 #endif // COOP_LOCAL_H

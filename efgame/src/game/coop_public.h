@@ -41,6 +41,7 @@
 #define COOP_FindPlayerWaypoints()	((void)0)
 #define COOP_OnPickup(i,p)			((void)0)
 #define COOP_OnScriptWeapon(e,w)	((void)0)
+#define COOP_OnScriptOrigin(e)		((void)0)
 #define COOP_CacheForNextLevel()	((void)0)
 #define COOP_ShotStart(e,a)			((void)0)
 #define COOP_ShotEnd()				((void)0)
@@ -115,6 +116,8 @@ void		COOP_OnPickup( gentity_t *item, gentity_t *picker );
 void		COOP_OnDirectSound( int entNum, int channel, const char *path );
 // Q3_SetWeapon gave P1 a weapon: P2 gets it too
 void		COOP_OnScriptWeapon( gentity_t *ent, int wp );
+// Q3_SetOrigin moved an entity (coop_fixes.cpp): player 1 moved by a script takes player 2 along
+void		COOP_OnScriptOrigin( gentity_t *ent );
 // G_ChangeMap: keep P2's health, armor and ammo for the next level
 void		COOP_CacheForNextLevel( void );
 
