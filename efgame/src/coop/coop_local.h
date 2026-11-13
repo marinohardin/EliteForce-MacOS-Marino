@@ -13,6 +13,7 @@ typedef struct
 	int			levelFrames;		// game frames since this level started
 	int			respawnTime;		// dead P2 comes back next to P1 at this level.time
 	int			nextSpawnTry;		// no clear spot next to P1 yet: try again at this time
+	int			noSpotSince;		// level time the spawn first found no clear spot (0: it found one)
 	qboolean	hidden;				// a camera is running: P2 is not drawn and not solid
 	qboolean	passable;			// a scripted scene holds the players: people walk through P2 (COOP_UpdatePassable)
 	qboolean	follow;				// follow P1 when no console move is running
@@ -28,6 +29,8 @@ typedef struct
 	qboolean	haveAngles;
 	vec3_t		viewAngles;
 	int			weapon;				// > 0: switch to it
+	int			scriptWeapon;		// a script gave the players this weapon (COOP_OnScriptWeapon); 0: none pending
+	int			scriptGuestWeapon;	// the guest's own selection when it did (-1: not seen yet)
 
 	// the guest's input (coop_net.cpp) steers P2; its view angles were re-based on the guest's
 	qboolean	guestSteering;
@@ -74,5 +77,7 @@ qboolean	COOP_CanReviveNow( gentity_t *reviver );		// the partner is down within
 void		COOP_UseInit( void );						// coop_use.cpp: hold to teleport, double-tap ping
 void		COOP_ListNPCs( void );
 void		COOP_ReplicaInit( void );					// coop_replica.cpp				// a guest is connected, steering or not
+void		COOP_FixesInit( void );						// coop_fixes.cpp: this map's fixes
+void		COOP_FixesFrame( void );
 
 #endif // COOP_LOCAL_H

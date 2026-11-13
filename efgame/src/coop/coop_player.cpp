@@ -35,6 +35,8 @@ static gclient_t	coop_p2Client;
 #define COOP_FOLLOW_NEAR		112		// follow: stop this close to P1 (2D)
 #define COOP_FOLLOW_TELEPORT	1024	// follow: further than this, jump to P1
 #define COOP_STUCK_FRAMES		60		// follow: 3 s without progress, jump to P1
+#define COOP_CROWDED_TIME		3000	// no free spot next to P1 for this long: spawn P2 on P1's spot
+#define COOP_STUCK_CROUCH		30		// follow: 1.5 s without progress, crouch instead of hopping
 
 gentity_t *COOP_P2( void )
 {
@@ -56,7 +58,8 @@ gentity_t *COOP_P2( void )
 COOP_FindSpotNear
 
 A clear standing spot next to P1 that P1 could walk to in a straight line (so never through a
-wall), with floor under it. Behind P1 first, then the sides, then in front, then further out.
+wall; NPCs on the way do not count), with floor under it. Behind P1 first, then the sides, then in
+front, then further out.
 */
 static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out );
 
@@ -98,8 +101,15 @@ static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out )
 		VectorMA( start, offsets[i][0], forward, spot );
 		VectorMA( spot, offsets[i][1], right, spot );
 
-		gi.trace( &tr, start, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID );
+		// the way there: walls only (the squad standing around P1 is not a wall; P1 could step past)
+		gi.trace( &tr, start, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID & ~CONTENTS_BODY );
 		if ( tr.startsolid || tr.allsolid || tr.fraction < 1.0f )
+		{
+			continue;
+		}
+		// the spot itself: free of bodies too
+		gi.trace( &tr, spot, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID );
+		if ( tr.startsolid || tr.allsolid )
 		{
 			continue;
 		}
@@ -320,11 +330,24 @@ void COOP_SpawnP2( void )
 	{
 		return;
 	}
+	qboolean crowded = qfalse;
 	if ( !COOP_FindSpotNear( p1, org ) )
 	{
-		coop_p2.nextSpawnTry = level.time + 500;
-		return;
+		if ( !coop_p2.noSpotSince )
+		{
+			coop_p2.noSpotSince = level.time;
+		}
+		if ( level.time - coop_p2.noSpotSince < COOP_CROWDED_TIME )
+		{
+			coop_p2.nextSpawnTry = level.time + 500;
+			return;
+		}
+		// no free spot for a while (the level starts with the squad packed around P1 in a lift, as on
+		// borg5): share P1's spot, passable until the two have walked apart (COOP_UpdatePassable)
+		VectorCopy( p1->currentOrigin, org );
+		crowded = qtrue;
 	}
+	coop_p2.noSpotSince = 0;
 	ent = G_Spawn();
 	if ( !ent )
 	{
@@ -337,8 +360,58 @@ void COOP_SpawnP2( void )
 
 	memset( &cmd, 0, sizeof( cmd ) );
 	cmd.serverTime = level.time;
+	if ( crowded )
+	{
+		coop_p2.passable = qtrue;
+		ent->contents = CONTENTS_CORPSE;
+		ent->clipmask = MASK_PLAYERSOLID & ~CONTENTS_BODY;
+		gi.linkentity( ent );
+	}
 	ClientThink( ent->s.number, &cmd );
-	gi.Printf( "co-op: player 2 spawned as entity %d at %s\n", ent->s.number, vtos( ent->currentOrigin ) );
+	gi.Printf( "co-op: player 2 spawned as entity %d at %s%s\n", ent->s.number, vtos( ent->currentOrigin ),
+		crowded ? " (no room next to player 1: sharing its spot)" : "" );
+}
+
+/*
+COOP_GuestWeapon
+
+The weapon P2 holds while a guest steers. The guest's command names the weapon its own screen has
+selected, and the host's scripts never reach that screen:
+- A script gave the players a weapon (COOP_OnScriptWeapon): player 1 switches to it at once, but the
+  guest's selection still names the old weapon (or none). P2 switches too and keeps it until the
+  guest picks a weapon itself, i.e. its selection changes.
+- P2 holds nothing (it spawned while player 1 was still raising a weapon a script had just given,
+  as after a level-entry autosave) while it has the weapon player 1 holds: it takes that one.
+*/
+static void COOP_GuestWeapon( gentity_t *ent, int guestWeapon, usercmd_t *cmd )
+{
+	gclient_t	*cl = ent->client;
+	gentity_t	*p1 = &g_entities[0];
+
+	if ( coop_p2.scriptWeapon )
+	{
+		if ( coop_p2.scriptGuestWeapon < 0 )
+		{
+			coop_p2.scriptGuestWeapon = guestWeapon;
+		}
+		if ( guestWeapon != coop_p2.scriptGuestWeapon || !( cl->ps.stats[STAT_WEAPONS] & ( 1 << coop_p2.scriptWeapon ) ) )
+		{
+			coop_p2.scriptWeapon = 0;	// the guest chose (or P2 lost it): theirs from now on
+		}
+		else
+		{
+			cmd->weapon = coop_p2.scriptWeapon;
+			return;
+		}
+	}
+	if ( cmd->weapon == WP_NONE && p1->client )
+	{
+		int w = p1->client->ps.weapon;
+		if ( w > WP_NONE && w < WP_NUM_WEAPONS && ( cl->ps.stats[STAT_WEAPONS] & ( 1 << w ) ) )
+		{
+			cmd->weapon = w;
+		}
+	}
 }
 
 /*
@@ -383,6 +456,7 @@ static qboolean COOP_GuestBuildCmd( gentity_t *ent, usercmd_t *cmd )
 	{
 		cmd->weapon = cl->ps.weapon;
 	}
+	COOP_GuestWeapon( ent, g.weapon, cmd );
 	coop_p2.stuckFrames = 0;
 	VectorCopy( ent->currentOrigin, coop_p2.lastOrigin );
 	return qtrue;
@@ -413,6 +487,7 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 	cmd->serverTime = level.time;
 	cmd->weapon = coop_p2.weapon > 0 ? coop_p2.weapon : cl->ps.weapon;
 	coop_p2.weapon = 0;
+	coop_p2.scriptWeapon = 0;
 	VectorCopy( cl->ps.viewangles, view );
 
 	if ( coop_p2.moveFrames > 0 )
@@ -455,7 +530,11 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 			if ( DotProduct( moved, dir ) < dist )	// less than 1 unit toward P1 this frame
 			{
 				coop_p2.stuckFrames++;
-				if ( coop_p2.stuckFrames % 10 == 5 )
+				if ( coop_p2.stuckFrames > COOP_STUCK_CROUCH )
+				{
+					cmd->upmove = -127;	// hopping did not help: try to crouch under it
+				}
+				else if ( coop_p2.stuckFrames % 10 == 5 )
 				{
 					cmd->upmove = 127;	// try to hop over it
 				}
@@ -477,6 +556,21 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 		else
 		{
 			coop_p2.stuckFrames = 0;
+		}
+		if ( p1->client->ps.pm_flags & PMF_DUCKED )
+		{
+			cmd->upmove = -127;	// P1 crouches (a vent, a low gap): so does P2
+		}
+		// on a ladder: climb toward P1 (ladder movement takes the vertical part from upmove)
+		if ( ( ent->watertype & CONTENTS_LADDER ) && ent->waterlevel && ( dz > 32 || dz < -32 ) )
+		{
+			cmd->forwardmove = 0;
+			if ( dist > 16 && !coop_p2.haveAngles )
+			{
+				view[YAW] = vectoyaw( dir );	// toward P1, which is toward the ladder's top or foot
+				cmd->forwardmove = 64;
+			}
+			cmd->upmove = dz > 0 ? 127 : -127;
 		}
 	}
 	VectorCopy( ent->currentOrigin, coop_p2.lastOrigin );
@@ -529,6 +623,7 @@ void COOP_RunFrame( void )
 		coop_p2.rejoinAt = 0;
 		COOP_CameraRejoin( ent );
 	}
+	COOP_FixesFrame();
 	COOP_UpdatePassable( ent );
 	COOP_BuildCmd( ent, &cmd );
 	ClientThink( ent->s.number, &cmd );

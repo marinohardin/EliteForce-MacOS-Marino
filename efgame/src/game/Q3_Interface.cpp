@@ -1628,6 +1628,7 @@ static void Q3_SetOrigin( int entID, vec3_t origin )
 	}
 
 	gi.linkentity( ent );
+	COOP_OnScriptOrigin( ent );
 }
 
 
