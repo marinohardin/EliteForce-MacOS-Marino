@@ -230,7 +230,6 @@ this off.
 
 ### Known limits
 
-- The game can't be saved while a player is down.
 - A player downed behind a barrier that later closes can't be reached, which ends in game over.
 - The computer-controlled player 2 (when there's no guest) can't climb ladders or crouch through
   low gaps. It is moved next to you when it gets stuck.

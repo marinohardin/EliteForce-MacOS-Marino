@@ -52,6 +52,8 @@ void		COOP_ReadCarry( void );						// coop_inventory.cpp
 void		COOP_ApplyCarry( gentity_t *ent );
 void		COOP_ApplyScriptTopUp( gentity_t *ent );
 void		COOP_CacheForSave( void );
+int			COOP_ReviveHealth( const gentity_t *ent );	// coop_down.cpp: health after a revive
+void		COOP_SaveP1Revived( qboolean revived );	// a save while P1 is down: write it as revived, then back
 void		COOP_PublishInfo( void );					// coop_info.cpp
 qboolean	COOP_GuestCmd( usercmd_t *cmd );			// coop_net.cpp
 const char	*COOP_GuestName( void );

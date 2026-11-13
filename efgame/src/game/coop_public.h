@@ -34,6 +34,7 @@
 #define COOP_P2DeadThink(e,u)		((void)0)
 #define COOP_P2Die(e,a)				((void)0)
 #define COOP_PreSave()				((void)0)
+#define COOP_PostSave()				((void)0)
 #define COOP_OnCameraEnable()		((void)0)
 #define COOP_OnCameraDisable()		((void)0)
 #define COOP_ConsoleCommand(c)		0
@@ -200,8 +201,10 @@ qboolean	COOP_P2ThinkGate( gentity_t *ent, usercmd_t *ucmd );
 void		COOP_P2DeadThink( gentity_t *ent, usercmd_t *ucmd );
 // player_die for P2: no game over, respawn next to P1 after a delay
 void		COOP_P2Die( gentity_t *ent, gentity_t *attacker );
-// WriteLevel: clear every saved pointer to P2 (P2 itself is never written)
+// WriteLevel: clear every saved pointer to P2 (P2 itself is never written); a downed player 1 is
+// written as revived, put back down by COOP_PostSave at the end of WriteLevel
 void		COOP_PreSave( void );
+void		COOP_PostSave( void );
 // CGCam_Enable / CGCam_Disable: P2 hidden and non-solid while a camera runs
 void		COOP_OnCameraEnable( void );
 void		COOP_OnCameraDisable( void );

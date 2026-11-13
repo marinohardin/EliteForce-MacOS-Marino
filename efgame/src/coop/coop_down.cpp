@@ -10,9 +10,10 @@
 // Player 2 goes down only while a guest steers it; the local puppet (no guest) keeps its old
 // death and respawn next to player 1, and revives player 1 by itself when it is next to them.
 //
-// Saving is refused while a player is down (GameAllowedToSaveHere): a save holds player 1 only,
-// and loading one with player 1 at 0 health would be a death the game can't recover from; a
-// checkpoint autosave waits until both are up again.
+// Saving works while a player is down: a save keeps a downed player as revived (a quarter of their
+// health, armor and ammo as they are), so loading it brings both back standing. Player 2 goes to the
+// .coop file that way (coop_inventory.cpp); player 1 is put in the .sav as revived for the moment of
+// writing it and back down after (COOP_SaveP1Revived), so the game goes on as before the save.
 
 #include "g_local.h"
 #include "g_functions.h"
@@ -396,11 +397,18 @@ qboolean COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod )
 	return qtrue;
 }
 
+// the health a revive gives this player (also what a save keeps for a downed or dead one)
+int COOP_ReviveHealth( const gentity_t *ent )
+{
+	int maxHealth = ( ent->client && ent->client->ps.stats[STAT_MAX_HEALTH] > 0 ) ? ent->client->ps.stats[STAT_MAX_HEALTH] : 100;
+	int health = maxHealth * COOP_REVIVE_HEALTH / 100;
+	return health < 1 ? 1 : health;
+}
+
 static void COOP_Revive( int idx )
 {
 	gentity_t	*ent = COOP_DownPlayer( idx );
 	gclient_t	*cl;
-	int			maxHealth;
 
 	coop_down[idx].down = qfalse;
 	if ( !ent || !ent->client )
@@ -408,12 +416,7 @@ static void COOP_Revive( int idx )
 		return;
 	}
 	cl = ent->client;
-	maxHealth = cl->ps.stats[STAT_MAX_HEALTH] > 0 ? cl->ps.stats[STAT_MAX_HEALTH] : 100;
-	ent->health = maxHealth * COOP_REVIVE_HEALTH / 100;
-	if ( ent->health < 1 )
-	{
-		ent->health = 1;
-	}
+	ent->health = COOP_ReviveHealth( ent );
 	cl->ps.stats[STAT_HEALTH] = ent->health;
 	ent->takedamage = qtrue;
 	ent->flags = ( ent->flags & ~( FL_NOTARGET | FL_NO_KNOCKBACK ) ) | coop_down[idx].oldFlags;
@@ -428,6 +431,90 @@ static void COOP_Revive( int idx )
 	COOP_Tell( idx, "" );
 	COOP_Tell( idx ^ 1, "" );
 	gi.Printf( "co-op: player %d revived (health %d)\n", idx + 1, ent->health );
+}
+
+/*
+COOP_SaveP1Revived
+
+A save while player 1 is down. The .sav has player 1 only and no downed state (a load starts the
+co-op state afresh), so player 1 is written the way a revive leaves them: up, a quarter of their
+health, solid, a target again, standing. Nothing else changes: COOP_PreSave calls this with qtrue
+before WriteLevel writes anything and COOP_PostSave with qfalse after it, which puts back exactly
+what was there, so the game goes on with player 1 still down. Fields only (no linking, no
+animation calls: those could finish a script's wait).
+*/
+static struct
+{
+	qboolean	active;
+	int			health, statHealth, flags, contents, pmType;
+	qboolean	takedamage;
+	int			legsAnim, torsoAnim, legsAnimTimer, torsoAnimTimer, sLegsAnim, sTorsoAnim;
+	vec3_t		mins, maxs;		// a frozen player's box is empty (the load would put them in the floor)
+} coop_saveP1;
+
+void COOP_SaveP1Revived( qboolean revived )
+{
+	gentity_t	*ent = &g_entities[0];
+	gclient_t	*cl = ent->client;
+
+	if ( !revived )
+	{
+		if ( coop_saveP1.active && cl )
+		{
+			ent->health = coop_saveP1.health;
+			cl->ps.stats[STAT_HEALTH] = coop_saveP1.statHealth;
+			ent->takedamage = coop_saveP1.takedamage;
+			ent->flags = coop_saveP1.flags;
+			ent->contents = coop_saveP1.contents;
+			cl->ps.pm_type = coop_saveP1.pmType;
+			cl->ps.legsAnim = coop_saveP1.legsAnim;
+			cl->ps.torsoAnim = coop_saveP1.torsoAnim;
+			cl->ps.legsAnimTimer = coop_saveP1.legsAnimTimer;
+			cl->ps.torsoAnimTimer = coop_saveP1.torsoAnimTimer;
+			ent->s.legsAnim = coop_saveP1.sLegsAnim;
+			ent->s.torsoAnim = coop_saveP1.sTorsoAnim;
+			VectorCopy( coop_saveP1.mins, ent->mins );
+			VectorCopy( coop_saveP1.maxs, ent->maxs );
+		}
+		coop_saveP1.active = qfalse;
+		return;
+	}
+	coop_saveP1.active = qfalse;
+	if ( !coop_enabled || !coop_down[0].down || !cl || coop_gameOver )
+	{
+		return;
+	}
+	coop_saveP1.active = qtrue;
+	coop_saveP1.health = ent->health;
+	coop_saveP1.statHealth = cl->ps.stats[STAT_HEALTH];
+	coop_saveP1.takedamage = ent->takedamage;
+	coop_saveP1.flags = ent->flags;
+	coop_saveP1.contents = ent->contents;
+	coop_saveP1.pmType = cl->ps.pm_type;
+	coop_saveP1.legsAnim = cl->ps.legsAnim;
+	coop_saveP1.torsoAnim = cl->ps.torsoAnim;
+	coop_saveP1.legsAnimTimer = cl->ps.legsAnimTimer;
+	coop_saveP1.torsoAnimTimer = cl->ps.torsoAnimTimer;
+	coop_saveP1.sLegsAnim = ent->s.legsAnim;
+	coop_saveP1.sTorsoAnim = ent->s.torsoAnim;
+	VectorCopy( ent->mins, coop_saveP1.mins );
+	VectorCopy( ent->maxs, coop_saveP1.maxs );
+
+	// as COOP_Revive leaves them
+	ent->health = cl->ps.stats[STAT_HEALTH] = COOP_ReviveHealth( ent );
+	ent->takedamage = qtrue;
+	ent->flags = ( ent->flags & ~( FL_NOTARGET | FL_NO_KNOCKBACK ) ) | coop_down[0].oldFlags;
+	ent->contents = CONTENTS_BODY;
+	VectorCopy( playerMins, ent->mins );
+	VectorCopy( playerMaxs, ent->maxs );
+	cl->ps.pm_type = PM_NORMAL;
+	cl->ps.legsAnim = ( ( cl->ps.legsAnim & ANIM_TOGGLEBIT ) ^ ANIM_TOGGLEBIT ) | BOTH_STAND2;
+	cl->ps.torsoAnim = ( ( cl->ps.torsoAnim & ANIM_TOGGLEBIT ) ^ ANIM_TOGGLEBIT ) | BOTH_STAND2;
+	cl->ps.legsAnimTimer = 0;
+	cl->ps.torsoAnimTimer = 0;
+	ent->s.legsAnim = cl->ps.legsAnim;
+	ent->s.torsoAnim = cl->ps.torsoAnim;
+	gi.Printf( "co-op: player 1 is down: saved as revived (health %d)\n", ent->health );
 }
 
 // level change while someone is down: they get up (the next level must not start with a dead player)

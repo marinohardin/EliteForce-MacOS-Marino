@@ -90,11 +90,15 @@ Joining mid-level is the M1 path (a whole frame); verified after a map change an
   written by `G_ChangeMap`, read at the next level start). Kept: it is how the game carries player 1 too
   (the playersave cvars), and it needs no file between the two levels.
 - New: every save also keeps them in `<save>.coop` next to the `.sav` (the proposal's side file). The
-  game puts them in `coop_p2saved` in `WriteLevel`; the engine writes the file after the `.sav` (and
-  removes an old one when player 2 has nothing to keep); a load reads it into `coop_p2save` before the
+  game puts them in `coop_p2saved` in `WriteLevel`; the engine writes the file after the `.sav`; a load
+  reads it into `coop_p2save` before the
   level starts. So a load, including the death respawn's level-entry autosave, brings player 2 back as
   it was when saved, not fresh. At a level-entry autosave player 2 hasn't spawned yet, so the file holds
   the carry waiting for its spawn. Single player never reads `.coop` files.
+- 1.5.0: a co-op save always writes the `.coop` (`new` when player 2 has nothing to keep, so it starts
+  afresh after the load); only a plain single-player save (`sp_coop 0`) removes an old one of the same
+  name and never writes one. A player 2 that is down, or the computer-controlled one waiting to respawn,
+  is saved as revived: a quarter of its max health, its armor, weapon and ammo.
 
 ## Lag compensation for player 2's shots (step 9a)
 The guest sees the host's world about a round trip plus 50 ms late (it draws between the last two host
@@ -238,9 +242,12 @@ Downed players (`efgame/src/coop/coop_down.cpp`, `coop_hud.cpp`):
 - On screen: the game's own centre print isn't drawn in single player, so the host sends `coopmsg`
   lines that the cgame draws (downed: "Downed: waiting for <name>" and the seconds left; partner:
   "Hold Use to revive <name>", a progress bar while holding).
-- Saving is refused while someone is down (`GameAllowedToSaveHere`; a checkpoint autosave waits): a save
-  holds player 1 only, and one with player 1 at 0 health would load as a death. A level change revives
-  anyone down first.
+- Saving works while someone is down (1.5.0; before, it was refused and a checkpoint autosave waited).
+  A save keeps a downed player as revived: player 2 in the `.coop` (above); player 1 is written to the
+  `.sav` as `COOP_Revive` leaves them (a quarter of max health, solid, targetable, standing, the normal
+  player box) for the moment `WriteLevel` runs and put back down after it (`COOP_SaveP1Revived`, from
+  `COOP_PreSave` / `COOP_PostSave`), so the game goes on unchanged. A frozen player's box is empty;
+  saving it as is put player 1 into the floor on load. A level change revives anyone down first.
 
 Tested on one Mac (two copies, the forge3 save): the reaver fight with both players (enemies take
 player 2), a spawned reaver switching from player 1 to player 2 when player 2 is next to it, a borg2
