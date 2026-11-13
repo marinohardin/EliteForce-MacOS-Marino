@@ -22,10 +22,75 @@ typedef struct
 	const char	*map;
 	void		( *start )( void );		// the level's first frames are done (P2 is in the level)
 	void		( *frame )( void );		// every host frame
+	qboolean	( *p2Touch )( gentity_t *trigger, gentity_t *p2 );	// P2 touches a trigger; qtrue: handled, don't fire it
 } coopMapFix_t;
 
+// the trigger runs this script when used (its "usescript")
+static qboolean COOP_TriggerRuns( const gentity_t *trigger, const char *script )
+{
+	return (qboolean)( trigger->behaviorSet[BSET_USE] && !Q_stricmp( trigger->behaviorSet[BSET_USE], script ) );
+}
+
+/*
+dn1: the hangar opens onto space. Walking out there plays a scene of the player drifting away and
+kills player 1 (mission failed). Player 2 walking out would kill player 1 the same way, so for player 2
+it is a fall into a pit instead: down next to player 1 (with a guest), or the puppet's death and respawn.
+*/
+static qboolean COOP_Dn1Touch( gentity_t *trigger, gentity_t *p2 )
+{
+	if ( !COOP_TriggerRuns( trigger, "dn1/space" ) )
+	{
+		return qfalse;
+	}
+	if ( p2->health > 0 && p2->takedamage )
+	{
+		gi.Printf( "co-op: player 2 drifted out into space\n" );
+		G_Damage( p2, NULL, NULL, NULL, p2->currentOrigin, p2->health + 1000,
+			DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR | DAMAGE_NO_PROTECTION, MOD_TRIGGER_HURT );
+	}
+	return qtrue;
+}
+
+/*
+dn2: after the fight in the corridor the team falls back into the control room and seals its door
+(blockdoor). The script only waits for player 1 to be inside; player 2 left in the corridor would be
+shut out for the rest of the level. When the door seals with the players on opposite sides of it,
+player 2 is brought in next to player 1.
+*/
+static gentity_t	*coop_dn2Door;
+static int			coop_dn2DoorContents;
+
+static void COOP_Dn2Start( void )
+{
+	coop_dn2Door = G_Find( NULL, FOFS( targetname ), "blockdoor" );
+	coop_dn2DoorContents = coop_dn2Door ? coop_dn2Door->contents : 0;
+}
+
+static void COOP_Dn2Frame( void )
+{
+	gentity_t	*door = coop_dn2Door, *p1 = &g_entities[0], *p2 = COOP_P2();
+
+	if ( !door || !door->inuse || !p2 || !p1->client )
+	{
+		return;
+	}
+	if ( door->contents && !coop_dn2DoorContents && p2->health > 0 )
+	{
+		// the door is a wall across the corridor: which side of its middle (along y) is each player on
+		float middle = ( door->absmin[1] + door->absmax[1] ) * 0.5f;
+		if ( ( p1->currentOrigin[1] > middle ) != ( p2->currentOrigin[1] > middle ) )
+		{
+			gi.Printf( "co-op: the control room is sealed with player 2 outside; bringing player 2 in\n" );
+			COOP_CameraRejoin( p2 );
+		}
+	}
+	coop_dn2DoorContents = door->contents;
+}
+
 static const coopMapFix_t coop_mapFixes[] = {
-	{ NULL, NULL, NULL }
+	{ "dn1", NULL, NULL, COOP_Dn1Touch },
+	{ "dn2", COOP_Dn2Start, COOP_Dn2Frame, NULL },
+	{ NULL, NULL, NULL, NULL }
 };
 
 static const coopMapFix_t	*coop_fix;			// this map's entry, NULL: none
@@ -57,10 +122,8 @@ void COOP_OnScriptOrigin( gentity_t *ent )
 	coop_scriptMoveAt = level.time + COOP_SCRIPT_MOVE_DELAY;
 }
 
-void COOP_FixesFrame( void )
+static void COOP_LookUpFix( void )
 {
-	gentity_t *p2 = COOP_P2();
-
 	if ( !coop_fixLooked )
 	{
 		coop_fixLooked = qtrue;
@@ -74,6 +137,23 @@ void COOP_FixesFrame( void )
 			}
 		}
 	}
+}
+
+qboolean COOP_P2Trigger( gentity_t *trigger, gentity_t *other )
+{
+	if ( !coop_enabled || !COOP_IsP2( other ) )
+	{
+		return qfalse;
+	}
+	COOP_LookUpFix();
+	return (qboolean)( coop_fix && coop_fix->p2Touch && coop_fix->p2Touch( trigger, other ) );
+}
+
+void COOP_FixesFrame( void )
+{
+	gentity_t *p2 = COOP_P2();
+
+	COOP_LookUpFix();
 	if ( !p2 )
 	{
 		return;
