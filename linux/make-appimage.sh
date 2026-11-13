@@ -31,7 +31,7 @@ if [ -z "${EF_NO_DOCKER:-}" ] && [ ! -f /.dockerenv ] && [ -z "${container:-}" ]
 	command -v docker >/dev/null 2>&1 || { echo "docker not found (or set EF_NO_DOCKER=1 to build on this host)" >&2; exit 1; }
 	exec docker run --rm --platform linux/amd64 \
 		-v "$ROOT:$ROOT" -w "$ROOT" \
-		-e NO_BUILD -e VERSION -e CMAKE_PRESET -e CMOD_PAK -e EF_NO_DOCKER=1 \
+		-e NO_BUILD -e REQUIRE_LAUNCHER -e VERSION -e CMAKE_PRESET -e CMOD_PAK -e EF_NO_DOCKER=1 \
 		-e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
 		"$SDK_IMAGE" "$ROOT/linux/make-appimage.sh"
 fi
@@ -85,6 +85,9 @@ for f in efsp libefgame.so libefui.so; do
 done
 if [ "$HAVE_QT" = 1 ]; then
 	[ -f "$BUILD/ef-launcher" ] || { echo "$BUILD/ef-launcher is missing (Qt is in $QT: configure with the linux-x64 preset again)" >&2; exit 1; }
+elif [ -n "${REQUIRE_LAUNCHER:-}" ]; then
+	echo "No Qt in $QT, so no launcher: run linux/build-qt.sh first (REQUIRE_LAUNCHER is set)" >&2
+	exit 1
 else
 	echo "Note: no Qt in $QT (linux/build-qt.sh): building the AppImage without the launcher"
 fi

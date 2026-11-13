@@ -49,13 +49,14 @@ jobs:
           path: |
             build-deps/linux
             build-ffmpeg/linux
-          key: deps-linux-${{ hashFiles('deps/versions.sh', 'linux/build-deps.sh', 'linux/build-ffmpeg.sh') }}
+          key: deps-linux-${{ hashFiles('deps/versions.sh', 'linux/build-deps.sh', 'linux/build-ffmpeg.sh', 'linux/build-qt.sh') }}
 
       - name: Build dependencies
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           linux/build-deps.sh
           linux/build-ffmpeg.sh
+          linux/build-qt.sh     # Qt 6 for the launcher (ef-launcher), into build-deps/linux/qt
 
       - name: Configure and build
         run: |
@@ -63,6 +64,8 @@ jobs:
           cmake --build build/linux-x64 -j"$(nproc)"
 
       - name: Package AppImage
+        env:
+          REQUIRE_LAUNCHER: '1'   # fail rather than ship an AppImage without ef-launcher
         run: linux/make-appimage.sh
 
       - name: Build module-load test

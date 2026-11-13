@@ -38,6 +38,9 @@ if [ -n "$wine" ]; then
 	export WINEDEBUG="${WINEDEBUG:--all}" WINEPREFIX="${WINEPREFIX:-$work/wine}"
 	fix_arg="$(winepath -w "$fix" 2>/dev/null || echo "$fix")"
 fi
+# no launcher: run the game itself (the Windows and Linux builds show one when the
+# command line names no mode)
+EF_NO_LAUNCHER=1; export EF_NO_LAUNCHER
 common="+set fs_basepath $fix_arg +set fs_homepath $(printf %s "$home") +set com_basegame smoke"
 
 # timeout(1) is "gtimeout" (coreutils) or absent on macOS
