@@ -35,6 +35,7 @@ static gclient_t	coop_p2Client;
 #define COOP_FOLLOW_NEAR		112		// follow: stop this close to P1 (2D)
 #define COOP_FOLLOW_TELEPORT	1024	// follow: further than this, jump to P1
 #define COOP_STUCK_FRAMES		60		// follow: 3 s without progress, jump to P1
+#define COOP_CROWDED_TIME		3000	// no free spot next to P1 for this long: spawn P2 on P1's spot
 
 gentity_t *COOP_P2( void )
 {
@@ -56,7 +57,8 @@ gentity_t *COOP_P2( void )
 COOP_FindSpotNear
 
 A clear standing spot next to P1 that P1 could walk to in a straight line (so never through a
-wall), with floor under it. Behind P1 first, then the sides, then in front, then further out.
+wall; NPCs on the way do not count), with floor under it. Behind P1 first, then the sides, then in
+front, then further out.
 */
 static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out );
 
@@ -98,8 +100,15 @@ static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out )
 		VectorMA( start, offsets[i][0], forward, spot );
 		VectorMA( spot, offsets[i][1], right, spot );
 
-		gi.trace( &tr, start, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID );
+		// the way there: walls only (the squad standing around P1 is not a wall; P1 could step past)
+		gi.trace( &tr, start, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID & ~CONTENTS_BODY );
 		if ( tr.startsolid || tr.allsolid || tr.fraction < 1.0f )
+		{
+			continue;
+		}
+		// the spot itself: free of bodies too
+		gi.trace( &tr, spot, playerMins, playerMaxs, spot, ignore, MASK_PLAYERSOLID );
+		if ( tr.startsolid || tr.allsolid )
 		{
 			continue;
 		}
@@ -320,11 +329,24 @@ void COOP_SpawnP2( void )
 	{
 		return;
 	}
+	qboolean crowded = qfalse;
 	if ( !COOP_FindSpotNear( p1, org ) )
 	{
-		coop_p2.nextSpawnTry = level.time + 500;
-		return;
+		if ( !coop_p2.noSpotSince )
+		{
+			coop_p2.noSpotSince = level.time;
+		}
+		if ( level.time - coop_p2.noSpotSince < COOP_CROWDED_TIME )
+		{
+			coop_p2.nextSpawnTry = level.time + 500;
+			return;
+		}
+		// no free spot for a while (the level starts with the squad packed around P1 in a lift, as on
+		// borg5): share P1's spot, passable until the two have walked apart (COOP_UpdatePassable)
+		VectorCopy( p1->currentOrigin, org );
+		crowded = qtrue;
 	}
+	coop_p2.noSpotSince = 0;
 	ent = G_Spawn();
 	if ( !ent )
 	{
@@ -337,8 +359,16 @@ void COOP_SpawnP2( void )
 
 	memset( &cmd, 0, sizeof( cmd ) );
 	cmd.serverTime = level.time;
+	if ( crowded )
+	{
+		coop_p2.passable = qtrue;
+		ent->contents = CONTENTS_CORPSE;
+		ent->clipmask = MASK_PLAYERSOLID & ~CONTENTS_BODY;
+		gi.linkentity( ent );
+	}
 	ClientThink( ent->s.number, &cmd );
-	gi.Printf( "co-op: player 2 spawned as entity %d at %s\n", ent->s.number, vtos( ent->currentOrigin ) );
+	gi.Printf( "co-op: player 2 spawned as entity %d at %s%s\n", ent->s.number, vtos( ent->currentOrigin ),
+		crowded ? " (no room next to player 1: sharing its spot)" : "" );
 }
 
 /*
