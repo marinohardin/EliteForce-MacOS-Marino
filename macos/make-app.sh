@@ -25,10 +25,17 @@ BUNDLE_ID="${BUNDLE_ID:-org.voyagersp.macos}"
 BREW="${BREW:-$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Single-player co-op (experimental) is in the app by default (the release has it), built in its
+# own folders (build-macos-coop, efgame/buildmac-coop) so build-macos stays the build without it.
+# EF_COOP=0: no co-op, from build-macos and efgame/buildmac (the regression harness does this).
+EF_COOP="${EF_COOP:-1}"
+case "$EF_COOP" in
+0|OFF|off|no|NO) COOP_FLAG=OFF ;;
+*) COOP_FLAG=ON
+   ENGINE_BUILD="${ENGINE_BUILD:-$ROOT/build-macos-coop}"
+   GAME_BUILD="${GAME_BUILD:-$ROOT/efgame/buildmac-coop}" ;;
+esac
 ENGINE_BUILD="${ENGINE_BUILD:-$ROOT/build-macos}"
-# EF_COOP=1: build with single-player co-op (experimental; test apps only), in its own game build folder
-EF_COOP="${EF_COOP:-}"
-if [ -n "$EF_COOP" ]; then COOP_FLAG=ON; GAME_BUILD="${GAME_BUILD:-$ROOT/efgame/buildmac-coop}"; else COOP_FLAG=OFF; fi
 GAME_BUILD="${GAME_BUILD:-$ROOT/efgame/buildmac}"
 DIST="$ROOT/dist"
 # assembled under a name without spaces (the relink queue below splits on
@@ -57,6 +64,13 @@ if [ -z "${NO_BUILD:-}" ]; then
 		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_APP_VERSION="$VERSION" -DEF_COOP=$COOP_FLAG
 	cmake --build "$ENGINE_BUILD" -j"$(sysctl -n hw.ncpu)"
 fi
+# the engine and the game modules must agree on co-op (NO_BUILD=1 takes whatever is there)
+for cache in "$ENGINE_BUILD/CMakeCache.txt" "$GAME_BUILD/CMakeCache.txt"; do
+	built="$(sed -n 's/^EF_COOP:BOOL=//p' "$cache" 2>/dev/null)"
+	[ "$built" = "$COOP_FLAG" ] || {
+		echo "$(dirname "$cache") is not a co-op $COOP_FLAG build (EF_COOP=${built:-?}): build it, or set EF_COOP=0/1 to match" >&2
+		exit 1; }
+done
 
 # ---- 2. layout --------------------------------------------------------------
 echo "Assembling $FINAL"

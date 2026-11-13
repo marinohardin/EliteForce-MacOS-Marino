@@ -27,6 +27,8 @@
 # Environment:
 #   APP=<path.app>     test this app instead (default: assemble "EF Test Regression" from build-macos
 #                      and efgame/buildmac with make-app.sh NO_BUILD=1, and delete it afterwards)
+#   EF_COOP=1          assemble it from the co-op builds instead (build-macos-coop, efgame/buildmac-coop;
+#                      make-app.sh's default is co-op on, the harness's is off)
 #   SCENARIOS="..."    run only these (default: all of the above)
 #   REGRESS_DIR=<dir>  where baselines live (default ~/Library/Caches/VoyagerSP-regress)
 #   REGRESS_SAVE=<file.sav>  the save for sp-save (default: the newest voy1 save in your saves folder;
@@ -113,8 +115,11 @@ trap 'exit 1' INT TERM HUP
 # ---- the app under test -------------------------------------------------------
 if [ -z "${APP:-}" ]; then
 	OWN_APP="$ROOT/dist/$TEST_NAME.app"
-	echo "regress: assembling $OWN_APP from build-macos + efgame/buildmac"
-	APP_NAME="$TEST_NAME" BUNDLE_ID="$TEST_ID" NO_BUILD=1 "$ROOT/macos/make-app.sh" >"$SCRATCH/make-app.log" 2>&1 ||
+	# without co-op unless EF_COOP=1 (then from build-macos-coop + efgame/buildmac-coop)
+	case "${EF_COOP:-0}" in 0|OFF|off|no|NO) RG_COOP=0 ;; *) RG_COOP=1 ;; esac
+	if [ "$RG_COOP" = 1 ]; then echo "regress: assembling $OWN_APP (co-op build) from build-macos-coop + efgame/buildmac-coop"
+	else echo "regress: assembling $OWN_APP from build-macos + efgame/buildmac"; fi
+	EF_COOP=$RG_COOP APP_NAME="$TEST_NAME" BUNDLE_ID="$TEST_ID" NO_BUILD=1 "$ROOT/macos/make-app.sh" >"$SCRATCH/make-app.log" 2>&1 ||
 		{ cat "$SCRATCH/make-app.log" >&2; exit 1; }
 	APP="$OWN_APP"
 fi

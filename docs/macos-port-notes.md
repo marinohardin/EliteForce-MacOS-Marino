@@ -1270,3 +1270,20 @@ entity (or NPC type) now counts as "not a biohulk", so the result is the same wh
 crash before. Reproduced on borg1 (`timescale 0.5`, `setviewpos 371 571 100 0` into the ladder):
 SIGNAL 11 in `PM_SetWaterLevel` before, climbs normally after. Regression harness: all five
 scenarios identical to a baseline recorded at 4dd6eac.
+
+## Release configuration: co-op on the Mac only (2026-11-12)
+1.4.0 ships an experimental co-op mode on macOS and experimental Windows/Linux builds without it.
+- `macos/make-app.sh` (and so `macos/make-release.sh`) builds with `EF_COOP` on by default, in
+  `build-macos-coop` + `efgame/buildmac-coop`, so `build-macos` / `efgame/buildmac` stay the builds
+  without co-op. `EF_COOP=0` builds the app without it. The script stops if the engine and the game
+  modules it would bundle disagree about co-op (e.g. `NO_BUILD=1` with the wrong folders).
+- `macos/regress.sh` assembles its app without co-op unless `EF_COOP=1` (unchanged gates).
+- The CMake option `EF_COOP` now defaults to OFF everywhere (it was ON for Windows/Linux). The
+  launcher core only shows the Co-op button when the engine has co-op (`LC_COOP_BUILT`, set by
+  CMake with `EF_COOP`); `EF_SHOW_COOP=1` still shows it for testing in an `EF_COOP=ON` build.
+- The Mac Co-op sheet already says EXPERIMENTAL and the button's tooltip says "(experimental)".
+- Also: the Mac, Windows and Linux packaging read the FFmpeg version from `deps/versions.sh`
+  (where the pins moved); the Mac app build stopped at FFmpeg's license without it.
+- Gates: `regress.sh check base-1_4_0` ALL IDENTICAL; `EF_COOP=1 REGRESS_ARGS="+set sp_coop 0"
+  regress.sh check coop-m2-base` ALL IDENTICAL. Windows cross-build (mingw) with the new default
+  (EF_COOP OFF) and with `-DEF_COOP=ON` both compile.

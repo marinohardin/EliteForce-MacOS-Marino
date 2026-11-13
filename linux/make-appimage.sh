@@ -203,7 +203,7 @@ fi
 
 LIC="$APPDIR/usr/share/licenses/eliteforce-marino"
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES.md" "$ROOT/efgame/STEF Game Source License.doc" "$LIC/"
-FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/linux/build-ffmpeg.sh" "$ROOT/macos/build-ffmpeg.sh" 2>/dev/null | head -1)"
+FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/deps/versions.sh" 2>/dev/null | head -1)"	# shared pins
 FF_SRC="$(ls -d "$ROOT"/build-ffmpeg/linux/ffmpeg-*/ "$ROOT"/build-ffmpeg/ffmpeg-*/ 2>/dev/null | head -1)"
 [ -n "$FF_SRC" ] && [ -f "${FF_SRC}COPYING.LGPLv2.1" ] && cp "${FF_SRC}COPYING.LGPLv2.1" "$LIC/FFmpeg-LGPL-2.1.txt"
 cat > "$LIC/FFmpeg-README.txt" <<EOF_FF

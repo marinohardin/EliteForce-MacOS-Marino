@@ -16,8 +16,10 @@ browser, masters, hosting, server config). Both share one portable C core.
    Mac launcher *could* adopt it later; nobody does that now.
 2. **Co-op**: write all of it (core + engine side + launcher UI sheet), but the
    Co-op… button is hidden on Windows/Linux by default (`LC_COOP_UI_ENABLED` 0 in
-   `lc_common.h`; env `EF_SHOW_COOP=1` shows it, for testing). The co-op engine side
-   compiles in (`EF_COOP` on) so a later flip of that one switch enables it.
+   `lc_common.h`; env `EF_SHOW_COOP=1` shows it, for testing). Since 2026-11-12 the
+   Windows/Linux builds default to `EF_COOP` off (co-op is a Mac-only experiment in
+   1.4.0), and without `EF_COOP` the button never shows, env or not (`LC_COOP_BUILT`).
+   To try co-op there: configure with `-DEF_COOP=ON`, then `EF_SHOW_COOP=1`.
 3. Strings: use the exact user-visible texts of the specs. Replace "Mac" / "this Mac"
    with `LC_PLATFORM_NOUN` ("PC" on Windows, "Computer"/"computer" on Linux: "Play on
    This PC", "Play on This Computer"), "Finder" with "File Explorer" / "the file

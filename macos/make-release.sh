@@ -5,6 +5,8 @@
 #
 #   macos/make-release.sh               build (make-app.sh), then package
 #   NO_BUILD=1 macos/make-release.sh    package the existing dist/Elite Force.app
+#   EF_COOP=0 macos/make-release.sh     without single-player co-op (it's in by default,
+#                                       experimental; see make-app.sh)
 #
 # Signing: with a "Developer ID Application" certificate in the keychain (or
 # SIGN_IDENTITY set to one), the app is signed with it (hardened runtime, secure

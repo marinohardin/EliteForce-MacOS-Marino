@@ -78,7 +78,7 @@ fi
 # licenses
 LIC="$STAGE/licenses"
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES.md" "$ROOT/efgame/STEF Game Source License.doc" "$LIC/"
-FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/windows/build-ffmpeg.sh" "$ROOT/macos/build-ffmpeg.sh" 2>/dev/null | head -1)"
+FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/deps/versions.sh" 2>/dev/null | head -1)"	# shared pins
 for d in "$ROOT"/build-ffmpeg/windows/ffmpeg-*/ "$ROOT"/build-ffmpeg/ffmpeg-*/; do
 	[ -f "${d}COPYING.LGPLv2.1" ] && { cp "${d}COPYING.LGPLv2.1" "$LIC/FFmpeg-LGPL-2.1.txt"; break; }
 done

@@ -47,9 +47,14 @@ extern "C" {
 #define LC_CMDLINE_SIZE		1024	/* MAX_STRING_CHARS: the engine's command-line buffer */
 
 /* Co-op button in the launcher: code is complete, button hidden by default.
-   lc_coop_ui_enabled() is 1 when this is 1 or env EF_SHOW_COOP=1. */
+   lc_coop_ui_enabled() is 1 when this is 1 or env EF_SHOW_COOP=1, and only ever
+   when the engine has co-op (LC_COOP_BUILT: CMake sets it in EF_COOP builds; the
+   Windows/Linux releases are built without it, so they never show the button). */
 #ifndef LC_COOP_UI_ENABLED
 #	define LC_COOP_UI_ENABLED	0
+#endif
+#ifndef LC_COOP_BUILT
+#	define LC_COOP_BUILT		0
 #endif
 int lc_coop_ui_enabled( void );
 
