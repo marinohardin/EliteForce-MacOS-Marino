@@ -49,8 +49,13 @@ idTech3 lineage, all **GPLv2**:
 - **cMod game modules** — **Noah Metzger (Chomenor)** — his released Holomatch cgame, ui and qagame
   (`pakcmod-release-2023-09-18.pk3`), bundled unchanged with his permission in
   `Contents/Resources/cmod`: the widescreen HUD and menus, lag compensation for servers you host,
-  weapon fire prediction and many game fixes. Built from Raven's game source (see below), so under
-  Raven's Limited Use license, not the GPL. <https://github.com/Chomenor/cmod-game-code>
+  weapon fire prediction and many game fixes. The Windows and Linux builds include them too. Built
+  from Raven's game source (see below), so under Raven's Limited Use license, not the GPL.
+  <https://github.com/Chomenor/cmod-game-code>
+- **Co-op's netcode ideas** — **Noah Metzger (Chomenor)** — single-player co-op's lag compensation
+  for player 2's shots and its prediction of the guest's own weapon fire follow the approach of
+  cMod's lag compensation and weapon fire prediction. The co-op code is new, but the ideas are
+  his. Thank you, Noah.
 - **VoyagerNX** — faithvoid — the Nintendo Switch port that proved the ARM + console-controls path this
   Android lineage started from. <https://github.com/faithvoid/VoyagerNX>
 
@@ -132,6 +137,35 @@ The macOS release bundles these libraries as shared libraries. See
 - **FFmpeg** — the FFmpeg developers (LGPL-2.1-or-later). The app bundles a minimal build (Bink
   decoding only) made by `macos/build-ffmpeg.sh` from the unmodified release source:
   <https://ffmpeg.org/download.html>.
+
+## Windows and Linux builds (experimental)
+
+The Windows zip and installer and the Linux AppImage use the same engine, game modules and cMod
+game modules as the Mac app, and bundle these libraries. See
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for versions and license texts.
+
+- **SDL** — SDL3 and sdl2-compat (zlib license), on both. <https://libsdl.org>
+- **FFmpeg** — the FFmpeg developers (LGPL-2.1-or-later) — the same minimal Bink-only build, made
+  by `windows/build-ffmpeg.sh` and `linux/build-ffmpeg.sh`. <https://ffmpeg.org>
+- **XZ Utils (liblzma)** — Lasse Collin and the Tukaani Project — linked statically on Windows and
+  Linux, to unpack GOG's installer. <https://tukaani.org/xz/>
+- **libcurl** — Daniel Stenberg and the curl contributors (curl license) — Windows only, for HTTP
+  map downloads. <https://curl.se>
+- **Qt 6** — The Qt Company and the Qt contributors (LGPL-3.0) — Linux only, for the launcher
+  window (`ef-launcher`). <https://www.qt.io>
+- **X11 / xcb helper libraries, libxkbcommon and Brotli** — the X.Org, xkbcommon and Brotli
+  authors — Linux only, copied from the Steam Runtime for Qt's X11 support.
+
+Built with:
+
+- **mingw-w64** and **GCC** — the Windows cross-compiler; GCC's runtime is linked statically.
+  <https://www.mingw-w64.org>
+- **Inno Setup** — Jordan Russell and Martijn Laan — the Windows installer.
+  <https://jrsoftware.org/isinfo.php>
+- **Steam Runtime 3 "sniper" SDK** — Valve — the Linux build environment, so the AppImage runs on
+  Steam Deck and most distributions. <https://gitlab.steamos.cloud/steamrt/sniper/sdk>
+- **appimagetool** and the AppImage runtime — the AppImage project — package the AppImage.
+  <https://appimage.org>
 
 ---
 

@@ -18,6 +18,14 @@ It also supports running a **dedicated multiplayer server**, with automatic port
 (NAT-PMP / UPnP) and a check that the server is listed on the internet, dramatically
 simplifying hosting servers compared to the original game.
 
+New in 1.4.0, both **experimental**:
+
+- **Co-op for the single-player campaign, on the Mac only.** A friend joins your game as a
+  second Hazard Team member, on your network or over the internet. See
+  [Co-op (experimental, Mac only)](#co-op-experimental-mac-only).
+- **Windows and Linux (including Steam Deck) builds** of the same game, with their own
+  launchers, but without co-op. See [Windows and Linux (experimental)](#windows-and-linux-experimental).
+
 
 **No game data is included.** You need your own copy of the retail game. (Even the icon is intentionally not using copyrighted symbols.)
 
@@ -40,7 +48,8 @@ simplifying hosting servers compared to the original game.
   **Host a Server** with its **Config…**; and where the game files are, whether the Expansion Pack was found, and
   **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last
   used, including changes made in the game's own Video menu. Quitting from the game's own
-  menu brings the launcher back; **Cmd+Q** quits for good. When a newer version is on this
+  menu brings the launcher back; **Cmd+Q** quits for good (**Cmd+W** and the game window's
+  close button ask first, so a stray Cmd+W doesn't end your game). When a newer version is on this
   page's Releases, the launcher says so, with a **Download…** button (checked at most once a
   day; **Check for Updates…** and **Check for Updates Automatically** are in the app menu).
   
@@ -57,9 +66,11 @@ simplifying hosting servers compared to the original game.
   modules** by Noah Metzger, with his permission: a **widescreen HUD** and menus, and weapon fire
   prediction on servers that offer it (see [cMod's game modules](#cmods-game-modules)).
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
-  single player never opens a network connection, except co-op (experimental, in builds that have
-  it): Host and Connect open one on UDP port 29760, and **Open the port on my router** asks your
-  router to forward that port.
+  single player never opens a network connection, except when you use co-op.
+- **Co-op (experimental, Mac only).** Play the single-player campaign with a friend: the
+  launcher's **Co-op…** button hosts a game or joins one, on your network or over the
+  internet, with revives instead of instant death. See
+  [Co-op (experimental, Mac only)](#co-op-experimental-mac-only).
 - **Dedicated server.** **Host a Server** runs a standalone server with a status window
   (players with Kick, console, map and bot controls), **Play on This Mac**, and automatic
   router port opening (NAT-PMP / UPnP). See [Hosting a server](#hosting-a-server).
@@ -74,7 +85,8 @@ simplifying hosting servers compared to the original game.
   can be skipped with **Enter**, as in the original.
 - **Widescreen.** On wide displays the view is wider at the sides, not cropped at the top and
   bottom (`cg_forceAspect 1` for the original 4:3 view).
-- **Original PC saves load.** Savegames from the Windows version can be loaded.
+- **Original PC saves load.** Savegames from the Windows version can be loaded, with their open
+  and closed doors as they were.
 - Mac keyboard and mouse: the macOS press-and-hold accent popup is disabled, so holding
   movement keys works, and text input is only active in the console, chat and menus.
 
@@ -104,6 +116,9 @@ simplifying hosting servers compared to the original game.
   launcher and choose the Expansion Pack's `BaseEF` (or its `.pk3` files). The launcher's
   Game Files section says whether it was found. It adds single player's Virtual Voyager and
   Holomatch maps that many servers run (such as `ctf_oldwest`).
+
+For Windows and Linux (experimental), see
+[Windows and Linux (experimental)](#windows-and-linux-experimental).
 
 ## Install (players)
 
@@ -142,6 +157,83 @@ folder yourself: the app's **File** menu has
 
 Saves from the Windows version work: the app copies them when it copies your `BaseEF`, or
 you can drop `.sav` files into the saves folder.
+
+## Co-op (experimental, Mac only)
+
+Play the single-player campaign with a friend. One Mac **hosts**: it plays the story as usual,
+as player 1. The other Mac **joins** as player 2, a second Hazard Team member in the host's
+game. Co-op is new and experimental, and only in the Mac app (not on Windows or Linux).
+
+Both players need the same version of the app and the same single-player game files.
+
+### Host and Join
+
+Click **Co-op…** on the launcher's Single Player card. The sheet has:
+
+- **Your name**, shown to the other player in co-op messages (such as "Hold Use to revive …").
+  It starts as your Mac's name.
+- **Host**: starts single player with co-op on; choose **New Game** or **Load** as usual. An
+  optional password keeps strangers out. The sheet lists this Mac's address for your friend.
+- **Join**: type the host's address (such as `192.168.1.20`) and click **Check**, which asks
+  whether a co-op game runs there and shows what the host is playing. Then click **Connect**.
+  Choose whether you play a **male or female Munro** (how player 2 looks on both screens; the
+  story still talks to the host's Munro), and type the password if the host set one.
+
+As the guest you see the host's world live from player 2's eyes: enemies, doors, lifts,
+explosions, cutscenes and in-game movies, with the host's voice lines, sounds and messages. You
+follow the host to the next level, and you see when the host pauses. Enemies fight both of you,
+and triggers, pickups and weapons work for either player.
+
+Without a guest, a computer-controlled player 2 follows the host around. Co-op is only on when you
+use **Host** or **Join**: the normal **Play** and New Game are plain single player, as before.
+
+### Downed, not dead
+
+A player who runs out of health goes **down** instead of dying. The partner revives them by
+standing next to them and **holding Use for 3 seconds** (not through walls, closed doors or
+forcefields); they come back with a quarter of their health. If both players are down, or a
+downed player bleeds out before being revived (about 30 seconds), it's game over for both.
+Hazards such as pits, lava and crushers don't down you: they put you back next to your partner.
+
+### Saves
+
+**Only the host saves.** A save stays a normal single-player save that loads without co-op too;
+player 2's health, armor and weapons go in a `.coop` file next to it, so loading it with a guest
+brings player 2 back as it was. Player 2 also keeps health and weapons across level changes.
+
+### Playing over the internet
+
+Co-op uses **UDP port 29760**. On your home network nothing else is needed (allow it when macOS
+asks whether Elite Force may find devices on your local network). For a friend on the internet:
+
+- The host ticks **Open the port on my router** in the Host section. The app asks your router
+  (NAT-PMP / UPnP) to forward the port and shows your public address, or why the router said no.
+  If it can't, forward UDP 29760 to the host's Mac by hand, or use a private network like
+  [Tailscale](https://tailscale.com).
+- **Copy Invite** copies an invite link (`stvef://coop/…`). Your friend opens it and the Co-op
+  sheet opens on their Mac with your address filled in and checked.
+- Player 2's shots are lag-compensated (they hit what the guest saw), and the guest's own rifle
+  and I-MOD fire shows at once instead of after a round trip. Both follow the ideas of cMod's
+  lag compensation and weapon fire prediction by **Noah Metzger (Chomenor)**: thank you, Noah.
+  Co-op uses about 3 to 5 KB/s.
+
+### Background play
+
+While hosting or joined, the game keeps running when its window isn't in front, so the other
+player isn't left waiting. Untick **Keep playing in the background** in the Co-op sheet to turn
+this off.
+
+### Known limits
+
+- The game can't be saved while a player is down.
+- A player downed behind a barrier that later closes can't be reached, which ends in game over.
+- The computer-controlled player 2 (when there's no guest) can't climb ladders or crouch through
+  low gaps. It is moved next to you when it gets stuck.
+- Only the rifle and I-MOD shots show at once on the guest; other weapons fire after a round trip.
+- So far co-op has been tested with two copies of the app on one Mac. It hasn't been tested yet
+  between two Macs, on a home network or over the internet.
+- Some maps may still have co-op glitches (turbolifts, transporters, scripted sequences). Please
+  [report them](#reporting-issues).
 
 ## Holomatch and LAN parties
 
@@ -255,6 +347,7 @@ master servers together (**Combined**) or on each one, and joins one directly.
 
 - **Humans** counts only the people, not bots (**?** when a server doesn't say). Servers with
   people come first.
+- **cMod** shows which servers run cMod, and its version.
 - **Select a server** to see who's playing. Only that server is asked.
 - **Map colors:** amber maps download when you join (if the server allows it); purple ones are
   Expansion Pack maps, which servers can't send. **Map Info** and **3D Map Preview** show a
@@ -267,6 +360,48 @@ master servers together (**Combined**) or on each one, and joins one directly.
 
 Choose **File → Delete Saves & Settings…** (this also removes any game files the
 app copied), then drag the app to the Trash.
+
+## Windows and Linux (experimental)
+
+There are also **experimental** builds for Windows and Linux, with the same engine, fixes and
+cMod game modules as the Mac app: single player and Holomatch. **Co-op is Mac only**: these
+builds don't have it (the Co-op button is hidden). They've had little testing on real Windows PCs
+and Linux distributions so far, so please [report](#reporting-issues) what you find.
+
+Download them from the [Releases page](https://github.com/marinohardin/EliteForce-MacOS-Marino/releases):
+
+- **Windows 10 or 11, 64-bit:** `EliteForce-Marino-<version>-windows-x64-setup.exe` (an installer
+  for your user only, no administrator rights; Start menu entries for Single Player, Holomatch and
+  a Dedicated Server, and `stvef://` join links) or `EliteForce-Marino-<version>-windows-x64.zip`
+  (unpack anywhere and run `EliteForce.exe`).
+- **Linux x86_64 and Steam Deck:** `EliteForce-Marino-<version>-x86_64.AppImage`, a single file
+  that runs on most distributions (glibc 2.31 or newer, e.g. Ubuntu 20.04 and later) and on
+  SteamOS. Make it executable (`chmod +x`, or "Allow executing as program") and open it.
+
+Both need a GPU and driver with Vulkan 1.1, and your own copy of the game, as on the Mac.
+
+**Launchers.** Windows has a native launcher, Linux a Qt one. Like the Mac launcher, they set up
+the game files (a game folder, GOG's setup `.exe` or the CD), and have the graphics presets,
+Brightness, the Holomatch server browser, **Host a Server** with router port opening, and update
+checks.
+
+**Game files.** Choose them in the launcher, or copy the `.pk3` files from `BaseEF` yourself:
+
+- Windows: `%APPDATA%\EliteForce-Marino\baseEF` (paste it into Explorer's address bar), or a
+  `BaseEF` folder next to `EliteForce.exe`.
+- Linux: `~/.local/share/eliteforce-marino/baseEF/`. A GOG install under Heroic or Lutris and a
+  Steam install are found too.
+
+**Windows SmartScreen.** The Windows build isn't code-signed yet, so the first time you run it
+Windows may say "Windows protected your PC". Click **More info**, then **Run anyway**.
+
+**Steam Deck.** Add the AppImage to Steam as a non-Steam game (in Desktop Mode), copy your game
+files into the folder above, and play from Gaming Mode. On the first run the game goes fullscreen
+and sets up the controller (left stick moves, right stick looks, triggers fire). You can change
+the bindings under Controls; the Linux launcher's **Steam Deck Controls…** button puts them back.
+
+The `ReadMe.txt` that comes with each download ([Windows](windows/ReadMe.txt),
+[Linux](linux/ReadMe.txt)) has the details, including command-line options.
 
 ## Building from source
 
@@ -360,9 +495,15 @@ Technical background on the port is in
   Virtual Voyager button shows **EXPANSION ONLY** (greyed out) and Holomatch servers running
   Expansion maps can't be joined. The Expansion Pack itself is untested with this port.
 - **Still being tested.** Please report any glitches found. Back up your saves.
-- Apple Silicon only.
+- The Mac app is Apple Silicon only.
 - **Holomatch is new.** Mac-to-Mac games over LAN and online are tested. The internet
   server browser depends on community master servers being online (see **Servers…**).
+- **Co-op is experimental (Mac only).** Host and guest need the same app version and the same
+  single-player game files. It has been tested with two copies on one Mac, not yet between two
+  Macs or over the internet. See [Known limits](#known-limits) for the rest.
+- **Windows and Linux are experimental.** The Windows build is unsigned (SmartScreen warning), and
+  both have had little testing on real PCs and Linux distributions.
+- Lip sync uses a simpler mouth cycle when the OpenAL sound backend is selected.
 
 ## Reporting issues
 
@@ -414,8 +555,8 @@ know about:
   was developed by Raven Software and published by Activision. This is an unofficial,
   non-commercial fan project. It is not affiliated with or endorsed by any of them.
 
-Release builds also bundle third-party libraries (SDL, FFmpeg, the Vulkan loader, MoltenVK)
-under their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+Release builds also bundle third-party libraries (SDL and FFmpeg; the Vulkan loader and MoltenVK
+on the Mac; libcurl on Windows; Qt for the Linux launcher) under their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 ## Personal Note
 
