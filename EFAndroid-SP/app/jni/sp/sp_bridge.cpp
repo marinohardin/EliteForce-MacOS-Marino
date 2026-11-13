@@ -196,7 +196,8 @@ static int  SP_CoopCurrentCmd( void );
 // Co-op saves. The .sav stays a plain single-player save (player 2 isn't in it, see the game's
 // coop_save.cpp); player 2's health, armor, weapon and ammo go to <name>.coop next to it, which single
 // player never reads. Loading the save hands them to the game the way a map change does (coop_p2save,
-// read at the level start). A save without player 2 removes an old .coop of the same name.
+// read at the level start). The co-op game always fills it in ("new" when player 2 starts afresh); a
+// plain single-player save leaves it empty and removes an old .coop of the same name.
 extern "C" {
     void  FS_WriteFile( const char *qpath, const void *buffer, int size );
     void  FS_HomeRemove( const char *homePath );

@@ -179,10 +179,12 @@ void COOP_OnScriptBeam( gentity_t *ent, int event )
 }
 
 // P2's health, armor, weapon and ammo as text ("" when it has none to keep: not in the level and no
-// carry waiting for its first spawn, or dead)
-static void COOP_CarryString( char *s, int size )
+// carry waiting for its first spawn, or dead). For a save, a P2 that is down or dead (the puppet
+// waiting to respawn) is kept as revived: the revive's health, its armor and ammo as they are.
+static void COOP_CarryString( char *s, int size, qboolean forSave )
 {
 	gentity_t	*p2 = COOP_P2();
+	int			health;
 
 	s[0] = 0;
 	if ( !p2 )
@@ -190,11 +192,16 @@ static void COOP_CarryString( char *s, int size )
 		Q_strncpyz( s, coop_carry, size );	// a level start: what P2 brought along, not spawned yet
 		return;
 	}
-	if ( p2->health <= 0 )
+	health = p2->client->ps.stats[STAT_HEALTH];
+	if ( p2->health <= 0 || COOP_IsDowned( p2 ) || p2->client->ps.pm_type == PM_DEAD )
 	{
-		return;
+		if ( !forSave || COOP_GameIsOver() )
+		{
+			return;
+		}
+		health = COOP_ReviveHealth( p2 );
 	}
-	Com_sprintf( s, size, "%i %i %i", p2->client->ps.stats[STAT_HEALTH], p2->client->ps.stats[STAT_ARMOR],
+	Com_sprintf( s, size, "%i %i %i", health, p2->client->ps.stats[STAT_ARMOR],
 		p2->client->ps.weapon );
 	for ( int i = 0; i < AMMO_MAX; i++ )
 	{
@@ -211,17 +218,24 @@ void COOP_CacheForNextLevel( void )
 	{
 		return;
 	}
-	COOP_CarryString( s, sizeof( s ) );
+	COOP_CarryString( s, sizeof( s ), qfalse );
 	gi.cvar_set( COOP_CARRY_CVAR, s );
 }
 
-// WriteLevel (every save): P2's state for the engine's .coop file next to the .sav (the .sav itself
-// stays plain single player). Loading that save hands it back through COOP_CARRY_CVAR.
+// WriteLevel (every co-op save): P2's state for the engine's .coop file next to the .sav (the .sav
+// itself stays plain single player). Loading that save hands it back through COOP_CARRY_CVAR. A co-op
+// save always has a .coop: "new" when P2 has nothing to keep (it starts afresh after the load, as it
+// would without the file). Only a plain single-player save leaves the cvar empty, and the engine
+// then removes an old .coop of the same name.
 void COOP_CacheForSave( void )
 {
 	char	s[MAX_STRING_CHARS];
 
-	COOP_CarryString( s, sizeof( s ) );
+	COOP_CarryString( s, sizeof( s ), qtrue );
+	if ( !s[0] )
+	{
+		Q_strncpyz( s, "new", sizeof( s ) );
+	}
 	gi.cvar_set( COOP_SAVE_CVAR, s );
 }
 
