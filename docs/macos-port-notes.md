@@ -1359,3 +1359,24 @@ inside the visible part (`fitToScreen`). The Co-op sheet does the same: its name
 scrolls, the sheet is at most the screen's visible height, and a Check's answer is scrolled into
 view with Connect. Test hook `VOYAGERSP_TEST_LAUNCHER_HEIGHT=<points>` sizes both as if the
 visible screen were that tall (checked at 500, 600 and 700 with `screencapture -l`).
+
+## Windows / Linux release readiness (2026-11-13)
+- Windows launcher (`sys/win32/wl_ui.cpp`, map glyph): the outline was passed to `DrawPolygon` as a
+  `(PointF[]){...}` compound literal, which g++ 13 (CI's mingw-w64) rejects ("taking address of
+  temporary array"); now a named `PointF outline[8]`. No other compound literals in the win32 or
+  launcher-core C++ sources (checked with `-Wpedantic`).
+- Client smoke test (`tests/smoke/run-smoke.sh client`): single player is the default mode, so the
+  client always loads efui and runs its UI_Init, which stops at the fixture's missing
+  `ext_data/sp_buttontext.dat`. That was intended; the test failed because it also expected the text
+  "efui" in the output, which only the bridge's developer-level log prints. It now checks that R_Init
+  finished, the exit status is 3 (Sys_Error after the controlled error, not a crash signal or a
+  timeout) and the error text that comes from inside efui.
+- Licenses in the Windows zip/installer and the AppImage: liblzma (0BSD, copied from the xz tarball by
+  `{windows,linux}/build-deps.sh`), FFmpeg's LGPL text (now copied into the install prefix by
+  `{windows,linux}/build-ffmpeg.sh`, whose source tree is deleted after the build), SDL3 / sdl2-compat
+  (from `install/share/licenses`), winpthreads (`windows/licenses/`), the AppImage type 2 runtime and
+  what it links statically (`linux/licenses/appimage-runtime/`), and the Debian copyright file of each
+  xcb / xkbcommon / brotli library copied from the Steam Runtime container. `make-release.sh` and
+  `make-appimage.sh` fail when any of these is missing. THIRD_PARTY_LICENSES.md lists them.
+- `windows/ReadMe.txt` and `linux/ReadMe.txt` describe the launcher and its data setup (and get the
+  version filled in); the installer's first Start menu entry is now "Elite Force" (the launcher).

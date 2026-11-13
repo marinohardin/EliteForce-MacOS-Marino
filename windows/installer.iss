@@ -34,7 +34,8 @@ LicenseFile={#SourceDir}\licenses\LICENSE
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Elite Force\Elite Force (Single Player)"; Filename: "{app}\EliteForce.exe"; WorkingDir: "{app}"
+; no arguments: the launcher (game files, Single Player / Holomatch, Host a Server)
+Name: "{autoprograms}\Elite Force\Elite Force"; Filename: "{app}\EliteForce.exe"; WorkingDir: "{app}"
 Name: "{autoprograms}\Elite Force\Elite Force Holomatch"; Filename: "{app}\EliteForce.exe"; Parameters: "+set com_holomatch 1"; WorkingDir: "{app}"
 Name: "{autoprograms}\Elite Force\Elite Force Dedicated Server"; Filename: "{app}\EliteForce.exe"; Parameters: "+set com_holomatch 1 +set dedicated 2"; WorkingDir: "{app}"
 Name: "{autoprograms}\Elite Force\Read Me"; Filename: "{app}\Read Me.txt"
