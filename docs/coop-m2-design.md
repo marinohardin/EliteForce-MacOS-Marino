@@ -351,3 +351,64 @@ with co-op off and with co-op on and `sp_coop 0`.
   -> dropped by the engine, Munro; a loose `models/players/janeway/head_default.skin` in the host's
   folder -> "isn't all in this game's pak0-pak2", Munro. Through the launcher (VOYAGERSP_TEST_COOP_JOIN
   with the prefs set to female + Tuvok): Check, Connect, host "joined ... (female) as tuvok".
+
+## The Use key: hold to teleport, double-tap to ping (1.5.0)
+`efgame/src/coop/coop_use.cpp` (host's game) and `coop_ping.cpp` / `coop_hud.cpp` (cgame). Both work
+only when Use has nothing to do: nothing usable in the crosshair within Use's reach (what the game's
+own Use looks for: usable movers, models and breakables, a locked stasis door, a crew member who
+answers), no use-button trigger the player stands in, and no downed partner within revive reach. A tap
+on a door or button works as before: the game's Use runs unchanged, and such a press never counts.
+
+Hold Use to teleport player 2 to player 1:
+- Only player 2 with a guest steering it. Hold Use `coop_teleporthold` seconds (host cvar, default 5);
+  after 0.4 s the guest sees "Teleporting to <name> (keep holding Use)" and a fill bar over the whole
+  hold. The host sends the bar as a `coopmsg` line `#<done>/<total>` four times a second and the cgame
+  fills it smoothly in between. At the end player 2 is put next to player 1 on the spot the catch-up
+  teleport uses (`COOP_FindSpotNear`: behind, beside, in front, with a floor and a straight line to
+  player 1), with the transporter sound. "No room next to <name>" when there is none.
+- One teleport per press; then 3 s of cooldown ("Teleport ready in N s" while held).
+- Not while a script holds the players (`player_locked`), a camera runs, player 2 is hidden, the game
+  is over, or anyone is down or dead.
+- The game sees the guest's buttons once a host frame; a frame without a guest command (a late
+  packet) doesn't end a hold.
+
+Revive and teleport never mix (revive always wins):
+1. A downed partner within revive reach (the same distance and line-of-sight test the revive uses,
+   `COOP_CanReviveNow`) makes Use a revive: the teleport hold doesn't run.
+2. While player 1 is down or dead (anywhere on the map), or player 2 is down, there is no teleport at
+   all (the revive lines are what's on screen).
+3. A hold that is running when someone goes down, or a revive becomes possible, is cancelled and its
+   bar removed; it doesn't resume: Use must be released and pressed again.
+4. A press that started or finished a revive never turns into a teleport: after the revive, Use must
+   be released first.
+5. So the revive's progress ("Reviving <name>" / "<name> is reviving you") and the teleport's fill bar
+   ("Teleporting to <name>") are never on screen together.
+6. A press that starts a revive doesn't count toward a double tap.
+
+Double-tap Use: "look here":
+- Either player: two presses within 0.35 s, both with nothing to use. The host traces from the
+  player's eye along the view (8192 units, as a shot) and sends `cooping <player> <x> <y> <z> <name>` to
+  both cgames (one server command to everyone; the guest gets it with the replica's commands).
+  A partner standing in the way is looked through (the spot is what is behind them). Nothing on the
+  sky or into the void. At most one ping a second per player; a new one replaces the
+  player's previous one.
+- Each screen shows it for 4 s (fading in the last second): a flare and a ring at the spot (the
+  game's yellow particle and white ring sprites, tinted: player 1 amber, player 2 light blue), a
+  pulsing diamond with the pinger's name over the spot, also through walls, and, while the spot is off
+  screen, an arrowhead (drawn from small squares) on the screen's edge pointing the way to turn, with
+  the name. The communicator chirp (`sound/interface/communicator.wav`) plays on both.
+- A ping's second press doesn't start a teleport hold.
+- Test cvar `coop_use_debug 1` (host): each press prints what it found ("uses a use trigger",
+  "uses a downed partner", "nothing to use, func_breakable").
+
+Tested on one Mac (two copies, borg2, guest input through `+use`/`-use` on its console): a 5 s hold
+put player 2 next to player 1 from about 480 units away, with the bar on the guest's screen; holding in
+a use-button trigger (t149) found the trigger and didn't teleport; player 1 downed next to player 2:
+holding Use 10 s revived after 3 s and didn't teleport afterwards; a double tap there didn't ping
+(both presses "uses a downed partner"); player 1 downed far away: 6 s of holding did nothing (the
+"<name> is down: revive them" line stayed); a hold cancelled when player 1 went down 2 s into it
+and didn't come back while Use stayed down; holding during borg1's opening camera did nothing.
+Pings both ways: the guest's on both screens over the spot, the host's as an arrow on the edge of
+the guest's screen while it looked away; the communicator chirp on both (`s_show 1`). Not tested:
+`player_locked` on its own (player 2's buttons are cleared while it is set, so a hold can't start),
+two Macs.
