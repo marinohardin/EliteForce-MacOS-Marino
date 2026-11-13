@@ -88,7 +88,7 @@ for dep in $(otool -L "$MACOS/efsp" | awk '/@rpath\/lib(av|sw)/{print $1}'); do
 	cp -L "$FFMPEG/lib/$base" "$FW/$base"
 done
 # LGPL: FFmpeg's license text, plus where its exact source and build options are
-FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/macos/build-ffmpeg.sh")"
+FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/deps/versions.sh")"	# shared pins
 mkdir -p "$RES/licenses"
 cp "$ROOT/build-ffmpeg/ffmpeg-$FF_VERSION/COPYING.LGPLv2.1" "$RES/licenses/FFmpeg-LGPL-2.1.txt"
 cat > "$RES/licenses/FFmpeg-README.txt" <<EOF_FF
