@@ -61,6 +61,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 										// animation without needing to know the frame count
 
 #ifdef ELITEFORCE
+#define RF_CAP_FRAMES		0x0400		// one-shot animations (explosions): frames past the model's last
+						// one stay on the last frame instead of starting over
 #define RF_FORCE_ENT_ALPHA	0x0800		// override shader alpha value and take the one from the entity.
 #endif
 

@@ -1287,3 +1287,20 @@ scenarios identical to a baseline recorded at 4dd6eac.
 - Gates: `regress.sh check base-1_4_0` ALL IDENTICAL; `EF_COOP=1 REGRESS_ARGS="+set sp_coop 0"
   regress.sh check coop-m2-base` ALL IDENTICAL. Windows cross-build (mingw) with the new default
   (EF_COOP OFF) and with `-DEF_COOP=ON` both compile.
+
+## Renderer: one-shot animations hold their last frame (`RF_CAP_FRAMES`, 2026-11-12)
+Elite Force's game code marks one-shot model animations with renderfx `RF_CAP_FRAMES` (0x0400):
+explosions (`CG_AddExplosion` in `cg_localents.cpp`) and `EF_ANIM_ONCE` entities (`cg_ents.cpp`);
+the Holomatch game code (cMod and stock) sets it too. The engine renderer never knew the flag. An
+explosion asks for frame `f + 1`, which reaches `numFrames` in the last part of its life, and
+`R_AddMD3Surfaces` turns any frame out of range into frame 0, so the model jumped back to its first
+frame just before it disappeared. `R_AddMD3Surfaces`
+now clamps `frame` / `oldframe` to the model's last frame when the flag is set, before that range
+check. The flag is defined in `renderercommon/tr_types.h` (ELITEFORCE only); nothing else changes.
+- Seen on borg2 with the compression rifle in regress mode (fixed 50 ms frames, a `screenshot`
+  per few frames): the frame where the white shell is in its last frames shows it fading on the
+  wall after the fix, and gone (back to its first frame) before.
+- Gates: `regress.sh check base-1_4_0` ALL IDENTICAL; `EF_COOP=1 REGRESS_ARGS="+set sp_coop 0"
+  regress.sh check coop-m2-base` ALL IDENTICAL (the harness hashes game state, not pixels).
+- The issue had been filed as a shader `animMap` problem; the shader animations were fine, it was
+  the model frames.
