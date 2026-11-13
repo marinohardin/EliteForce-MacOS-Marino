@@ -25,7 +25,7 @@ endif()
 include(CheckCCompilerFlag)
 
 # the app's version (make-app.sh passes its VERSION), shown as "Elite Force for Mac <version>"
-set(EF_APP_VERSION "1.3.0" CACHE STRING "App version shown in the console and to server browsers")
+set(EF_APP_VERSION "1.4.0" CACHE STRING "App version shown in the console and to server browsers")
 option(EF_BINK "Bink cinematics via FFmpeg (OFF = stub, no movies)" ON)
 option(EF_VM_JIT "QVM JIT (aarch64: needs MAP_JIT work on macOS; x86_64: vm_x86.c, untested)" OFF)
 # single-player co-op (experimental): the engine side is the Mac launcher's Co-op… sheet, the
