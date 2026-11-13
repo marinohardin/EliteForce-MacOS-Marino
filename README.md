@@ -179,8 +179,10 @@ Click **Co-op…** on the launcher's Single Player card. The sheet has:
   optional password keeps strangers out. The sheet lists this Mac's address for your friend.
 - **Join**: type the host's address (such as `192.168.1.20`) and click **Check**, which asks
   whether a co-op game runs there and shows what the host is playing. Then click **Connect**.
-  Choose whether you play a **male or female Munro** (how player 2 looks on both screens; the
-  story still talks to the host's Munro), and type the password if the host set one.
+  Choose whether you play a **male or female Munro** (how player 2 looks and sounds on both
+  screens; the story still talks to the host's Munro), and optionally a **Character**: a member of
+  Voyager's crew or the Hazard Team to look like instead (from the game's own files, so the host has
+  them too; the voice stays the Munro you chose). Type the password if the host set one.
 
 As the guest you see the host's world live from player 2's eyes: enemies, doors, lifts,
 explosions, cutscenes and in-game movies, with the host's voice lines, sounds and messages. You

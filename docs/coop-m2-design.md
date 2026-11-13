@@ -313,3 +313,41 @@ with co-op off and with co-op on and `sp_coop 0`.
   leaving turned player 2 back into player 1's look; host as Alexandria with a male guest: player 2 male
   Munro. The sheet rendered with both new controls; Host passed `+set coop_name`. Regression harness vs
   `coop-m2-base`: ALL IDENTICAL with co-op off and with co-op on and `sp_coop 0`.
+
+## Player 2's character (2026-11-13)
+- Join has "Character" under "Munro: Male / Female": "Munro (default)", then Voyager's crew and the
+  Hazard Team (`CoopGuestCharacter`, `+set coop_look <id>`). The sex still picks the voice (pain, death,
+  jump and gasp sounds from `sound/voice/munro|alexa/misc`) and the default Munro; a character changes
+  only the models. The list is `efgame/src/game/coop_characters.h`, one table the sheet and the game
+  share: id, name, and the head, torso and legs (model/skin) the game's own NPC definitions give that
+  character.
+- Only characters from pak0-pak2: crew (Janeway, Chakotay, Tuvok, Paris, Torres, Kim, Seven, the Doctor,
+  Neelix) and the Hazard Team (Tuvok and Seven in hazard suits, Biessman, Chang, Chell, Foster, Telsia,
+  Jurot, Laird, Kenn, Odell, Nelson, Oviedo, Csatlos, Jaworski). Every body there (crewthin,
+  crewfemale, seven, hazard, hazardfemale) is a human-sized skeletal model with tag_head and
+  tag_weapon and the stand, walk, run, jump, crouch, weapon and death animations a player uses. Left
+  out: the Borg, aliens, Klingons and Hirogen (110% NPCs, other animation sets), bots and disguises.
+  The crew bodies have no ladder or swim animations: on a ladder player 2 keeps its last pose (a missing
+  animation is skipped, as for NPCs).
+- Connect carries an optional `look` key (lower case letters, digits and `_`, at most 23; anything else
+  is dropped by the engine). No protocol bump: the key is optional, and an older peer is already refused
+  by the app version check. Bridge version 5 adds `GuestLook` and `CorePakFile`.
+- The host's game (`coop_look.cpp`) takes the id only if it is in the table and every file the cgame
+  loads for it (head.md3, upper/lower.mdr, the three skins, the legs' animation.cfg) comes from its own
+  pak0-pak2: `CorePakFile` asks the engine where the file would be read from (`FS_FileSource`, the
+  pack's checksum, matched with `FS_CoopCorePakIndex`). An unknown id, or a file in a folder or another
+  pack, gives the default Munro of the chosen sex and a console line. The guest's replica gets the
+  model names with player 2's entity and registers them itself, as before.
+- Player 2 keeps the player's box, eye height and hit box whatever it wears (only model names change).
+- Found and fixed on the way: after a model change the cgame kept playing the old body's frame numbers
+  (its animation state for a client is looked up again only when the animation number changes;
+  hazard and hazardfemale share a layout, so the Munro swap never showed it, crewfemale printed "no such
+  frame" every frame). `COOP_ForgetAnimFrames` resets player 2's legs and torso animation state after a
+  change, on the host and on the guest's replica.
+- Tested on one Mac (host + guest, borg2, in-engine screenshots on both): male Janeway, female Seven in
+  the hazard suit, female default Munro (Alexandria), male Tuvok, male Doctor, female Telsia: the same
+  character on both screens, the guest's first-person weapon unchanged; `soundlist` showed the alexa
+  voice registered on both for a female guest. `borgqueen` -> "unknown character", Munro; `../janeway`
+  -> dropped by the engine, Munro; a loose `models/players/janeway/head_default.skin` in the host's
+  folder -> "isn't all in this game's pak0-pak2", Munro. Through the launcher (VOYAGERSP_TEST_COOP_JOIN
+  with the prefs set to female + Tuvok): Check, Connect, host "joined ... (female) as tuvok".
