@@ -360,6 +360,7 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	if ( !respawn )
 	{
 		COOP_ApplyCarry( ent );
+		COOP_ApplyScriptTopUp( ent );
 	}
 	coop_p2.respawnTime = 0;
 	coop_p2.stuckFrames = 0;

@@ -42,6 +42,10 @@
 #define COOP_OnPickup(i,p)			((void)0)
 #define COOP_OnScriptWeapon(e,w)	((void)0)
 #define COOP_OnScriptOrigin(e)		((void)0)
+#define COOP_OnScriptHealth(e,h)	((void)0)
+#define COOP_OnScriptBeam(e,ev)		((void)0)
+#define COOP_P2Trigger(t,o)			0
+#define COOP_OnScriptArmor(e,a)		((void)0)
 #define COOP_CacheForNextLevel()	((void)0)
 #define COOP_ShotStart(e,a)			((void)0)
 #define COOP_ShotEnd()				((void)0)
@@ -117,6 +121,14 @@ void		COOP_OnPickup( gentity_t *item, gentity_t *picker );
 void		COOP_OnDirectSound( int entNum, int channel, const char *path );
 // Q3_SetWeapon gave P1 a weapon: P2 gets it too
 void		COOP_OnScriptWeapon( gentity_t *ent, int wp );
+// Q3_SetHealth / Q3_SetArmor raised P1's: P2's is raised as far (also when P2 spawns later in the level)
+void		COOP_OnScriptHealth( gentity_t *ent, int health );
+void		COOP_OnScriptArmor( gentity_t *ent, int armor );
+// Q3_SetEvent beamed P1 in or out (the transporter shimmer): P2 shimmers too
+void		COOP_OnScriptBeam( gentity_t *ent, int event );
+// Touch_Multi: player 2 set off a trigger the level meant for player 1 alone; the map's fix handled it
+// instead (coop_fixes.cpp). qtrue: the trigger doesn't fire
+qboolean	COOP_P2Trigger( gentity_t *trigger, gentity_t *other );
 // Q3_SetOrigin moved an entity (coop_fixes.cpp): player 1 moved by a script takes player 2 along
 void		COOP_OnScriptOrigin( gentity_t *ent );
 // G_ChangeMap: keep P2's health, armor and ammo for the next level

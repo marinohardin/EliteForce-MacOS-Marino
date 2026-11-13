@@ -2724,6 +2724,7 @@ static void Q3_SetHealth( int entID, int data )
 		{
 			ent->health = ent->client->ps.stats[STAT_HEALTH] = ent->client->ps.stats[STAT_MAX_HEALTH];
 		}
+		COOP_OnScriptHealth( ent, ent->health );
 		if ( data <= 0 )
 		{//artificially "killing" the player", don't let him respawn right away
 			ent->client->ps.pm_type = PM_DEAD;
@@ -2770,6 +2771,7 @@ static void Q3_SetArmor( int entID, int data )
 		{
 			ent->client->ps.stats[STAT_ARMOR] = ent->client->ps.stats[STAT_MAX_HEALTH];
 		}
+		COOP_OnScriptArmor( ent, ent->client->ps.stats[STAT_ARMOR] );
 	}
 }
 
@@ -4225,6 +4227,7 @@ static void Q3_SetEvent( int entID, const char *event_name )
 			tent = G_TempEntity( ent->client->ps.origin, EV_PLAYER_TELEPORT_OUT );
 		}
 		tent->owner = ent;
+		COOP_OnScriptBeam( ent, EV_PLAYER_TELEPORT_OUT );
 		break;
 
 	case EV_BEAM_UP:
@@ -4245,6 +4248,7 @@ static void Q3_SetEvent( int entID, const char *event_name )
 			tent = G_TempEntity( ent->client->ps.origin, EV_PLAYER_TELEPORT_IN );
 		}
 		tent->owner = ent;
+		COOP_OnScriptBeam( ent, EV_PLAYER_TELEPORT_IN );
 		break;
 
 	case EV_SCAV_TELEPORT:

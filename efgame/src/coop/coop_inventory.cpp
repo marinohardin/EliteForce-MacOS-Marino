@@ -60,6 +60,124 @@ void COOP_OnScriptWeapon( gentity_t *ent, int wp )
 	coop_p2.scriptGuestWeapon = -1;
 }
 
+/*
+Script top-ups
+
+A script that sets player 1's health or armor is the story looking after "the player" (voy13 heals
+the team after the Borg missions, borg3 hands out armor with the I-MOD). Player 2 gets the same, up
+to its own max; a script never lowers player 2's (a lower value is a scene's business with player 1).
+These scripts usually run at the level start, before player 2 has spawned: the values wait for its
+first spawn, after what it carried over.
+*/
+static int		coop_topUpHealth;		// waiting for P2's first spawn in this level (0: none)
+static int		coop_topUpArmor;
+
+static gentity_t *COOP_TopUpTarget( gentity_t *ent )
+{
+	gentity_t *p2;
+
+	if ( !coop_enabled || ent != &g_entities[0] )
+	{
+		return NULL;
+	}
+	p2 = COOP_P2();
+	if ( !p2 || p2->health <= 0 || COOP_IsDowned( p2 ) || p2->client->ps.pm_type == PM_DEAD )
+	{
+		return NULL;
+	}
+	return p2;
+}
+
+static void COOP_RaiseHealth( gentity_t *p2, int health )
+{
+	gclient_t *cl = p2->client;
+
+	if ( health > cl->ps.stats[STAT_MAX_HEALTH] )
+	{
+		health = cl->ps.stats[STAT_MAX_HEALTH];
+	}
+	if ( health > p2->health )
+	{
+		p2->health = cl->ps.stats[STAT_HEALTH] = health;
+	}
+}
+
+static void COOP_RaiseArmor( gentity_t *p2, int armor )
+{
+	gclient_t *cl = p2->client;
+
+	if ( armor > cl->ps.stats[STAT_MAX_HEALTH] )
+	{
+		armor = cl->ps.stats[STAT_MAX_HEALTH];
+	}
+	if ( armor > cl->ps.stats[STAT_ARMOR] )
+	{
+		cl->ps.stats[STAT_ARMOR] = armor;
+	}
+}
+
+void COOP_OnScriptHealth( gentity_t *ent, int health )
+{
+	gentity_t *p2;
+
+	if ( !coop_enabled || ent != &g_entities[0] || health <= 0 )
+	{
+		return;
+	}
+	if ( !COOP_P2() )
+	{
+		coop_topUpHealth = health > coop_topUpHealth ? health : coop_topUpHealth;
+	}
+	else if ( ( p2 = COOP_TopUpTarget( ent ) ) != NULL )
+	{
+		COOP_RaiseHealth( p2, health );
+	}
+}
+
+void COOP_OnScriptArmor( gentity_t *ent, int armor )
+{
+	gentity_t *p2;
+
+	if ( !coop_enabled || ent != &g_entities[0] || armor <= 0 )
+	{
+		return;
+	}
+	if ( !COOP_P2() )
+	{
+		coop_topUpArmor = armor > coop_topUpArmor ? armor : coop_topUpArmor;
+	}
+	else if ( ( p2 = COOP_TopUpTarget( ent ) ) != NULL )
+	{
+		COOP_RaiseArmor( p2, armor );
+	}
+}
+
+// P2's first spawn in a level, after COOP_ApplyCarry: what the level's scripts gave player 1 before
+void COOP_ApplyScriptTopUp( gentity_t *ent )
+{
+	if ( coop_topUpHealth || coop_topUpArmor )
+	{
+		COOP_RaiseHealth( ent, coop_topUpHealth );
+		COOP_RaiseArmor( ent, coop_topUpArmor );
+		gi.Printf( "co-op: player 2 gets the level's script top-up (health %d, armor %d)\n",
+			ent->health, ent->client->ps.stats[STAT_ARMOR] );
+	}
+	coop_topUpHealth = coop_topUpArmor = 0;
+}
+
+// a script beams player 1 in or out (voy15's transporter to the Dreadnought): the away team is both
+void COOP_OnScriptBeam( gentity_t *ent, int event )
+{
+	gentity_t *p2 = COOP_TopUpTarget( ent );
+
+	if ( p2 && !coop_p2.hidden )
+	{
+		gentity_t *tent = G_TempEntity( p2->client->ps.origin, event );
+		tent->owner = p2;
+		gi.Printf( "co-op: player 2 %s with player 1\n", event == EV_PLAYER_TELEPORT_OUT ? "beams out" : "beams in" );
+	}
+}
+
 // P2's health, armor, weapon and ammo as text ("" when it has none to keep: not in the level and no
 // carry waiting for its first spawn, or dead)
 static void COOP_CarryString( char *s, int size )
@@ -111,6 +229,7 @@ void COOP_CacheForSave( void )
 void COOP_ReadCarry( void )
 {
 	coop_carry[0] = 0;
+	coop_topUpHealth = coop_topUpArmor = 0;
 	if ( !coop_enabled )
 	{
 		return;
