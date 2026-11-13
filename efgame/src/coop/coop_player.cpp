@@ -152,6 +152,55 @@ void COOP_ApplyHidden( gentity_t *ent, qboolean hidden )
 }
 
 /*
+COOP_UpdatePassable
+
+A script that holds the player still (player_locked) is usually staging a scene around them: an
+NPC walks up to player 1, talks, and only then lets go. P2 is held too, so if it stands where that
+NPC has to go (P2 is placed in front of P1 when there is no room behind, as at the turbolift where
+voy4 starts), the NPC never arrives, the script never finishes and nobody can move again. While the
+players are held, P2 lets people through (corpse contents: shots still hit it) and passes through
+them; once the scene is over it is solid again as soon as nobody is inside it.
+*/
+static void COOP_UpdatePassable( gentity_t *ent )
+{
+	qboolean held = (qboolean)( player_locked && !coop_p2.hidden && ent->health > 0
+		&& ent->client->ps.pm_type < PM_DEAD && !COOP_IsDowned( ent ) );
+
+	if ( !coop_p2.passable )
+	{
+		if ( held && ent->contents == CONTENTS_BODY )
+		{
+			coop_p2.passable = qtrue;
+			ent->contents = CONTENTS_CORPSE;
+			ent->clipmask = MASK_PLAYERSOLID & ~CONTENTS_BODY;
+			gi.linkentity( ent );
+		}
+		return;
+	}
+	if ( ent->contents != CONTENTS_CORPSE || ent->health <= 0 || coop_p2.hidden )
+	{
+		// hidden, down, dead or respawned since: that code set the contents; only the clip mask is ours
+		coop_p2.passable = qfalse;
+		ent->clipmask = MASK_PLAYERSOLID;
+		return;
+	}
+	if ( held )
+	{
+		return;
+	}
+	trace_t tr;
+	gi.trace( &tr, ent->currentOrigin, ent->mins, ent->maxs, ent->currentOrigin, ent->s.number, CONTENTS_BODY );
+	if ( tr.startsolid || tr.allsolid )
+	{
+		return;	// someone is still inside P2: walk out of each other first
+	}
+	coop_p2.passable = qfalse;
+	ent->contents = CONTENTS_BODY;
+	ent->clipmask = MASK_PLAYERSOLID;
+	gi.linkentity( ent );
+}
+
+/*
 COOP_SetupP2
 
 Fresh client state for P2 at org, facing yaw. Looks like P1 (same models), or the guest's
@@ -480,6 +529,7 @@ void COOP_RunFrame( void )
 		coop_p2.rejoinAt = 0;
 		COOP_CameraRejoin( ent );
 	}
+	COOP_UpdatePassable( ent );
 	COOP_BuildCmd( ent, &cmd );
 	ClientThink( ent->s.number, &cmd );
 }

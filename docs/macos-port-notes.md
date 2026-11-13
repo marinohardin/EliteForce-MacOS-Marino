@@ -1261,6 +1261,24 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   entities), debug drawing (CG_Cube/CG_Line).
 - Test hook: `coop_p2_damage <n> near` (player 2 damages the nearest breakable).
 
+## Co-op: nobody stuck at the start of voy4 (2026-11-12, branch `1_4_0/coop-fx` only)
+- voy4 starts with the players held (`player_locked`) in the turbolift while an NPC walks up and
+  talks; the script lets go when the scene is done. There is no room behind or beside player 1 there,
+  so player 2 stands in the doorway in front of them, held too: the NPC never arrived, the scene never
+  ended and neither player could move again. It happened on every death (the level-entry autosave
+  starts the scene over); loading a save later in the level skipped it.
+- While a script holds the players, player 2 now lets people through and walks through them (corpse
+  contents: shots still hit it). When the hold ends it is solid again once nobody is inside it.
+
+## Co-op: the guest sees player 1's phaser (2026-11-12, branch `1_4_0/coop-fx` only)
+- The cgame left out entity 0's third-person beam whenever it drew a first-person view, because in
+  single player entity 0 is the view player and its view weapon draws the beam. A guest views player
+  2, so player 1's phaser beam was never drawn there. Those checks now use the view player (still
+  entity 0 without co-op).
+- A held beam (phaser, the dreadnought's main fire) of the other player was drawn only in the instant
+  after each fire event, so player 2's beam flickered on the host and left fewer burn marks than a
+  view weapon's. In co-op the players' held beams are drawn every frame, like the view weapon's.
+
 ## SP: no crash on a ladder or in water while the player is predicted (2026-11-12)
 
 With `timescale` below 1 the SP cgame predicts the player itself (`CG_PredictPlayerState`) with no

@@ -51,6 +51,7 @@
 #define COOP_PredictingEvents(p)	((void)0)
 #define COOP_SkipPlayerstateEvent(e)	0
 #define COOP_SkipEntityEvent(n,e)	0
+#define COOP_HeldBeam(es)			0
 #define COOP_ServerCommand(c)		0
 #define COOP_DrawStatus()			((void)0)
 #define COOP_PlayerDown(e,a,m)		0
@@ -133,6 +134,14 @@ void		COOP_NoteViewMuzzle( const vec3_t origin );
 void		COOP_PredictingEvents( qboolean predicting );
 qboolean	COOP_SkipPlayerstateEvent( int event );
 qboolean	COOP_SkipEntityEvent( int num, int event );
+
+// the other player's held beam (phaser, dreadnought's main fire): drawn every frame it is held, as
+// the view weapon's is, not only in the instant after each fire event (CG_Player)
+inline bool COOP_HeldBeam( const entityState_t *es )
+{
+	return coop_p2Num >= 0 && COOP_IsPlayerNum( es->number ) && ( es->eFlags & EF_FIRING )
+		&& ( es->weapon == WP_PHASER || ( es->weapon == WP_DREADNOUGHT && !( es->eFlags & EF_ALT_FIRING ) ) );
+}
 
 // the cgame's co-op status text (coop_hud.cpp): CG_ServerCommand hands it "coopmsg" (qtrue:
 // taken), CG_Draw2D draws it

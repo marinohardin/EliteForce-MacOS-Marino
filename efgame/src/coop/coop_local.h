@@ -14,6 +14,7 @@ typedef struct
 	int			respawnTime;		// dead P2 comes back next to P1 at this level.time
 	int			nextSpawnTry;		// no clear spot next to P1 yet: try again at this time
 	qboolean	hidden;				// a camera is running: P2 is not drawn and not solid
+	qboolean	passable;			// a scripted scene holds the players: people walk through P2 (COOP_UpdatePassable)
 	qboolean	follow;				// follow P1 when no console move is running
 	int			stuckFrames;		// follow: frames without progress
 	int			rejoinAt;			// a camera ended: check again at this level.time that P2 is with P1
