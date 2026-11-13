@@ -555,7 +555,7 @@ void FireScavengerGrenade( gentity_t *ent, vec3_t start, vec3_t dir )
 	grenade->s.pos.trTime = level.time;		// move a bit on the very first frame
 	
 	VectorCopy( start, grenade->s.pos.trBase );
-	VectorScale( dir, random() * 100 + SCAV_ALT_VELOCITY, grenade->s.pos.trDelta );
+	VectorScale( dir, COOP_WeaponRandom() * 100 + SCAV_ALT_VELOCITY, grenade->s.pos.trDelta );
 	grenade->s.pos.trDelta[2] += 140;
 
 	SnapVector( grenade->s.pos.trDelta );			// save net bandwidth
@@ -602,13 +602,13 @@ void WP_FireScavenger( gentity_t *ent, qboolean alt_fire, qboolean greyscale )
 		}
 		else
 		{
-			VectorSet( temp_ang, angles[0] + (crandom() * SCAV_SPREAD), angles[1] + (crandom() * SCAV_SPREAD), angles[2] );
+			VectorSet( temp_ang, angles[0] + (COOP_WeaponCrandom() * SCAV_SPREAD), angles[1] + (COOP_WeaponCrandom() * SCAV_SPREAD), angles[2] );
 		}
 
 		AngleVectors( temp_ang, dir, NULL, NULL );
 
 		// try to make the shot alternate between barrels
-		offset = Q_irand(0, 1) * 2 + 1;
+		offset = COOP_WeaponIrand(0, 1) * 2 + 1;
 
 		VectorMA( start, offset, vright, temp_org );
 		VectorMA( temp_org, offset, up, temp_org );
@@ -1046,8 +1046,8 @@ void FireTetrionBullet( gentity_t *ent, vec3_t start, vec3_t dir )
 	for ( int i = 0; i < NUM_TETRION_SHOTS; i ++ )
 	{
 		// Add some sloppiness to the shot so it's harder to hit when you are far away
-		r = crandom()*TETRION_SPREAD;
-		u = crandom()*TETRION_SPREAD;
+		r = COOP_WeaponCrandom()*TETRION_SPREAD;
+		u = COOP_WeaponCrandom()*TETRION_SPREAD;
 
 		VectorMA (start, 8192, _forward, end);
 
@@ -1065,7 +1065,7 @@ void FireTetrionBullet( gentity_t *ent, vec3_t start, vec3_t dir )
 		traceEnt = &g_entities[ tr.entityNum ];
 
 		// Don't always draw a tracer line
-		if ( random() > 0.1 )
+		if ( COOP_WeaponRandom() > 0.1 )
 		{
 			// Create the trace effect
 			tent = G_TempEntity( tr.endpos, EV_TETRION );

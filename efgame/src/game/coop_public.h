@@ -50,6 +50,11 @@
 #define COOP_ShotStart(e,a)			((void)0)
 #define COOP_ShotEnd()				((void)0)
 #define COOP_TagTempEntity(e)		((void)0)
+#define COOP_WeaponRandom()			random()
+#define COOP_WeaponCrandom()		crandom()
+#define COOP_WeaponIrand(a,b)		Q_irand( (a), (b) )
+#define COOP_AddPredictedMissiles()	((void)0)
+#define COOP_MissileLerp(c)			((void)0)
 #define COOP_PredictShot(c,a)		((void)0)
 #define COOP_SkipHostShot(s,e)		0
 #define COOP_NoteViewMuzzle(o)		((void)0)
@@ -139,6 +144,14 @@ void		COOP_CacheForNextLevel( void );
 void		COOP_ShotStart( gentity_t *ent, qboolean alt );
 void		COOP_ShotEnd( void );
 void		COOP_TagTempEntity( gentity_t *tent );
+// the random numbers of a shot's spread (the scavenger rifle's, the tetrion's): while a guest's
+// shot of player 2 is fired (host) or predicted (guest) they come from a sequence seeded with the
+// shot's view time, so both draw the same spread; otherwise random(), crandom(), Q_irand()
+void		COOP_SeedShot( int seed );
+void		COOP_UnseedShot( void );
+float		COOP_WeaponRandom( void );
+float		COOP_WeaponCrandom( void );
+int			COOP_WeaponIrand( int min, int max );
 
 // the guest's cgame (coop_predict.cpp): player 2's shots drawn when the guest fires
 // (CG_FireWeapon), the host's effects of them left out (CG_EntityEvent), and where the view
@@ -146,6 +159,12 @@ void		COOP_TagTempEntity( gentity_t *tent );
 void		COOP_PredictShot( centity_t *cent, qboolean alt );
 qboolean	COOP_SkipHostShot( const entityState_t *es, int event );
 void		COOP_NoteViewMuzzle( const vec3_t origin );
+// the guest's projectiles of player 2 drawn from the moment it fires until the host's arrive
+// (CG_AddPacketEntities), the host's then eased onto the drawn path (CG_Missile), and the view
+// weapon's firing animation run from the guest's own shots (CG_AddViewWeapon)
+void		COOP_AddPredictedMissiles( void );
+void		COOP_MissileLerp( centity_t *cent );
+void		COOP_ViewWeaponFrames( clientInfo_t *ci, centity_t *cent, int *frame, int *oldframe, float *backlerp );
 // a replica's player events: the ones its own moves make come from its prediction, the rest from the host
 void		COOP_PredictingEvents( qboolean predicting );
 qboolean	COOP_SkipPlayerstateEvent( int event );
