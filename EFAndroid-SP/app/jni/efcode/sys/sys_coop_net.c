@@ -17,7 +17,8 @@ newline and an infostring or a sentence):
                                files loaded: FS_CoopPaks), name, password,
                                nonce (the guest's, echoed back), and optionally sex
                                (male / female: how player 2 looks; without it, like
-                               player 1)
+                               player 1) and look (a character for player 2 from the
+                               game's coop_characters.h; without it, Munro)
   host -> guest  coopAccept    session, nonce, paks (the host's), hostName (the host player's name), map, state
                  coopReject    a sentence for the guest's console
 The host takes one guest. The app version, co-op protocol and the game's own
@@ -326,6 +327,29 @@ static const char *CoopSexValue( const char *s )
 	if ( !Q_stricmp( s, "male" ) || !Q_stricmp( s, "m" ) )
 		return "male";
 	return "";
+}
+
+// a character id (coop_look: lower case letters, digits and _), "" for anything else; the host's
+// game takes only the ones it knows
+static void CoopLookValue( const char *in, char *out, int size )
+{
+	int n = 0;
+
+	for ( ; *in && n < size - 1; in++ )
+	{
+		char c = *in;
+		if ( ( c >= 'A' && c <= 'Z' ) )
+			c += 'a' - 'A';
+		if ( !( ( c >= 'a' && c <= 'z' ) || ( c >= '0' && c <= '9' ) || c == '_' ) )
+		{
+			n = 0;
+			break;
+		}
+		out[n++] = c;
+	}
+	if ( *in )
+		n = 0;		// too long or not an id: Munro
+	out[n] = 0;
 }
 
 // a sentence received from the other side, made printable
@@ -930,6 +954,7 @@ static struct {
 	unsigned			session;
 	char				name[32];
 	char				sex[8];			// "male", "female", or "" (look like player 1)
+	char				look[COOP_LOOK_MAX];	// the guest's character, "" for Munro (the game checks it)
 	char				nonce[24];
 	int					lastHeard;		// Sys_Milliseconds of the guest's last packet
 	int					lastStatus;
@@ -1011,6 +1036,7 @@ static void CoopHostDrop( int sock, const char *reason, qboolean tell )
 	coopHost.viewTime = 0;
 	coopHost.name[0] = 0;
 	coopHost.sex[0] = 0;
+	coopHost.look[0] = 0;
 	CoopRingFree( &coopHost.ring );
 	coopHost.building = NULL;
 }
@@ -1024,7 +1050,7 @@ static void CoopHostReject( int sock, const struct sockaddr_in *from, const char
 static void CoopHostConnect( int sock, const char *request, const struct sockaddr_in *from )
 {
 	char	protocol[16], version[64], paks[256], rawName[128], name[32], password[128], ourPassword[128], nonce[24];
-	char	sex[16], why[512], hostWhy[512];
+	char	sex[16], look[64], why[512], hostWhy[512];
 	int		pakMatch;
 	char	info[MAX_INFO_STRING];
 	int		now = Sys_Milliseconds();
@@ -1044,6 +1070,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	CoopGetInfo( request, "name", rawName, sizeof( rawName ) );
 	CoopCleanName( rawName, name, sizeof( name ) );
 	CoopGetInfo( request, "sex", sex, sizeof( sex ) );		// (optional: a guest without it looks like player 1)
+	CoopGetInfo( request, "look", look, sizeof( look ) );	// (optional: Munro without it)
 	CoopGetInfo( request, "password", password, sizeof( password ) );
 	CoopGetInfo( request, "nonce", nonce, sizeof( nonce ) );
 	if ( !name[0] )
@@ -1100,6 +1127,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	coopHost.session = CoopNewSession();
 	Q_strncpyz( coopHost.name, name, sizeof( coopHost.name ) );
 	Q_strncpyz( coopHost.sex, CoopSexValue( sex ), sizeof( coopHost.sex ) );
+	CoopLookValue( look, coopHost.look, sizeof( coopHost.look ) );
 	Q_strncpyz( coopHost.nonce, nonce, sizeof( coopHost.nonce ) );
 	coopHost.lastHeard = now;
 	coopHost.lastStatus = now;
@@ -1125,8 +1153,8 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	CoopHostStateInfo( info );
 	CoopSendOOB( sock, from, COOP_ACCEPT, info );
-	Com_Printf( "co-op: %s joined from %s as player 2%s\n", coopHost.name, CoopAddressString( from ),
-		coopHost.sex[0] ? va( " (%s)", coopHost.sex ) : "" );
+	Com_Printf( "co-op: %s joined from %s as player 2%s%s\n", coopHost.name, CoopAddressString( from ),
+		coopHost.sex[0] ? va( " (%s)", coopHost.sex ) : "", coopHost.look[0] ? va( " as %s", coopHost.look ) : "" );
 	if ( pakMatch == COOP_PAKS_EXPANSION )
 		Com_Printf( "co-op: note: %s\n", hostWhy );
 }
@@ -1345,6 +1373,24 @@ const char *CoopNet_GuestName( void )
 const char *CoopNet_GuestSex( void )
 {
 	return coopHost.active ? coopHost.sex : "";
+}
+
+// the character the guest chose, "" for the default Munro or without a guest
+const char *CoopNet_GuestLook( void )
+{
+	return coopHost.active ? coopHost.look : "";
+}
+
+// the copy of qpath the game would load is in one of the game's own pak0-pak2 (pak3, other
+// packs and loose files don't count: a guest's pak0-pak2 match the host's, nothing else does)
+qboolean CoopNet_CorePakFile( const char *qpath )
+{
+	int source = FS_FileSource( qpath ), pak;		// the pack's checksum (a folder's is another number)
+
+	if ( !source )
+		return qfalse;
+	pak = FS_CoopCorePakIndex( (unsigned int)source );
+	return ( pak >= 0 && pak <= 2 ) ? qtrue : qfalse;
 }
 
 /*
@@ -1623,7 +1669,9 @@ static void CoopGuestSendConnect( void )
 {
 	char	info[MAX_INFO_STRING], name[COOP_NAME_MAX + 1];
 	const char *sex = CoopSexValue( Cvar_VariableString( "coop_sex" ) );
+	char	look[COOP_LOOK_MAX];
 
+	CoopLookValue( Cvar_VariableString( "coop_look" ), look, sizeof( look ) );
 	CoopOwnName( name, sizeof( name ) );
 	info[0] = 0;
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
@@ -1632,6 +1680,8 @@ static void CoopGuestSendConnect( void )
 	CoopSetInfo( info, "name", name[0] ? name : "Player 2" );
 	if ( sex[0] )
 		CoopSetInfo( info, "sex", sex );
+	if ( look[0] )
+		CoopSetInfo( info, "look", look );
 	CoopSetInfo( info, "nonce", coopGuest.nonce );
 	if ( Sys_CoopPassword()[0] )
 		CoopSetInfo( info, "password", Sys_CoopPassword() );

@@ -52,6 +52,9 @@ void		COOP_PublishInfo( void );					// coop_info.cpp
 qboolean	COOP_GuestCmd( usercmd_t *cmd );			// coop_net.cpp
 const char	*COOP_GuestName( void );
 const char	*COOP_GuestSex( void );					// "male", "female", or "" (look like P1)
+void		COOP_ForgetAnimFrames( int num );		// coop_look.cpp
+const char	*COOP_GuestLook( void );					// the guest's character id, "" for Munro
+qboolean	COOP_CorePakFile( const char *qpath );		// qpath comes from pak0-pak2
 qboolean	COOP_GuestConnected( void );
 int			COOP_GuestViewTime( void );
 int			COOP_TakeShotTime( void );					// coop_predict.cpp

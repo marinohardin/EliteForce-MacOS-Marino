@@ -407,6 +407,7 @@ void Sys_CoopFrame( void )
 		Cvar_Get( "coop_password", "", CVAR_TEMP );
 		Cvar_Get( "coop_name", "", CVAR_TEMP );		// "Your name" (empty: this computer's name)
 		Cvar_Get( "coop_sex", "", CVAR_TEMP );		// a guest's Munro: male / female (empty: like the host's)
+		Cvar_Get( "coop_look", "", CVAR_TEMP );		// a guest's character for player 2 (empty: Munro)
 		coop_backgroundPlay = Cvar_Get( "coop_backgroundPlay", "1", CVAR_ARCHIVE );
 		CoopNet_AddCommands();
 	}

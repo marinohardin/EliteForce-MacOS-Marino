@@ -149,6 +149,8 @@ extern "C" {
                                     signed char *rightmove, signed char *upmove );
     const char *CoopNet_GuestName( void );
     const char *CoopNet_GuestSex( void );
+    const char *CoopNet_GuestLook( void );
+    int         CoopNet_CorePakFile( const char *qpath );
     int         CoopNet_HostHasGuest( void );
     int         CoopNet_GuestViewTime( void );
 }
@@ -161,10 +163,11 @@ static qboolean SP_CoopGuestCmd( usercmd_t *cmd ){
     return qtrue;
 }
 static qboolean SP_CoopGuestConnected( void ){ return CoopNet_HostHasGuest() ? qtrue : qfalse; }
+static qboolean SP_CoopCorePakFile( const char *qpath ){ return CoopNet_CorePakFile( qpath ) ? qtrue : qfalse; }
 static void SP_CoopSetBridge( void ){
     typedef void (*coopSetBridge_t)( const coopBridge_t * );
     static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName, SP_CoopGuestConnected,
-                                   CoopNet_GuestViewTime, CoopNet_GuestSex };
+                                   CoopNet_GuestViewTime, CoopNet_GuestSex, CoopNet_GuestLook, SP_CoopCorePakFile };
     coopSetBridge_t set = (coopSetBridge_t)SP_ModuleSym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
     if( set ) set( &bridge );
 }

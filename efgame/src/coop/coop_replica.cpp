@@ -678,6 +678,7 @@ static void REP_ApplyDone( qboolean cgameUp )
 		{
 			rep_needMedia[i] = 0;
 			CG_RegisterClientModels( i );
+			COOP_ForgetAnimFrames( i );		// (other models: their own animation table)
 			if ( i != 0 )
 			{
 				CG_RegisterNPCCustomSounds( &ent->client->clientInfo );

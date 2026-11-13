@@ -30,6 +30,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 
 // the longest player name co-op sends (coop_name; the launcher's "Your name")
 #define COOP_NAME_MAX		31
+#define COOP_LOOK_MAX		24	// a player 2 character id with its terminator (= COOP_CHARACTER_MAX)
 
 // the biggest co-op packet (fits a usual Ethernet/Wi-Fi MTU with room to spare)
 #define COOP_MAX_PACKET		1400
@@ -77,6 +78,12 @@ int			CoopNet_GuestViewTime( void );
 const char	*CoopNet_GuestName( void );
 // how the guest wants player 2 to look: "male", "female", or "" (like player 1, or no guest)
 const char	*CoopNet_GuestSex( void );
+// the character the guest chose for player 2 (an id from the game's coop_characters.h), "" for
+// the default Munro or without a guest
+const char	*CoopNet_GuestLook( void );
+// qpath, as the game would load it, comes from the game's own pak0-pak2 (not from a folder or
+// another pack)
+qboolean	CoopNet_CorePakFile( const char *qpath );
 
 // The host's replica frames (sp/sp_bridge.cpp, after every game frame while a guest is here):
 // Begin returns 0 when no guest wants one; then every slot that isn't empty, then End sends it.
