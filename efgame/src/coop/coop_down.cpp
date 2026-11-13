@@ -232,6 +232,20 @@ static qboolean COOP_CanReach( gentity_t *reviver, gentity_t *downed, float rang
 	return qfalse;
 }
 
+// a revive is what this player's Use does now: the partner is down and within reach (coop_use.cpp:
+// the teleport hold and the double tap leave such a press alone)
+qboolean COOP_CanReviveNow( gentity_t *reviver )
+{
+	int idx = COOP_DownIndex( reviver );
+
+	if ( !coop_enabled || idx < 0 || !coop_down[idx ^ 1].down || !COOP_PlayerUp( idx ) )
+	{
+		return qfalse;
+	}
+	gentity_t *downed = COOP_DownPlayer( idx ^ 1 );
+	return (qboolean)( downed && COOP_CanReach( reviver, downed, COOP_REVIVE_RANGE ) );
+}
+
 /*
 COOP_PlayerDown
 

@@ -27,6 +27,7 @@ void COOP_Init( void )
 	COOP_ReplicaInit();
 	COOP_AIInit();
 	COOP_DownInit();
+	COOP_UseInit();
 	memset( &coop_p2, 0, sizeof( coop_p2 ) );
 	coop_p2.follow = qtrue;
 	COOP_ReadCarry();

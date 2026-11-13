@@ -58,6 +58,7 @@
 #define COOP_IsDowned(e)			0
 #define COOP_AnyoneDown()			0
 #define COOP_ReviveAll()			((void)0)
+#define COOP_UseButtons(e,u)		((void)0)
 #define COOP_NoteAttacker(v,a)		((void)0)
 #define COOP_ScriptEnemy(s,e)		(e)
 #define COOP_RethinkPlayerEnemy()	((void)0)
@@ -155,6 +156,10 @@ qboolean	COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod );
 qboolean	COOP_IsDowned( const gentity_t *ent );
 qboolean	COOP_AnyoneDown( void );
 void		COOP_ReviveAll( void );
+
+// ClientThink_real, after the buttons were taken (coop_use.cpp): Use with nothing to use: player 2's
+// hold teleports it to player 1, a double tap (either player) pings the aimed spot for both
+void		COOP_UseButtons( gentity_t *ent, usercmd_t *ucmd );
 
 // enemies and the two players (coop_ai.cpp): NPC_Pain notes which player hurt an NPC; a script
 // that names player 1 as an NPC's enemy gets the player that provoked it (or the nearer one,

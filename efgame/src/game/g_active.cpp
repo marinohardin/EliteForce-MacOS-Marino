@@ -1168,6 +1168,7 @@ extern vmCvar_t cg_thirdPerson;
 	client->oldbuttons = client->buttons;
 	client->buttons = ucmd->buttons;
 	client->latched_buttons |= client->buttons & ~client->oldbuttons;
+	COOP_UseButtons( ent, ucmd );	// co-op: hold Use to teleport player 2, double-tap to ping
 
 	// check for respawning
 	if ( client->ps.stats[STAT_HEALTH] <= 0 ) 

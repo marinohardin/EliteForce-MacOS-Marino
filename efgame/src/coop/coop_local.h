@@ -67,6 +67,8 @@ void		COOP_FxPlay( qboolean cgameUp );
 void		COOP_DownInit( void );						// coop_down.cpp
 void		COOP_DownFrame( void );
 qboolean	COOP_GameIsOver( void );
+qboolean	COOP_CanReviveNow( gentity_t *reviver );		// the partner is down within reach
+void		COOP_UseInit( void );						// coop_use.cpp: hold to teleport, double-tap ping
 void		COOP_ListNPCs( void );
 void		COOP_ReplicaInit( void );					// coop_replica.cpp				// a guest is connected, steering or not
 
