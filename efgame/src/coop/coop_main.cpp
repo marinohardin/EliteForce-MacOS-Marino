@@ -137,6 +137,9 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 					ent->client->renderInfo.boltOns[i].index ) );
 			}
 			gi.Printf( "co-op: bolt-ons (player 1/player 2):%s\n", bolts );
+			gi.Printf( "co-op: gravity player 1 %d%s, player 2 %d%s\n", p1->client->ps.gravity,
+				( p1->svFlags & SVF_CUSTOM_GRAVITY ) ? " (own)" : "", ent->client->ps.gravity,
+				( ent->svFlags & SVF_CUSTOM_GRAVITY ) ? " (own)" : "" );
 		}
 	}
 	else if ( !Q_stricmp( cmd, "coop_p2_move" ) )

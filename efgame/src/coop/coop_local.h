@@ -35,6 +35,14 @@ typedef struct
 	// the guest's input (coop_net.cpp) steers P2; its view angles were re-based on the guest's
 	qboolean	guestSteering;
 	int			shotViewTime;		// the host time the guest's screen showed for this command (0: not the guest's)
+
+	// player 1's armor when this level started (P2's first spawn without a carry-over gets the same)
+	qboolean	haveP1StartArmor;
+	int			p1StartArmor;
+
+	// out of the world (COOP_CatchOutOfWorld): since when P2 has been inside solid / falling fast (0: not)
+	int			voidSince;
+	int			fallSince;
 } coopP2State_t;
 
 extern coopP2State_t	coop_p2;
