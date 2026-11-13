@@ -9,11 +9,16 @@
 #
 # server: dedicated (headless) Holomatch server, no GPU. Boots filesystem init
 #         with the fixture, lists the search path, quits. Expects exit 0.
-# client: full client boot (SDL window, Vulkan renderer, sound, efui load).
-#         Run under xvfb-run + Mesa lavapipe on Linux. With the fixture the UI
-#         stops at the missing retail SP_BUTTONTEXT.DAT, so the expected
-#         result is exit != 0 with that error, after the renderer and efui
-#         were brought up; a clean exit 0 is accepted too.
+# client: full client boot (SDL window, Vulkan renderer, efui load).
+#         Run under xvfb-run + Mesa lavapipe on Linux. Single player is the
+#         default mode, so the client loads the native SP menu module (efui)
+#         and runs its UI_Init. The fixture has no retail UI text, so UI_Init
+#         stops with its own "SP_BUTTONTEXT.DAT file not found" error: that
+#         message comes from inside efui, which proves the module loaded and
+#         ran. Expected: R_Init finished, then that controlled error (exit 3
+#         from Sys_Error, not a crash signal or a timeout). A clean exit 0 is
+#         accepted too. (Real installs never get here without data: the
+#         launcher's data setup and the engine's pak0.pk3 check come first.)
 set -u
 
 mode="${1:?usage: run-smoke.sh server|client <efsp> [--wine]}"
@@ -67,13 +72,17 @@ client)
 	rc=$?
 	expect "----- FS_Startup -----"
 	expect "zz_smoke.pk3"
+	expect "----- finished R_Init -----"
 	if [ $rc -eq 0 ]; then
 		echo "PASS: client smoke (clean exit)"
 	else
-		# known stop with fixture-only data: efui loaded, retail UI text missing
-		expect "SP_BUTTONTEXT.DAT"
-		expect "efui"
-		echo "PASS: client smoke (renderer + efui up, stopped at missing retail data, exit $rc)"
+		# known stop with fixture-only data: efui loaded and its UI_Init ran
+		# until the retail UI text it needs was not found
+		# 3 = Sys_Error (error dialog, then exit); 2 = caught crash signal,
+		# 124 = timeout, >128 = uncaught signal
+		[ $rc -eq 3 ] || fail "client exit status $rc (expected 0, or 3 from the controlled efui data error)"
+		expect "Error: UI_LoadButtonText : SP_BUTTONTEXT.DAT file not found"
+		echo "PASS: client smoke (renderer up, efui loaded and ran UI_Init, stopped at missing retail data)"
 	fi
 	;;
 *) echo "unknown mode $mode"; exit 2 ;;
