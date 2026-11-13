@@ -327,10 +327,9 @@ void drawGlyph( HDC dc, int gl, int x, int y, int sz, COLORREF c )
 		}
 		break; }
 	case G_MAP: {
-		PointF p[4] = { PointF( 1.5f, 3.5f ), PointF( 5.5f, 2.0f ), PointF( 10.5f, 3.5f ), PointF( 14.5f, 2.0f ) };
-		(void)p;
-		g.DrawPolygon( &pen, (PointF[]){ PointF( 1.5f, 3.5f ), PointF( 5.5f, 2.0f ), PointF( 10.5f, 3.5f ), PointF( 14.5f, 2.0f ),
-			PointF( 14.5f, 12.5f ), PointF( 10.5f, 14.0f ), PointF( 5.5f, 12.5f ), PointF( 1.5f, 14.0f ) }, 8 );
+		const PointF outline[8] = { PointF( 1.5f, 3.5f ), PointF( 5.5f, 2.0f ), PointF( 10.5f, 3.5f ), PointF( 14.5f, 2.0f ),
+			PointF( 14.5f, 12.5f ), PointF( 10.5f, 14.0f ), PointF( 5.5f, 12.5f ), PointF( 1.5f, 14.0f ) };
+		g.DrawPolygon( &pen, outline, 8 );
 		g.DrawLine( &pen, 5.5f, 2.0f, 5.5f, 12.5f ); g.DrawLine( &pen, 10.5f, 3.5f, 10.5f, 14.0f );
 		break; }
 	case G_QUESTION: {
