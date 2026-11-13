@@ -104,6 +104,7 @@ key/value file in the homepath (sys_data.c already reads `gamefolder` from it,
 | `CoopKeepPlayingInBackground` | bool, absent = YES | co-op Host "Keep playing in the background" | sheet build | Host pressed | `C:801-802,959-960,1262` |
 | `CoopPlayerName` | string | co-op "Your name" (stored after cleaning; may be empty) | sheet build | Host or Connect | `C:804,898-901,916` |
 | `CoopGuestMunro` | `"male"`/`"female"` | co-op Join "Munro" choice | sheet build | Connect | `C:805,1033-1034,1301` |
+| `CoopGuestCharacter` | string: a `coop_characters.h` id, `""` = Munro | co-op Join "Character" choice | sheet build | Connect | `lookPopup`, `connect:` |
 | `ServerSettings` | dict | Host a Server settings (`VSPServerSettings`) | init | Config… Done / Start Server | `S:113` (other spec) |
 | `MasterServers` | array of strings; absent = defaults | Servers… list | init, Play | Servers… sheet | `S:3845-3911` (other spec) |
 | `LoopbackHostFix` | bool; absent = YES (only `NO` is stored) | Loopback Host Fix checkbox | init, Play | checkbox toggle | `S:4471-4491` |
@@ -584,7 +585,7 @@ followed by a space (values in quotes exactly as shown):
 [HM, masters cfg written OK] +exec vsp_masters.cfg
 [HM, Loopback Host Fix on and router answered] +set cl_loopbackHostIP <public IPv4>
 [SP, co-op Host chosen]    +set sp_coop 1 +set coop_backgroundPlay <0|1>
-[SP, co-op Connect chosen] +set coop_connect "<a.b.c.d:port>" +set coop_sex <male|female>
+[SP, co-op Connect chosen] +set coop_connect "<a.b.c.d:port>" +set coop_sex <male|female> [+set coop_look <id>]
 [SP, co-op either, name non-empty] +set coop_name "<CoopSafeName(name)>"
 [HM, joinAddress from Browse…/link] [+set password "<pw>"] +connect <address>
 <brightness args, or +exec vsp_brightness.cfg, or nothing for Custom>
@@ -1107,6 +1108,7 @@ group). Initial focus: the Join address field.
 5. **JOIN group** (`C:987-1048`), caption "JOIN", column spacing 12:
    - Row: "Host’s address" (12 pt) | text field (min width 260; placeholder "192.168.1.20, or address:port (default 29760)"; **Return = Check**) | "Check" button (min width 80; tooltip "Ask that address whether a co-op game runs there").
    - Row (spacing 24): ["Password" + secure field 160, placeholder "if the host set one"] ["Munro" + segmented "Male" | "Female" (initial from `CoopGuestMunro`, default Male); tooltip "How player 2 looks on both screens. The story still speaks to the host’s Munro."]
+   - Row: "Character" (12 pt) | popup: "Munro (default)", then a separator, a disabled "Voyager crew" header and the crew, a separator, a disabled "Hazard Team" header and its members (indented one level; titles and ids from `efgame/src/game/coop_characters.h`, the same table the game checks); initial from `CoopGuestCharacter` (default Munro) | "with the voice of the Munro above" (11 pt secondary).
    - Result row (hidden until the first Check): icon (SF symbol 20 pt, width 26) or a small spinner while checking; title (13 pt semibold, wrap 440); text (12 pt secondary, wrap 440, selectable; hidden when empty).
    - Bottom row: "Connect" (min width 80; disabled until a Check found a game; tooltip "Check the address first" / `"Join <address> as player 2"`) + text (11 pt secondary, wrap 380): "Connect starts single player and joins the host’s game as player 2: you see it from player 2’s eyes and play player 2 while the host plays the story."
 6. Footer: right-aligned "Cancel" (Esc, min width 80).
@@ -1192,7 +1194,8 @@ Only when not Holomatch:
 
 - Host chosen: `+set sp_coop 1 +set coop_backgroundPlay <1|0> `
 - Connect chosen and the address contains only `0-9 . :`:
-  `+set coop_connect "<ip:port>" +set coop_sex <male|female> `
+  `+set coop_connect "<ip:port>" +set coop_sex <male|female> `, then `+set coop_look <id> ` when the
+  chosen character's id is in `coop_characters.h` (Munro: nothing)
 - Either, with a non-empty name: `+set coop_name "<CoopSafeName(name)>" `
 
 The **password is never on the command line**: the launcher hands it to the
@@ -1213,7 +1216,7 @@ for interop (the engine cleans names again, `CoopCleanName` `N:232-250`).
 
 - **Cvars** registered on the first `Sys_CoopFrame` outside Holomatch/dedicated
   (`C:388-403`): `coop_connect` "" TEMP, `coop_password` "" TEMP, `coop_name`
-  "" TEMP, `coop_sex` "" TEMP, `coop_backgroundPlay` "1" ARCHIVE; plus
+  "" TEMP, `coop_sex` "" TEMP, `coop_look` "" TEMP, `coop_backgroundPlay` "1" ARCHIVE; plus
   `coop_netstats`, `coop_simlatency`, `coop_simloss` (TEMP) and commands
   `coop_status`, `coop_disconnect`, `coop_kick` (`N:1997-2008`). `sp_coop` is
   the game's latched cvar (1 = host, turns co-op on at the next level start;
@@ -1287,7 +1290,7 @@ in OOB mode (`MSG_InitOOB`: no Huffman; `MSG_WriteLong/Short/Byte/String/Data`
 
 | Dir | Word | Payload |
 |---|---|---|
-| guest→host | `coopConnect` | `coopProtocol`, `version`, `paks` (`FS_CoopPaks()`: the game's own paks loaded, `"pak0.pk3:<checksum> pak1.pk3:<checksum> ..."`), `name` (clean, else "Player 2"), `sex` (optional `male`/`female`), `nonce` (16 hex), `password` (if any) |
+| guest→host | `coopConnect` | `coopProtocol`, `version`, `paks` (`FS_CoopPaks()`: the game's own paks loaded, `"pak0.pk3:<checksum> pak1.pk3:<checksum> ..."`), `name` (clean, else "Player 2"), `sex` (optional `male`/`female`), `look` (optional: a player 2 character id from `coop_characters.h`, lower case letters, digits and `_`, at most 23; the host takes only one it knows with all files in its own pak0-pak2), `nonce` (16 hex), `password` (if any) |
 | host→guest | `coopAccept` | `session` (decimal, 1…0x7ffffffe), `nonce` (echo), `paks` (the host's), `hostName`, `state`, `map`, `time`, `players` |
 | host→guest | `coopReject` | sentence |
 

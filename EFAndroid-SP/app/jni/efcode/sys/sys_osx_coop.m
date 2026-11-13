@@ -30,8 +30,10 @@ The Single Player card gets a "Co-op…" button. Its sheet has:
   - "Your name" (both sides): the player's name in co-op messages ("Hold Use
     to revive ..."), the coop_name cvar; it starts as this Mac's name. Join
     also has "Munro: Male / Female" for how player 2 looks on both screens
-    (coop_sex). Both are kept in the app's preferences like the sheet's other
-    choices.
+    and sounds (coop_sex), and "Character": the default Munro, or a crew or
+    Hazard Team member from the game's own pak0-pak2 (coop_look, the list in
+    the game's coop_characters.h; the voice stays the chosen Munro's). All
+    are kept in the app's preferences like the sheet's other choices.
   - An optional password: the host's (a guest must give it) on the Host side,
     the one to send on the Join side. It is handed to the engine directly
     (Sys_CoopSetLaunchPassword), never on the command line or in the log.
@@ -103,6 +105,7 @@ Test hooks (environment variables; the launcher's are in sys_osx_launcher.m):
 
 #include "sys_osx_launcher.h"
 #include "sys_osx_coop.h"
+#include "../../../../../efgame/src/game/coop_characters.h"	// player 2's characters (coop_look)
 
 #define COOP_QUERY		"getcoopinfo"
 #define COOP_RESPONSE	"coopInfoResponse"
@@ -406,6 +409,7 @@ void Sys_CoopFrame( void )
 		Cvar_Get( "coop_password", "", CVAR_TEMP );
 		Cvar_Get( "coop_name", "", CVAR_TEMP );		// "Your name" (empty: this Mac's name)
 		Cvar_Get( "coop_sex", "", CVAR_TEMP );		// a guest's Munro: male / female (empty: like the host's)
+		Cvar_Get( "coop_look", "", CVAR_TEMP );		// a guest's character for player 2 (empty: Munro)
 		coop_backgroundPlay = Cvar_Get( "coop_backgroundPlay", "1", CVAR_ARCHIVE );
 		CoopNet_AddCommands();
 	}
@@ -814,6 +818,8 @@ static NSString *coopJoinAddress;	// Connect: the host's "address:port"
 #define COOP_SEX_DEFAULT	@"CoopGuestMunro"		// @"male" / @"female"
 static NSString *coopPlayerName;	// Host / Connect: "Your name" (coop_name), already safe
 static NSString *coopGuestSex;		// Connect: @"male" / @"female" (coop_sex)
+#define COOP_LOOK_DEFAULT	@"CoopGuestCharacter"	// a coop_characters.h id, @"" for Munro
+static NSString *coopGuestLook;		// Connect: the character's id (coop_look), nil / @"" for Munro
 
 // A name the game can show and the command line can carry: letters turned into plain ASCII,
 // without quotes, \ ; % or control characters, spaces squeezed, at most COOP_NAME_MAX characters
@@ -957,6 +963,7 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	NSButton *backgroundCheck;
 	NSTextField *nameField;
 	NSSegmentedControl *sexControl;
+	NSPopUpButton *lookPopup;		// "Character": Munro, then coop_characters.h (each item's representedObject: its id)
 }
 
 - (instancetype)initWithLauncher: (id)launcher
@@ -1060,13 +1067,53 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	return VSP_Group( @"HOST", row );
 }
 
+// "Character": the default Munro (the sex above), then the crew and the Hazard Team from the
+// game's own paks (coop_characters.h); remembered as the id
+- (NSPopUpButton *)lookPopup
+{
+	NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey: COOP_LOOK_DEFAULT];
+	NSMenu *menu;
+	const char *group = "";
+
+	lookPopup = [[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: NO];
+	menu = [lookPopup menu];
+	[menu setAutoenablesItems: NO];
+	[lookPopup addItemWithTitle: @"Munro (default)"];
+	[[lookPopup lastItem] setRepresentedObject: @""];
+	for( int i = 0; i < COOP_NUM_CHARACTERS; i++ )
+	{
+		const coopCharacter_t *c = &coop_characters[i];
+		NSMenuItem *item;
+
+		if( strcmp( c->group, group ) )
+		{
+			group = c->group;
+			[menu addItem: [NSMenuItem separatorItem]];
+			item = [[NSMenuItem alloc] initWithTitle: !strcmp( group, "crew" ) ? @"Voyager crew" : @"Hazard Team"
+				action: NULL keyEquivalent: @""];
+			[item setEnabled: NO];
+			[menu addItem: item];
+		}
+		item = [[NSMenuItem alloc] initWithTitle: [NSString stringWithUTF8String: c->name] action: NULL keyEquivalent: @""];
+		[item setRepresentedObject: [NSString stringWithUTF8String: c->id]];
+		[item setIndentationLevel: 1];
+		[menu addItem: item];
+		if( [saved isEqualToString: [item representedObject]] )
+			[lookPopup selectItem: item];
+	}
+	[lookPopup setToolTip: @"Player 2’s look on both screens: Munro, or a member of Voyager’s crew or the Hazard Team. "
+		@"Only characters from the game’s own files, so the host has them too."];
+	return lookPopup;
+}
+
 - (NSView *)joinGroup
 {
 	NSTextField *label = VSP_Label( @"Host’s address", [NSFont systemFontOfSize: 12], nil );
 	NSTextField *later = VSP_WrapLabel( @"Connect starts single player and joins the host’s game as player 2: you see "
 		@"it from player 2’s eyes and play player 2 while the host plays the story.",
 		[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
-	NSStackView *line, *result, *texts, *bottom, *col, *pass, *munro;
+	NSStackView *line, *result, *texts, *bottom, *col, *pass, *munro, *character;
+	NSTextField *lookLabel;
 
 	[later setPreferredMaxLayoutWidth: 380];
 	_address = [NSTextField textFieldWithString: @""];
@@ -1111,6 +1158,12 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	[sexControl setToolTip: @"How player 2 looks on both screens. The story still speaks to the host’s Munro."];
 	munro = CoopStack( @[ VSP_Label( @"Munro", [NSFont systemFontOfSize: 12], nil ), sexControl ],
 		NSUserInterfaceLayoutOrientationHorizontal, 8 );
+	lookLabel = VSP_Label( @"Character", [NSFont systemFontOfSize: 12], nil );
+	[lookLabel setContentCompressionResistancePriority: NSLayoutPriorityRequired
+		forOrientation: NSLayoutConstraintOrientationHorizontal];
+	character = CoopStack( @[ lookLabel, [self lookPopup],
+		VSP_Label( @"with the voice of the Munro above", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ],
+		NSUserInterfaceLayoutOrientationHorizontal, 8 );
 
 	connectButton = [NSButton buttonWithTitle: @"Connect" target: self action: @selector(connect:)];
 	[connectButton setEnabled: NO];
@@ -1118,7 +1171,7 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	[[connectButton widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
 	bottom = CoopStack( @[ connectButton, later ], NSUserInterfaceLayoutOrientationHorizontal, 10 );
 	[bottom setAlignment: NSLayoutAttributeTop];
-	col = CoopStack( @[ line, CoopStack( @[ pass, munro ], NSUserInterfaceLayoutOrientationHorizontal, 24 ), result, bottom ],
+	col = CoopStack( @[ line, CoopStack( @[ pass, munro ], NSUserInterfaceLayoutOrientationHorizontal, 24 ), character, result, bottom ],
 		NSUserInterfaceLayoutOrientationVertical, 12 );
 	return VSP_Group( @"JOIN", col );
 }
@@ -1430,9 +1483,11 @@ static NSString *CoopDescribe( NSDictionary *info )
 	[self takeName];
 	coopGuestSex = [sexControl selectedSegment] == 1 ? @"female" : @"male";
 	[[NSUserDefaults standardUserDefaults] setObject: coopGuestSex forKey: COOP_SEX_DEFAULT];
+	coopGuestLook = [[lookPopup selectedItem] representedObject] ?: @"";
+	[[NSUserDefaults standardUserDefaults] setObject: coopGuestLook forKey: COOP_LOOK_DEFAULT];
 	Sys_CoopSetLaunchPassword( [[joinPassword stringValue] UTF8String] );
-	LLog( @"Co-op: joining %@ as player 2 (single player with coop_connect), %@, %@ Munro", coopJoinAddress,
-		coopPlayerName, coopGuestSex );
+	LLog( @"Co-op: joining %@ as player 2 (single player with coop_connect), %@, %@ Munro%@", coopJoinAddress,
+		coopPlayerName, coopGuestSex, [coopGuestLook length] ? [@" as " stringByAppendingString: coopGuestLook] : @"" );
 	[l selectMode: 0];
 	[l play: nil];
 }
@@ -1597,6 +1652,10 @@ void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch )
 		if( [coopJoinAddress rangeOfCharacterFromSet: bad].location == NSNotFound )
 			[args appendFormat: @"+set coop_connect \"%@\" +set coop_sex %@ ", coopJoinAddress,
 				[coopGuestSex isEqualToString: @"female"] ? @"female" : @"male"];
+		// (an id from coop_characters.h: lower case letters, digits and _)
+		for( int i = 0; i < COOP_NUM_CHARACTERS; i++ )
+			if( [coopGuestLook isEqualToString: [NSString stringWithUTF8String: coop_characters[i].id]] )
+				[args appendFormat: @"+set coop_look %s ", coop_characters[i].id];
 	}
 	else
 		return;
