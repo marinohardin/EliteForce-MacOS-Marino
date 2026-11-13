@@ -32,16 +32,13 @@ static qboolean COOP_TriggerRuns( const gentity_t *trigger, const char *script )
 }
 
 /*
-dn1: the hangar opens onto space. Walking out there plays a scene of the player drifting away and
-kills player 1 (mission failed). Player 2 walking out would kill player 1 the same way, so for player 2
-it is a fall into a pit instead: down next to player 1 (with a guest), or the puppet's death and respawn.
+dn1, forge1: the level opens onto space. Drifting out there plays a scene of the player floating away
+and kills player 1 (mission failed). Player 2 drifting out would kill player 1 the same way, so for
+player 2 it is a fall into a pit instead: down next to player 1 (with a guest), or the puppet's death
+and respawn.
 */
-static qboolean COOP_Dn1Touch( gentity_t *trigger, gentity_t *p2 )
+static qboolean COOP_P2IntoSpace( gentity_t *p2 )
 {
-	if ( !COOP_TriggerRuns( trigger, "dn1/space" ) )
-	{
-		return qfalse;
-	}
 	if ( p2->health > 0 && p2->takedamage )
 	{
 		gi.Printf( "co-op: player 2 drifted out into space\n" );
@@ -49,6 +46,18 @@ static qboolean COOP_Dn1Touch( gentity_t *trigger, gentity_t *p2 )
 			DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR | DAMAGE_NO_PROTECTION, MOD_TRIGGER_HURT );
 	}
 	return qtrue;
+}
+
+// dn1: the hangar's opening runs dn1/space
+static qboolean COOP_Dn1Touch( gentity_t *trigger, gentity_t *p2 )
+{
+	return COOP_TriggerRuns( trigger, "dn1/space" ) ? COOP_P2IntoSpace( p2 ) : qfalse;
+}
+
+// forge1: the space below the hull spawns the drifting Munro (deathmunro), whose spawn script runs forge1/space
+static qboolean COOP_Forge1Touch( gentity_t *trigger, gentity_t *p2 )
+{
+	return ( trigger->target && !Q_stricmp( trigger->target, "deathmunro" ) ) ? COOP_P2IntoSpace( p2 ) : qfalse;
 }
 
 /*
@@ -90,6 +99,7 @@ static void COOP_Dn2Frame( void )
 static const coopMapFix_t coop_mapFixes[] = {
 	{ "dn1", NULL, NULL, COOP_Dn1Touch },
 	{ "dn2", COOP_Dn2Start, COOP_Dn2Frame, NULL },
+	{ "forge1", NULL, NULL, COOP_Forge1Touch },
 	{ NULL, NULL, NULL, NULL }
 };
 
@@ -139,11 +149,50 @@ static void COOP_LookUpFix( void )
 	}
 }
 
+/*
+COOP_P2GravityTrigger
+
+Gravity switches (dn6's zero-gravity section): a trigger whose targets are target_gravity_change
+(not GLOBAL) sets the gravity of its activator. A trigger player 2 touches fires with player 1 as the
+activator (the story's player), so player 2 walking through switched player 1's gravity, wherever
+player 1 was, and kept its own. For these the one who walked through counts: player 2 gets the
+gravity, player 1 keeps its own.
+*/
+static qboolean COOP_P2GravityTrigger( gentity_t *trigger, gentity_t *p2 )
+{
+	gentity_t	*t = NULL, *grav = NULL;
+
+	if ( !trigger->target || trigger->target2 || trigger->behaviorSet[BSET_USE] )
+	{
+		return qfalse;
+	}
+	while ( ( t = G_Find( t, FOFS( targetname ), trigger->target ) ) != NULL )
+	{
+		if ( !t->classname || Q_stricmp( t->classname, "target_gravity_change" ) || ( t->spawnflags & 1 )
+			|| t->behaviorSet[BSET_USE] )
+		{
+			return qfalse;	// it does more than a gravity switch, or the switch is for the whole level
+		}
+		grav = t;
+	}
+	if ( !grav )
+	{
+		return qfalse;
+	}
+	p2->client->ps.gravity = (int)floor( grav->speed );
+	p2->svFlags |= SVF_CUSTOM_GRAVITY;
+	return qtrue;
+}
+
 qboolean COOP_P2Trigger( gentity_t *trigger, gentity_t *other )
 {
 	if ( !coop_enabled || !COOP_IsP2( other ) )
 	{
 		return qfalse;
+	}
+	if ( COOP_P2GravityTrigger( trigger, other ) )
+	{
+		return qtrue;
 	}
 	COOP_LookUpFix();
 	return (qboolean)( coop_fix && coop_fix->p2Touch && coop_fix->p2Touch( trigger, other ) );
