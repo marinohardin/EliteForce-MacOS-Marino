@@ -19,6 +19,10 @@ menu does). It offers:
     a brightness preset (Standard, or cMod's Plain, Full Contrast, Extra Bright
     and Full Bright, from cMod by Noah Metzger; see "Brightness" below);
   - the Holomatch player name;
+  - cMod's game modules by Noah Metzger (Contents/Resources/cmod): use them
+    (cl_cmodModules), see qcommon/files.c, and their HUD… sheet: widescreen
+    HUD (cg_aspectCorrect, default 1), how far it moves toward the middle
+    (cg_aspectCorrectCenterHud 0-1) and weapon fire prediction (cg_predictWeapons);
   - where the game files are (sys_osx_data.m's lookup and chooser);
   - a notice in the header when a newer release is on GitHub (see "Updates").
 Play appends +set com_holomatch, the graphics cvars, the name and
@@ -29,11 +33,16 @@ what the launcher shows next time is what the game last used, including
 changes made in the game's own Video menu.
 
 Test hooks (environment variables):
+  VOYAGERSP_TEST_BACKGROUND=1  the quiet background mode for automated runs:
+                                the launcher and the game never come forward or
+                                take the mouse/keyboard (see sys_osx.m)
   VOYAGERSP_TEST_LAUNCHER_SNAPSHOT=<file.png>  render the window to a PNG and
                                 quit (or go on with ..._PLAY)
   VOYAGERSP_TEST_LAUNCHER_APPEARANCE=dark|light
   VOYAGERSP_TEST_LAUNCHER_MODE=sp|hm|host     preselect the mode
-  (Host a Server's hooks are listed in sys_osx_server.m)
+  VOYAGERSP_TEST_LAUNCHER_HEIGHT=<points>     size the window as if the screen's
+                                visible part were that tall (a small laptop)
+  (Host a Server's hooks are listed in sys_osx_server.m, Co-op…'s in sys_osx_coop.m)
   VOYAGERSP_TEST_LAUNCHER_PRESET=performance|balanced|best
   VOYAGERSP_TEST_LAUNCHER_BRIGHTNESS=standard|plain|contrast|bright|fullbright
   VOYAGERSP_TEST_LAUNCHER_PLAY=1              press Play without showing it
@@ -51,6 +60,8 @@ Test hooks (environment variables):
                                 whether the launcher stayed, and quit
   VOYAGERSP_TEST_SERVER_RUNNING=show|another|cancel  answer Start Server's
                                 "already running" question
+  VOYAGERSP_TEST_LAUNCHER_HUD=<file.png>      render the HUD… sheet (cMod's HUD settings)
+                                and quit
   VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>    show it, choose About from the app
                                 menu, render the panel, close it and quit
   VOYAGERSP_TEST_UPDATE=<version>|none  the latest release, instead of asking
@@ -63,6 +74,11 @@ Test hooks (environment variables):
   VOYAGERSP_TEST_LINK=<stvef://...>  open that link once the launcher is up
   VOYAGERSP_TEST_UPDATE_ALERT=<file.png>  run Check for Updates…, render its
                                 answer and quit
+  VOYAGERSP_TEST_NODIALOG=1   never show an error/question alert (sys_osx.m
+                                Sys_Dialog): print it on stderr and take the
+                                default, so a fatal error just exits (exit 3)
+  (the regression harness, macos/regress.sh, uses +set regress_* cvars: see
+  qcommon/regress.c)
 ===========================================================================
 */
 
@@ -82,11 +98,13 @@ Test hooks (environment variables):
 #endif
 
 #include "sys_osx_launcher.h"
+#include "sys_osx_coop.h"
 
 #define KEY_LAUNCHERMODE	@"LauncherMode"
 #define KEY_UPDATECHECK		@"CheckForUpdates"		// NO: never ask GitHub on its own
 #define KEY_UPDATELAST		@"UpdateLastCheck"		// NSDate
 #define KEY_UPDATELATEST	@"UpdateLatest"			// @{ version, url } from the last check
+#define KEY_HUDASPECT		@"HudWidescreen"		// the HUD… sheet's choice (cg_aspectCorrect), once made
 #define UPDATE_REPO			@"marinohardin/EliteForce-MacOS-Marino"
 #define UPDATE_TAG			@"macos-v"				// the release tags: macos-v1.2.1
 #define UPDATE_INTERVAL		( 24 * 60 * 60 )		// s between automatic checks
@@ -449,6 +467,13 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 @class VSPLauncher;
 
 // A big selectable card for one of the modes.
+// the launcher's scrolling middle: its content starts at the top
+@interface VSPFlippedView : NSView
+@end
+@implementation VSPFlippedView
+- (BOOL)isFlipped	{ return YES; }
+@end
+
 @interface VSPModeCard : NSView
 @property (nonatomic) BOOL selected;
 @property (nonatomic, weak) VSPLauncher *owner;
@@ -460,6 +485,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 @interface VSPLauncher : NSObject <NSWindowDelegate>
 - (void)selectMode: (launchMode_t)mode;
 - (void)play: (id)sender;
+- (void)fitToScreen;
 - (void)addFiles: (id)sender;
 - (void)joinAddress: (NSString *)address password: (NSString *)password;
 - (void)browseServers: (id)sender;
@@ -592,6 +618,33 @@ NSView *VSP_Group( NSString *caption, NSView *content )
    The launcher
    ------------------------------------------------------------------------ */
 
+// a target for controls whose action is a block (keeps the block alive as long as the control)
+@interface VSPBlockTarget : NSObject
++ (instancetype)target: (void ( ^ )( void ))block;
+- (void)fire: (id)sender;
+@end
+
+@implementation VSPBlockTarget
+{
+	void ( ^block )( void );
+}
++ (instancetype)target: (void ( ^ )( void ))b
+{
+	VSPBlockTarget *t = [[VSPBlockTarget alloc] init];
+	t->block = [b copy];
+	return t;
+}
+- (void)fire: (id)sender	{ block(); }
+@end
+
+static NSStackView *HStackOf( NSArray *views )
+{
+	NSStackView *s = [NSStackView stackViewWithViews: views];
+	[s setSpacing: 10];
+	[s setAlignment: NSLayoutAttributeFirstBaseline];
+	return s;
+}
+
 @implementation VSPLauncher
 {
 	launchMode_t mode;
@@ -611,6 +664,13 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSButton *retina, *vsync;
 	NSTextField *nameLabel, *name, *nameHint, *mastersSummary;
 	NSButton *loopbackFix;
+	NSButton *cmodModules;			// cl_cmodModules (cMod's game modules, by Noah Metzger)
+	NSTextField *cmodLabel;
+	NSButton *hudButton;
+	int hudAspect;					// cg_aspectCorrect: 1 widescreen HUD, 0 stretched
+	NSString *hudCenter;			// cg_aspectCorrectCenterHud: 0 (edges) to 1 (4:3 area), or cMod's "16:9*" form
+	BOOL predictWeapons;			// cg_predictWeapons
+	NSMutableArray *hudTargets;		// the HUD… sheet's VSPBlockTargets (controls don't retain their targets)
 	NSString *joinAddress, *joinPassword;	// from Browse…: connect there on Play
 	NSImageView *folderIcon, *statusIcon;
 	NSTextField *folderPath, *status;
@@ -649,6 +709,15 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	VSP_StartPublicAddressLookup();		// for the Loopback Host Fix
 
 	hm = ReadConfig( ConfigPath( YES ) );
+	[cmodModules setState: CfgInt( hm, @"cl_cmodmodules", 1 ) ? NSControlStateValueOn : NSControlStateValueOff];
+	// Widescreen unless chosen otherwise in the HUD… sheet. Not from hmconfig.cfg: cMod's
+	// modules register cg_aspectCorrect with 0 (his engine sets 1 first), so a cgame that ran
+	// without our default (a server's download, an older build) may have saved a 0 there.
+	hudAspect = [[NSUserDefaults standardUserDefaults] objectForKey: KEY_HUDASPECT] ?
+		( [[NSUserDefaults standardUserDefaults] boolForKey: KEY_HUDASPECT] ? 1 : 0 ) : 1;
+	hudCenter = [hm[@"cg_aspectcorrectcenterhud"] length] ? hm[@"cg_aspectcorrectcenterhud"] : @"0";
+	predictWeapons = CfgInt( hm, @"cg_predictweapons", 1 ) != 0;
+	[self cmodChanged: nil];
 	[name setStringValue: hm[@"name"] && ![hm[@"name"] isEqualToString: @"UnnamedPlayer"] ? hm[@"name"] : DefaultPlayerName()];
 
 	[self refreshData];
@@ -669,6 +738,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 			gfx.brightness = (int)i;
 			[self showGraphics];
 		}
+	[self fitToScreen];
 	return self;
 }
 
@@ -696,7 +766,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 - (void)buildWindow
 {
 	NSView *content;
-	NSStackView *root, *header, *headerText, *cardRow, *folderRow, *folderText, *footer;
+	NSStackView *root, *header, *headerText, *cardRow, *folderRow, *folderText, *footer, *middle;
+	NSScrollView *scroll;
+	NSView *document;
 	NSGridView *grid, *nameGrid, *serverGrid;
 	NSButton *config, *browse;
 	NSImageView *appIcon;
@@ -704,7 +776,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	NSButton *quit;
 
 	window = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 620, 600 )
-		styleMask: NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskFullSizeContentView
+		styleMask: NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskFullSizeContentView |
+			NSWindowStyleMaskResizable
 		backing: NSBackingStoreBuffered defer: NO];
 	[window setTitle: @"Elite Force"];
 	[window setTitlebarAppearsTransparent: YES];
@@ -738,7 +811,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[config setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
 	[config setToolTip: @"Maps, game type, bots and the server's name, password and network"];
 	cards[MODE_SP] = [[VSPModeCard alloc] initWithSymbol: @"person.fill" title: @"Single Player"
-		detail: @"The Voyager campaign, your saves and the Virtual Voyager." accessory: nil];
+		detail: @"The Voyager campaign, your saves and the Virtual Voyager." accessory: VSP_CoopButton( self )];
 	browse = [NSButton buttonWithTitle: @"Browse…" target: self action: @selector(browseServers:)];
 	[browse setControlSize: NSControlSizeSmall];
 	[browse setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
@@ -857,13 +930,24 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		[loopbackFix setState: VSP_LoopbackFix() ? NSControlStateValueOn : NSControlStateValueOff];
 		[loopbackFix setToolTip: @"Most routers don't route this Mac back to its own public address, so a server "
 			@"hosted here wouldn't answer in your own internet lists. This lists it as this Mac (127.0.0.1) instead."];
+		// From cMod by Noah Metzger (Chomenor): his game modules, bundled with his permission
+		cmodLabel = VSP_Label( @"Game modules:", [NSFont systemFontOfSize: 13], nil );
+		cmodModules = [NSButton checkboxWithTitle: @"Use cMod's game modules, by Noah Metzger" target: self action: @selector(cmodChanged:)];
+		hudButton = [NSButton buttonWithTitle: @"HUD…" target: self action: @selector(editHud:)];
+		[hudButton setControlSize: NSControlSizeSmall];
+		[hudButton setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
+		[hudButton setToolTip: @"cMod's widescreen HUD and weapon fire prediction"];
+		[cmodModules setToolTip: @"cMod's cgame and ui in place of the original ones (not on pure servers, and never "
+			@"in place of a mod's own): a widescreen HUD and menus, weapon fire prediction and many fixes."];
 		nameGrid = [NSGridView gridViewWithViews: @[ @[ nameLabel, name ], @[ [NSGridCell emptyContentView], nameHint ],
 			@[ VSP_Label( @"Internet games:", [NSFont systemFontOfSize: 13], nil ), row ],
 			@[ [NSGridCell emptyContentView], loopbackFix ],
 			@[ [NSGridCell emptyContentView], VSP_Label( @"Shows a server you host on this Mac in your own internet lists.",
-				[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ] ]];
+				[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ],
+			@[ cmodLabel, HStackOf( @[ cmodModules, hudButton ] ) ] ]];
 		[[nameGrid rowAtIndex: 2] setTopPadding: 8];
 		[[nameGrid rowAtIndex: 3] setTopPadding: 4];
+		[[nameGrid rowAtIndex: 5] setTopPadding: 8];
 	}
 	[nameGrid setRowSpacing: 4];
 	[nameGrid setColumnSpacing: 10];
@@ -947,13 +1031,52 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		]];
 		serverGroup = VSP_Group( @"Server", box );
 	}
-	root = [NSStackView stackViewWithViews: @[ header, cardRow, graphicsGroup, serverGroup,
-		VSP_Group( @"Holomatch", nameGrid ), VSP_Group( @"Game Files", folderRow ), footer ]];
+	// The header and the cards stay at the top and Quit/Play at the bottom; the settings between
+	// them scroll when the window is shorter than all of them (a 13" MacBook Air's screen). The
+	// window can be made taller up to all of them, and shorter down to a few rows of them.
+	middle = [NSStackView stackViewWithViews: @[ graphicsGroup, serverGroup,
+		VSP_Group( @"Holomatch", nameGrid ), VSP_Group( @"Game Files", folderRow ) ]];
+	[middle setOrientation: NSUserInterfaceLayoutOrientationVertical];
+	[middle setAlignment: NSLayoutAttributeLeading];
+	[middle setSpacing: 16];
+	[middle setEdgeInsets: NSEdgeInsetsMake( 0, 0, 2, 28 )];	// (right: room for the scroller)
+	[middle setTranslatesAutoresizingMaskIntoConstraints: NO];
+	for( NSView *v in [middle views] )
+		[[v widthAnchor] constraintEqualToAnchor: [middle widthAnchor] constant: -28].active = YES;
+	document = [[VSPFlippedView alloc] init];
+	[document setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[document addSubview: middle];
+	scroll = [[NSScrollView alloc] init];
+	[scroll setHasVerticalScroller: YES];
+	[scroll setAutohidesScrollers: YES];
+	[scroll setDrawsBackground: NO];
+	[scroll setBorderType: NSNoBorder];
+	[scroll setDocumentView: document];
+	[NSLayoutConstraint activateConstraints: @[
+		[[middle leadingAnchor] constraintEqualToAnchor: [document leadingAnchor]],
+		[[middle trailingAnchor] constraintEqualToAnchor: [document trailingAnchor]],
+		[[middle topAnchor] constraintEqualToAnchor: [document topAnchor]],
+		[[middle bottomAnchor] constraintEqualToAnchor: [document bottomAnchor]],
+		[[document leadingAnchor] constraintEqualToAnchor: [[scroll contentView] leadingAnchor]],
+		[[document topAnchor] constraintEqualToAnchor: [[scroll contentView] topAnchor]],
+		[[document widthAnchor] constraintEqualToAnchor: [[scroll contentView] widthAnchor]],
+		// never taller than its content, at least a few rows of it
+		[[scroll heightAnchor] constraintLessThanOrEqualToAnchor: [document heightAnchor]],
+		[[scroll heightAnchor] constraintGreaterThanOrEqualToConstant: 200],
+	]];
+	{
+		// as tall as its content unless the window is made (or placed) shorter
+		NSLayoutConstraint *all = [[scroll heightAnchor] constraintEqualToAnchor: [document heightAnchor]];
+		[all setPriority: NSLayoutPriorityDefaultLow];
+		[all setActive: YES];
+	}
+
+	root = [NSStackView stackViewWithViews: @[ header, cardRow, scroll, footer ]];
 	[root setOrientation: NSUserInterfaceLayoutOrientationVertical];
 	[root setAlignment: NSLayoutAttributeLeading];
 	[root setSpacing: 16];
 	[root setCustomSpacing: 20 afterView: header];
-	[root setCustomSpacing: 20 afterView: [root views][5]];
+	[root setCustomSpacing: 18 afterView: scroll];
 	[root setEdgeInsets: NSEdgeInsetsMake( 30, 28, 20, 28 )];
 	// both take the same room, so the window keeps its size when they swap
 	[[[(NSStackView *)serverGroup views][1] heightAnchor] constraintEqualToAnchor:
@@ -962,7 +1085,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
 	[content addSubview: root];
 	for( NSView *v in [root views] )
-		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -56].active = YES;
+		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: v == scroll ? -28 : -56].active = YES;
 	[NSLayoutConstraint activateConstraints: @[
 		[[root leadingAnchor] constraintEqualToAnchor: [content leadingAnchor]],
 		[[root trailingAnchor] constraintEqualToAnchor: [content trailingAnchor]],
@@ -971,6 +1094,34 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		[[root widthAnchor] constraintEqualToConstant: 620],
 	]];
 	[window setInitialFirstResponder: cards[mode]];
+}
+
+// All of the launcher when the screen has room for it, else as tall as the screen's visible part
+// (below the menu bar, above the Dock); the settings in the middle scroll. Test hook:
+// VOYAGERSP_TEST_LAUNCHER_HEIGHT=<points> pretends the visible part is that tall.
+- (void)fitToScreen
+{
+	NSScreen *screen = [window screen] ?: [NSScreen mainScreen];
+	NSRect visible = [screen visibleFrame], frame;
+	NSSize want;
+
+	if( getenv( "VOYAGERSP_TEST_LAUNCHER_HEIGHT" ) )
+		visible.size.height = atof( getenv( "VOYAGERSP_TEST_LAUNCHER_HEIGHT" ) );
+	[[window contentView] layoutSubtreeIfNeeded];
+	want = [[window contentView] fittingSize];
+	frame = [window frameRectForContentRect: NSMakeRect( 0, 0, want.width, want.height )];
+	if( frame.size.height > visible.size.height )
+		want.height -= frame.size.height - visible.size.height;
+	[window setContentSize: want];
+	frame = [window frame];
+	if( frame.size.height > visible.size.height + 0.5 )
+		LLog( @"Launcher: the window (%.0f points tall) is taller than the screen's %.0f", frame.size.height, visible.size.height );
+	// all of it on the screen: its top below the menu bar, its bottom above the Dock
+	if( NSMaxY( frame ) > NSMaxY( visible ) )
+		frame.origin.y = NSMaxY( visible ) - frame.size.height;
+	if( frame.origin.y < NSMinY( visible ) )
+		frame.origin.y = NSMinY( visible );
+	[window setFrameOrigin: frame.origin];
 }
 
 // Window sizes (points) that fit the screen, plus the configured one.
@@ -1063,6 +1214,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		cards[i].selected = i == m;
 	[name setEnabled: client || host];
 	[nameLabel setTextColor: client || host ? [NSColor labelColor] : [NSColor tertiaryLabelColor]];
+	[cmodModules setEnabled: ( client || host ) && VSP_CmodAvailable()];
+	[self cmodChanged: nil];
+	[cmodLabel setTextColor: ( client || host ) && VSP_CmodAvailable() ? [NSColor labelColor] : [NSColor tertiaryLabelColor]];
 	[nameHint setStringValue: client ? @"Shown to other players in Holomatch." :
 		host ? @"Your name when you use Play on This Mac." : @"Used when you play Holomatch."];
 	[playButton setTitle: client ? @"Play Holomatch" : host ? @"Start Server" : @"Play"];
@@ -1266,7 +1420,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	if( VSP_AddGameFiles() > 0 )
 		LLog( @"Launcher: game files added" );
 	[self refreshData];
-	[window makeKeyAndOrderFront: nil];
+	VSP_ShowWindow( window );
 }
 
 - (void)changeFolder: (id)sender
@@ -1276,7 +1430,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	if( VSP_ChooseGameData( &chosen ) )
 		LLog( @"Launcher: game folder changed" );
 	[self refreshData];
-	[window makeKeyAndOrderFront: nil];
+	VSP_ShowWindow( window );
 }
 
 - (void)quit: (id)sender
@@ -1340,7 +1494,8 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 			NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:
 				[last[@"pid"] intValue]];
 			LLog( @"Launcher: showing the running server (pid %@)", last[@"pid"] );
-			[app activateWithOptions: NSApplicationActivateAllWindows];
+			if( !Sys_MacTestBackground( ) )
+				[app activateWithOptions: NSApplicationActivateAllWindows];
 			return;
 		}
 		if( r != NSAlertSecondButtonReturn )
@@ -1373,11 +1528,137 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 }
 
 - (BOOL)hasData	{ return haveData; }
+#ifdef EF_COOP
+- (BOOL)canPlay	{ return haveData && !missingPatch; }
+#endif
 
 - (launchMode_t)mode	{ return mode; }
 - (VSPServerSettings *)server	{ return server; }
 - (NSString *)basepath	{ return basepath; }
 - (NSString *)dataFolder	{ return dataFolder; }
+
+// cMod's game modules (by Noah Metzger): whether to use them. Without them in the
+// app, nothing is passed (the engine has nothing to use anyway).
+- (NSArray<NSString *> *)cmodArgs
+{
+	if( !VSP_CmodAvailable() )
+		return @[];
+	return @[ @"+set", @"cl_cmodModules", [cmodModules state] == NSControlStateValueOn ? @"1" : @"0",
+		@"+set", @"cg_aspectCorrect", @( hudAspect ).stringValue,
+		@"+set", @"cg_aspectCorrectCenterHud", hudCenter,
+		@"+set", @"cg_predictWeapons", predictWeapons ? @"1" : @"0" ];
+}
+
+- (void)cmodChanged: (id)sender
+{
+	[hudButton setEnabled: [cmodModules isEnabled] && [cmodModules state] == NSControlStateValueOn];
+}
+
+// The HUD… sheet: cMod's HUD settings (from cMod by Noah Metzger). They only
+// apply to his cgame and ui; with the original ones the engine's own widescreen
+// layer (cl_flexibleDisplay) keeps the 4:3 HUD centered, as before.
+- (NSWindow *)hudSheet
+{
+	NSWindow *panel = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 480, 260 )
+		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO];
+	NSPopUpButton *layout = [[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: NO];
+	NSSlider *center = [NSSlider sliderWithValue: 0 minValue: 0 maxValue: 1 target: nil action: nil];
+	NSButton *predict = [NSButton checkboxWithTitle: @"Show my shots at once on servers that offer it" target: nil action: nil];
+	NSFont *f = [NSFont systemFontOfSize: 13], *small = [NSFont systemFontOfSize: 11];
+	NSTextField *hint = VSP_WrapLabel( @"From cMod's game modules by Noah Metzger. Weapon fire prediction needs a "
+		@"server running cMod's game code with it on (cMod servers, and Host a Server's default).", small,
+		[NSColor secondaryLabelColor] );
+	NSButton *ok = [NSButton buttonWithTitle: @"Done" target: nil action: nil];
+	NSButton *cancel = [NSButton buttonWithTitle: @"Cancel" target: nil action: nil];
+	NSGridView *grid;
+	NSStackView *buttons, *root, *sliderRow;
+	__weak NSWindow *weakPanel = panel;
+	__weak NSPopUpButton *weakLayout = layout;
+	__weak NSSlider *weakCenter = center;
+	__block BOOL centerMoved = NO;
+	VSPBlockTarget *t;
+
+	hudTargets = [NSMutableArray array];
+
+	[panel setTitle: @"HUD"];
+	VSP_ApplyTestAppearance( panel );
+	[layout addItemWithTitle: @"Widescreen: sharp, in proportion"];
+	[[layout lastItem] setTag: 1];
+	[layout addItemWithTitle: @"Stretched to the screen (original look)"];
+	[[layout lastItem] setTag: 0];
+	[layout selectItemWithTag: hudAspect];
+	[center setDoubleValue: [hudCenter floatValue] >= 0 && [hudCenter floatValue] <= 1 ? [hudCenter floatValue] : 0];
+	[center setNumberOfTickMarks: 5];
+	[[center widthAnchor] constraintEqualToConstant: 200].active = YES;
+	[predict setState: predictWeapons ? NSControlStateValueOn : NSControlStateValueOff];
+	[hint setPreferredMaxLayoutWidth: 300];
+	sliderRow = [NSStackView stackViewWithViews: @[ VSP_Label( @"Edges", small, [NSColor secondaryLabelColor] ), center,
+		VSP_Label( @"Middle", small, [NSColor secondaryLabelColor] ) ]];
+	[sliderRow setSpacing: 6];
+	void ( ^update )( void ) = ^{ [weakCenter setEnabled: [[weakLayout selectedItem] tag] == 1]; };
+	[hudTargets addObject: t = [VSPBlockTarget target: update]];
+	[layout setTarget: t];
+	[layout setAction: @selector(fire:)];
+	[hudTargets addObject: t = [VSPBlockTarget target: ^{ centerMoved = YES; }]];
+	[center setTarget: t];
+	[center setAction: @selector(fire:)];
+	update();
+	grid = [NSGridView gridViewWithViews: @[
+		@[ VSP_Label( @"HUD:", f, nil ), layout ],
+		@[ VSP_Label( @"Position:", f, nil ), sliderRow ],
+		@[ VSP_Label( @"Weapons:", f, nil ), predict ],
+		@[ [NSGridCell emptyContentView], hint ] ]];
+	[grid setRowSpacing: 10];
+	[grid setColumnSpacing: 10];
+	[[grid columnAtIndex: 0] setXPlacement: NSGridCellPlacementTrailing];
+	[grid setRowAlignment: NSGridRowAlignmentFirstBaseline];
+	[[grid cellForView: sliderRow] setYPlacement: NSGridCellPlacementCenter];
+	[ok setKeyEquivalent: @"\r"];
+	[cancel setKeyEquivalent: @"\033"];
+	[hudTargets addObject: t = [VSPBlockTarget target: ^{
+		self->hudAspect = (int)[[weakLayout selectedItem] tag];
+		[[NSUserDefaults standardUserDefaults] setBool: self->hudAspect != 0 forKey: KEY_HUDASPECT];
+		if( centerMoved )
+			self->hudCenter = [NSString stringWithFormat: @"%g", round( [weakCenter doubleValue] * 100 ) / 100];
+		self->predictWeapons = [predict state] == NSControlStateValueOn;
+		[self->window endSheet: weakPanel returnCode: NSModalResponseOK];
+	}]];
+	[ok setTarget: t];
+	[ok setAction: @selector(fire:)];
+	[hudTargets addObject: t = [VSPBlockTarget target: ^{ [self->window endSheet: weakPanel returnCode: NSModalResponseCancel]; }]];
+	[cancel setTarget: t];
+	[cancel setAction: @selector(fire:)];
+	buttons = [NSStackView stackViewWithViews: @[ [NSView new], cancel, ok ]];
+	[[buttons views][0] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	root = [NSStackView stackViewWithViews: @[ grid, buttons ]];
+	[root setOrientation: NSUserInterfaceLayoutOrientationVertical];
+	[root setSpacing: 18];
+	[root setEdgeInsets: NSEdgeInsetsMake( 20, 20, 16, 20 )];
+	[[buttons widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -40].active = YES;
+	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[[panel contentView] addSubview: root];
+	[NSLayoutConstraint activateConstraints: @[
+		[[root leadingAnchor] constraintEqualToAnchor: [[panel contentView] leadingAnchor]],
+		[[root trailingAnchor] constraintEqualToAnchor: [[panel contentView] trailingAnchor]],
+		[[root topAnchor] constraintEqualToAnchor: [[panel contentView] topAnchor]],
+		[[root bottomAnchor] constraintEqualToAnchor: [[panel contentView] bottomAnchor]],
+		[[root widthAnchor] constraintEqualToConstant: 480],
+	]];
+	[panel setContentSize: [root fittingSize]];
+	return panel;
+}
+
+- (void)editHud: (id)sender
+{
+	NSWindow *panel = [self hudSheet];
+	[window beginSheet: panel completionHandler: ^( NSModalResponse r ) { [panel orderOut: nil]; }];
+}
+
+// VOYAGERSP_TEST_LAUNCHER_HUD
+- (BOOL)snapshotHud: (const char *)path
+{
+	return VSP_SnapshotWindow( [self hudSheet], path );
+}
 
 // What a Holomatch client started from here gets: the graphics and the name.
 - (NSArray<NSString *> *)clientArgs
@@ -1390,6 +1671,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		@"+set", @"r_fbo", @"1", @"+set", @"r_ext_multisample", @( gfx.msaa ).stringValue,
 		@"+set", @"name", VSP_CleanName( [name stringValue] ) ]];
 	[a addObjectsFromArray: BrightnessArgs( gfx.brightness, 600 )];	// leaves room for the rest
+	[a addObjectsFromArray: [self cmodArgs]];
 	if( basepath )
 		[a addObjectsFromArray: @[ @"+set", @"fs_basepath", basepath ]];
 	if( VSP_WriteMastersConfig() )
@@ -1417,6 +1699,9 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 	// (after the rest, which then can't be crowded out)
 	if( holomatch )
 		[args appendFormat: @"+set name \"%@\" ", VSP_CleanName( [name stringValue] )];
+	if( holomatch )
+		for( NSString *arg in [self cmodArgs] )
+			[args appendFormat: @"%@ ", arg];
 	if( basepath )
 		[args appendFormat: @"+set fs_basepath \"%@\" ", basepath];
 	// the Servers… list: sv_master1-16 in a cfg file (too long for this line)
@@ -1424,6 +1709,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 		[args appendFormat: @"+exec %@ ", VSP_MASTERS_CFG];
 	if( holomatch && [VSP_LoopbackArgs() count] )
 		[args appendFormat: @"+set cl_loopbackHostIP %@ ", VSP_PublicAddress()];
+	VSP_CoopAppendArgs( args, holomatch );	// Co-op…'s Host: +set sp_coop 1
 	// Browse…: straight into the chosen server
 	if( holomatch && joinAddress )
 	{
@@ -1521,7 +1807,7 @@ static void FetchLatestRelease( void ( ^done )( NSString *version, NSString *url
 		return;
 	}
 	req = [NSMutableURLRequest requestWithURL: [NSURL URLWithString:
-		[NSString stringWithFormat: @"https://api.github.com/repos/%@/releases?per_page=30", UPDATE_REPO]]];
+		[NSString stringWithFormat: @"https://api.github.com/repos/%@/releases?per_page=100", UPDATE_REPO]]];
 	[req setValue: @"application/vnd.github+json" forHTTPHeaderField: @"Accept"];
 	[req setValue: [NSString stringWithFormat: @"EliteForce-MacOS/%@", AppVersion()] forHTTPHeaderField: @"User-Agent"];
 	cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
@@ -1745,7 +2031,7 @@ static BOOL UpdateCheckEnabled( void )
 			if( [w isKindOfClass: [NSPanel class]] )
 				[(NSPanel *)w setWorksWhenModal: YES];
 			[w setLevel: NSModalPanelWindowLevel];
-			[w makeKeyAndOrderFront: nil];
+			VSP_ShowWindow( w );
 			LLog( @"Launcher: About panel (%@)", NSStringFromClass( [w class] ) );
 		}
 }
@@ -1810,6 +2096,7 @@ void VSP_EndModalMenu( id token )
    stvef:// links: "Join" links on efservers.com and the like
    ------------------------------------------------------------------------ */
 
+// (co-op builds: stvef://coop/<host>:<port> is a co-op invite, sys_osx_coop.m)
 // stvef://connect/<host>:<port>[?...][#<name>/<map>/...] (what efservers.com
 // uses; see github.com/stefansundin/stvef-protocol) and the older
 // stvef:<ip>;<port>;<name>;<map>;... Only the address is used. With the
@@ -1856,10 +2143,34 @@ static NSString *LinkAddress( NSString *link )
 - (void)handleURLEvent: (NSAppleEventDescriptor *)event withReplyEvent: (NSAppleEventDescriptor *)reply
 {
 	NSString *link = [[event paramDescriptorForKeyword: keyDirectObject] stringValue];
-	NSString *addr = LinkAddress( link );
+	NSString *addr;
+
+#ifdef EF_COOP
+	// a co-op invite (Copy Invite in the Co-op… sheet): the sheet, its address filled in and checked
+	if( ( addr = VSP_CoopLinkAddress( link ) ) )
+	{
+		LLog( @"Link: %@ -> co-op %@", link, [addr length] ? addr : @"without an address" );
+		[NSApp activateIgnoringOtherApps: YES];
+		if( linkLauncher && [addr length] )
+		{
+			NSWindow *sheet = [[linkLauncher window] attachedSheet];
+			if( sheet )
+				[[linkLauncher window] endSheet: sheet returnCode: NSModalResponseCancel];
+			[linkLauncher selectMode: 0];
+			VSP_CoopOpenJoin( addr );
+		}
+		else if( ![addr length] )
+			Sys_Dialog( DT_INFO, va( "The co-op invite %s has no address in it.", [link UTF8String] ), "Join co-op" );
+		else
+			Sys_Dialog( DT_INFO, va( "To join the co-op game at %s, quit and open the invite again: it opens "
+				"Co-op in the launcher with the address filled in.", [addr UTF8String] ), "Join co-op" );
+		return;
+	}
+#endif
+	addr = LinkAddress( link );
 
 	LLog( @"Link: %@ -> %@", link, addr ? addr : @"not a server address" );
-	[NSApp activateIgnoringOtherApps: YES];
+	VSP_ActivateApp( );
 	if( linkLauncher )
 	{
 		NSWindow *sheet = [[linkLauncher window] attachedSheet];
@@ -2026,6 +2337,7 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 		// SDL's video init sets up NSApp (SDL's NSApplication subclass), as
 		// for the game folder chooser
 		SDL_InitSubSystem( SDL_INIT_VIDEO );
+		Sys_MacTestBackgroundApp( );	// VOYAGERSP_TEST_BACKGROUND (sys_osx.m)
 		l = [[VSPLauncher alloc] initWithOverridden: VSP_DataOverridden( argc, argv )];
 
 		if( getenv( "VOYAGERSP_TEST_ADD" ) )
@@ -2055,6 +2367,12 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 			}
 			[l selectMode: MODE_HOLOMATCH];
 			setenv( "VOYAGERSP_TEST_LAUNCHER_PLAY", "1", 1 );
+		}
+		if( getenv( "VOYAGERSP_TEST_LAUNCHER_HUD" ) )
+		{
+			[l snapshotHud: getenv( "VOYAGERSP_TEST_LAUNCHER_HUD" )];
+			SDL_Quit( );
+			exit( 0 );
 		}
 		if( getenv( "VOYAGERSP_TEST_SERVER_CONFIG_SNAPSHOT" ) )
 		{
@@ -2167,8 +2485,10 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 					[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
 				}
 				[[l window] center];
-				[NSApp activateIgnoringOtherApps: YES];
-				[[l window] makeKeyAndOrderFront: nil];
+				[l fitToScreen];
+				VSP_ActivateApp( );
+				VSP_ShowWindow( [l window] );
+				VSP_KeepBehindWhenModal( [l window] );
 				r = [NSApp runModalForWindow: [l window]];
 				[l removeUpdateMenu];
 				VSP_EndModalMenu( menu );

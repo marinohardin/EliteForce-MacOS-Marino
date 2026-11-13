@@ -4,6 +4,7 @@
 #include "g_nav.h"
 #include "g_functions.h"
 #include "Q3_Interface.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern void Q3_RemoveEnt( gentity_t *victim );
 extern void CG_SurfaceExplosion( vec3_t origin, vec3_t normal, float radius, float shake_speed, qboolean smoke );

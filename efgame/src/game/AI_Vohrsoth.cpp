@@ -3,6 +3,7 @@
 #include "AI.h"
 #include "anims.h"
 #include "b_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 
 extern void FX_GroundTendrilSpawner( vec3_t start, vec3_t end );
@@ -367,7 +368,7 @@ Vohrsoth_CheckEnemy
 
 static void Vohrsoth_CheckEnemy( void )
 {
-	gentity_t	*target = &g_entities[0];	//FIXME: If you want something else, put it here
+	gentity_t	*target = COOP_NearestPlayer( NPC->currentOrigin );	//FIXME: If you want something else, put it here
 
 	NPC->enemy = target;
 }

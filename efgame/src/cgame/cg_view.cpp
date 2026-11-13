@@ -2,6 +2,7 @@
 // for a 3D rendering
 #include "cg_local.h"
 #include "FX_Public.h"
+#include "../game/coop_public.h"
 
 float cg_zoomFov;
 
@@ -492,7 +493,7 @@ static void CG_OffsetFirstPersonView( void ) {
 #endif
 
 	{
-		centity_t	*playerCent = &cg_entities[0];
+		centity_t	*playerCent = &cg_entities[COOP_ViewClientNum()];
 
 		if ( playerCent && playerCent->gent && playerCent->gent->client )
 		{

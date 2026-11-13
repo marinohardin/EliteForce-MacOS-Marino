@@ -921,6 +921,18 @@ intptr_t SV_GameSystemCalls( intptr_t *args ) {
 #endif
 
 	default:
+#ifdef ELITEFORCE
+		// From cMod by Noah Metzger (Chomenor): his qagame finds the GetValue call through
+		// the cvar "//trap_GetValue" (set by the client, see CL_CmodGetValue), so on a listen
+		// server it makes the call too. The server answers no keys: his game code then does
+		// without those extras, as on an engine without the call.
+		if ( args[0] == VM_CMOD_TRAP_GETVALUE && Com_Holomatch() ) {
+			if ( args[2] > 0 ) {
+				*(char *)VMA(1) = '\0';
+			}
+			return 0;
+		}
+#endif
 		Com_Error( ERR_DROP, "Bad game system trap: %ld", (long int) args[0] );
 	}
 	return 0;
@@ -965,7 +977,8 @@ static void SV_InitGameVM( qboolean restart ) {
 	
 	// use the current msec count for a random seed
 	// init for this gamestate
-	VM_Call (gvm, GAME_INIT, sv.time, Com_Milliseconds(), restart);
+	// the regression harness (qcommon/regress.c) fixes the game's random seed
+	VM_Call (gvm, GAME_INIT, sv.time, Regress_Active() ? Regress_Seed() : Com_Milliseconds(), restart);
 }
 
 

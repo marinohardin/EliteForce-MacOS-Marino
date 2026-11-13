@@ -1924,9 +1924,10 @@ static void R_Register( void )
 		" -2 - first integrated GPU" );
 	r_device->modified = qfalse;
 
-#ifdef __APPLE__
-	// on by default on macOS: the gamma post-pass makes brightness changes live, and
-	// Apple Silicon doesn't notice the extra fullscreen pass
+#ifdef EF_DESKTOP
+	// on by default on the desktop builds: the gamma post-pass makes brightness
+	// changes live (the launcher's Brightness), and GPUs don't notice the extra
+	// fullscreen pass
 	r_fbo = ri.Cvar_Get( "r_fbo", "1", CVAR_ARCHIVE_ND | CVAR_LATCH );
 #else
 	r_fbo = ri.Cvar_Get( "r_fbo", "0", CVAR_ARCHIVE_ND | CVAR_LATCH );

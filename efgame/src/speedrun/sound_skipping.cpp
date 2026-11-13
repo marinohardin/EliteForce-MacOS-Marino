@@ -2,6 +2,7 @@
 
 #include "../game/g_local.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <string_view>

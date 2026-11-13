@@ -4,6 +4,7 @@
 #include "FX_Public.h"
 #include "../game/anims.h"
 #include "../game/boltons.h"
+#include "../game/coop_public.h"
 
 #define	LOOK_SWING_SCALE	0.5
 
@@ -1545,7 +1546,7 @@ void CG_PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t torso[3], vec3_t h
 	int			i;
 	qboolean	looking = qfalse, talking = qfalse;
 
-	if ( cg.renderingThirdPerson && cent->gent && cent->gent->s.number == 0 )
+	if ( cg.renderingThirdPerson && cent->gent && cent->gent->s.number == COOP_ViewClientNum() )
 	{
 		// If we are rendering third person, we should just force the player body to always fully face
 		//	whatever way they are looking, otherwise, you can end up with gun shots coming off of the
@@ -2180,7 +2181,7 @@ void CG_LightningBolt( centity_t *cent, vec3_t origin )
 	qboolean	spark = qfalse, impact = qtrue, weak = qfalse;
 
 	// for lightning weapons coming from the player, it had better hit the crosshairs or else..
-	if ( cent->gent->s.number || cg_thirdPerson.integer == 2 )
+	if ( cent->gent->s.number != COOP_ViewClientNum() || cg_thirdPerson.integer == 2 )
 	{
 		VectorCopy( origin, org );
 	}
@@ -3145,7 +3146,8 @@ void CG_Player( centity_t *cent ) {
 		return;
 	}
 
-	if(cent->currentState.number == 0 && !cg_thirdPerson.integer )
+	// (the view weapon draws this player's beam; a co-op guest views player 2, not entity 0)
+	if(cent->currentState.number == COOP_ViewClientNum() && !cg_thirdPerson.integer )
 	{
 		calcedMp = qtrue;
 	}
@@ -3471,7 +3473,7 @@ void CG_Player( centity_t *cent ) {
 			//
 
 			// impulse flash
-			if ( cg.time - cent->muzzleFlashTime <= MUZZLE_FLASH_TIME )
+			if ( cg.time - cent->muzzleFlashTime <= MUZZLE_FLASH_TIME || COOP_HeldBeam( &cent->currentState ) )
 			{
 				if ( cent->gent->alt_fire && weapon->flashaModel ) {
 					if (weapon->flasha2Model && ( rand() & 1 ) ) {

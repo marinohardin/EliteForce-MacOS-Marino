@@ -2883,7 +2883,7 @@ static void vk_create_geometry_buffers( VkDeviceSize size )
 		SET_OBJECT_NAME( vk.tess[i].vertex_buffer, va( "geometry buffer %i", i ), VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT );
 	}
 
-	SET_OBJECT_NAME( vk.geometry_buffer_memory, "geometry buffer memory", VK_DEBUG_REPORT_OBJECT_TYPE_BUFFER_EXT );
+	SET_OBJECT_NAME( vk.geometry_buffer_memory, "geometry buffer memory", VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT );
 
 	vk.geometry_buffer_size = vb_memory_requirements.size;
 
@@ -3879,7 +3879,7 @@ static void vk_create_attachments( void )
 	SET_OBJECT_NAME( vk.color_image, "color attachment", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
 	SET_OBJECT_NAME( vk.color_image_view, "color attachment", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
 
-	SET_OBJECT_NAME( vk.capture.image, "capture image", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
+	SET_OBJECT_NAME( vk.capture.image, "capture image", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_EXT );
 	SET_OBJECT_NAME( vk.capture.image_view, "capture image view", VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT );
 
 	for ( i = 0; i < ARRAY_LEN( vk.bloom_image ); i++ )
@@ -4835,7 +4835,7 @@ void vk_initialize( void )
 		uint32_t drvMajor = props.driverVersion >> 14;
 		uint32_t drvMinor = props.driverVersion & 0x3FFF;
 		if ( drvMajor == 101 && drvMinor >= 5333 && drvMinor <= 6737 ) {
-			Com_sprintf( vk.driverNote, sizeof( vk.driverNote ), S_COLOR_WARNING
+			Com_sprintf( vk.driverNote, sizeof( vk.driverNote ), S_COLOR_YELLOW
 				"\nWARNING: Intel driver %i.%i is known to cause Vulkan crashes.\n"
 				"Consider updating to driver >= 101.6790 or downgrading to <= 101.5186.\n",
 				drvMajor, drvMinor );

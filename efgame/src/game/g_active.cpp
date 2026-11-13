@@ -1,5 +1,6 @@
 
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "../cgame/cg_local.h"
 #include "Q3_Interface.h"
@@ -878,6 +879,13 @@ extern vmCvar_t cg_thirdPerson;
 			ucmd->upmove = 0;
 		}
 	}
+	else if ( COOP_IsP2( ent ) )
+	{
+		if ( COOP_P2ThinkGate( ent, ucmd ) )
+		{
+			return;
+		}
+	}
 	else
 	{
 		G_NPCMunroMatchPlayerWeapon( ent );
@@ -918,7 +926,7 @@ extern vmCvar_t cg_thirdPerson;
 	} 
 	else if ( client->ps.stats[STAT_HEALTH] <= 0 ) 
 	{
-		client->ps.pm_type = PM_DEAD;
+		client->ps.pm_type = COOP_IsDowned( ent ) ? PM_FREEZE : PM_DEAD;	// co-op: a downed player lies still
 	} 
 	else 
 	{
@@ -1164,6 +1172,15 @@ extern vmCvar_t cg_thirdPerson;
 	// check for respawning
 	if ( client->ps.stats[STAT_HEALTH] <= 0 ) 
 	{
+		if ( COOP_IsP2( ent ) )
+		{
+			COOP_P2DeadThink( ent, ucmd );	// not the player respawn below: that reloads the game
+			return;
+		}
+		if ( COOP_IsDowned( ent ) )
+		{
+			return;	// co-op: waiting for a revive
+		}
 		// wait for the attack button to be pressed
 		if ( ent->NPC == NULL && level.time > client->respawnTime ) 
 		{

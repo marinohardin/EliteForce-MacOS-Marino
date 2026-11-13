@@ -1,0 +1,88 @@
+#!/bin/sh
+# AppRun: the AppImage's entry point. Picks what to start.
+#
+#   AppRun                    the launcher (ef-launcher: pick single player / Holomatch / host a server)
+#   AppRun --launcher         the launcher, even when "start the last mode automatically" is on (Steam Deck)
+#   AppRun --host-server      only the server window (ef-launcher --host-server)
+#   AppRun --choose-game-folder   the launcher with the game-folder chooser open
+#   AppRun stvef://...        a server link: ef-launcher hands it to the running launcher, or opens it
+#   AppRun --uri stvef://...  the same
+#   AppRun --sp               single player, straight into the game (no launcher)
+#   AppRun --holomatch        Holomatch (multiplayer client), no launcher
+#   AppRun --server           dedicated server for the internet (dedicated 2); run it in a terminal
+#   AppRun --server-lan       dedicated server for the LAN only (dedicated 1)
+#   anything else             handed to the engine unchanged (e.g. +set r_mode 6, +connect host)
+# EF_NO_LAUNCHER=1 makes a bare AppRun start single player straight away (the old behaviour).
+# A mode flag may be followed by more engine arguments.
+#
+# Steam Deck (Gaming Mode, or SteamDeck=1): the pad is enabled, and on the first run of each
+# mode the game starts fullscreen at the desktop resolution with deck.cfg's controller
+# bindings applied once (when the launcher starts the game it does the same). EF_JOYSTICK=1
+# enables the pad on any machine.
+set -eu
+
+HERE="$(dirname "$(readlink -f "$0")")"
+BIN="$HERE/usr/bin/efsp"
+HOMEDIR="${XDG_DATA_HOME:-$HOME/.local/share}/eliteforce-marino"
+
+# The launcher is a separate program (Qt), so the game itself never links Qt. It runs the game
+# with the same engine arguments as below (and sets EF_FROM_LAUNCHER so the game's Quit returns).
+LAUNCHER="$HERE/usr/bin/ef-launcher"
+if [ -x "$LAUNCHER" ]; then
+	case "${1:-}" in
+		"")
+			if [ -z "${EF_NO_LAUNCHER:-}" ]; then exec "$LAUNCHER"; fi ;;
+		--launcher|--host-server|--choose-game-folder|--uri|stvef:*)
+			exec "$LAUNCHER" "$@" ;;
+	esac
+fi
+
+mode=sp
+dedicated=0
+uri=""
+case "${1:-}" in
+	--sp)         shift ;;
+	--holomatch)  mode=hm; shift ;;
+	--server)     mode=hm; dedicated=2; shift ;;
+	--server-lan) mode=hm; dedicated=1; shift ;;
+	--uri)        mode=hm; uri="${2:-}"; if [ $# -ge 2 ]; then shift 2; else shift; fi ;;
+	stvef:*)      mode=hm; uri="$1"; shift ;;
+esac
+
+# a caller that names com_holomatch itself keeps full control of the mode
+for a in "$@"; do
+	[ "$a" = com_holomatch ] && mode=none
+done
+
+onDeck=0
+if [ "${SteamDeck:-}" = 1 ] || [ "${XDG_CURRENT_DESKTOP:-}" = gamescope ]; then
+	onDeck=1
+fi
+
+# The generated arguments go in front of the caller's, so the caller's win.
+# (set -- X "$@" prepends; build in reverse order.)
+if [ "$onDeck" = 1 ] && [ "$dedicated" = 0 ] && [ "$mode" != none ]; then
+	base="$HOMEDIR/baseEF"
+	marker="$HOMEDIR/.deck-applied-$mode"
+	if [ ! -e "$marker" ]; then
+		mkdir -p "$base"
+		[ -e "$base/deck.cfg" ] || cp "$HERE/usr/share/eliteforce-marino/deck.cfg" "$base/deck.cfg"
+		: > "$marker"
+		set -- +set r_fullscreen 1 +set r_mode -2 +exec deck.cfg "$@"
+	fi
+fi
+if [ "$onDeck" = 1 ] || [ "${EF_JOYSTICK:-}" = 1 ]; then
+	set -- +set in_joystick 1 "$@"
+fi
+[ "$dedicated" = 0 ] || set -- +set dedicated "$dedicated" "$@"
+case "$mode" in
+	sp) set -- +set com_holomatch 0 "$@" ;;
+	hm) set -- +set com_holomatch 1 "$@" ;;
+esac
+# Sys_ParseProtocolUri ignores everything after --uri, so it goes last
+[ -z "$uri" ] || set -- "$@" --uri "$uri"
+
+[ -x "$BIN" ] || { echo "AppRun: $BIN is missing" >&2; exit 1; }
+# Bundled libraries are found through the binaries' own rpath ($ORIGIN/../lib); LD_LIBRARY_PATH
+# is left alone because it would leak into programs the game starts.
+exec "$BIN" "$@"

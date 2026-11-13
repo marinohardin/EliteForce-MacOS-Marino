@@ -26,6 +26,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // q_shared.h -- included first by ALL program modules.
 // A user mod should never modify this file
 
+// the desktop builds of Elite Force (macOS, Windows, Linux; not Android)
+#if !defined( __ANDROID__ ) && !defined( __EMSCRIPTEN__ ) && \
+	( defined( __APPLE__ ) || defined( _WIN32 ) || defined( __linux__ ) )
+  #define EF_DESKTOP 1
+#endif
+
 #ifdef STANDALONE
   #define PRODUCT_NAME				"iofoo3"
   #define BASEGAME					"foobar"
@@ -49,8 +55,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #elif defined ELITEFORCE
   #define PRODUCT_NAME				"Lilium Voyager SP"
   #define BASEGAME					"baseEF"
-  #ifdef __APPLE__
-  #define CLIENT_WINDOW_TITLE		"Elite Force"	// the macOS app name; sdl_glimp.c adds the mode
+  #ifdef EF_DESKTOP
+  #define CLIENT_WINDOW_TITLE		"Elite Force"	// the app name; sdl_glimp.c adds the mode
   #else
   #define CLIENT_WINDOW_TITLE		"Lilium Voyager SP"
   #endif
@@ -135,10 +141,16 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #  define PRODUCT_DATE __DATE__
 #endif
 
-#if defined( ELITEFORCE ) && defined( __APPLE__ ) && defined( EF_APP_VERSION )
+#if defined( ELITEFORCE ) && defined( EF_DESKTOP ) && defined( EF_APP_VERSION )
 // the version players and server browsers see; PRODUCT_NAME stays as it was
 // because it also names files (the PID file)
+#if defined( __APPLE__ )
 #define Q3_VERSION "Elite Force for Mac " EF_APP_VERSION
+#elif defined( _WIN32 )
+#define Q3_VERSION "Elite Force for Windows " EF_APP_VERSION
+#else
+#define Q3_VERSION "Elite Force for Linux " EF_APP_VERSION
+#endif
 #else
 #define Q3_VERSION PRODUCT_NAME " " PRODUCT_VERSION
 #endif
@@ -504,6 +516,7 @@ extern	vec4_t		colorDkGrey;
 #define S_COLOR_RED	"^1"
 #define S_COLOR_GREEN	"^2"
 #define S_COLOR_YELLOW	"^3"
+#define S_COLOR_WARNING	S_COLOR_YELLOW	// Quake3e (renderervk/vk.c, _WIN32 driver note)
 #define S_COLOR_BLUE	"^4"
 #define S_COLOR_CYAN	"^5"
 #define S_COLOR_MAGENTA	"^6"

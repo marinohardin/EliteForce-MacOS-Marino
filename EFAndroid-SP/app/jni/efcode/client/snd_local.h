@@ -61,6 +61,10 @@ typedef struct sfx_s {
 	int				soundSource;			// S_CodecSoundSource when loaded
 	int				lastTimeUsed;
 	struct sfx_s	*next;
+	// single player lip sync (S_VoiceLipSync): every 100th sample at 22 kHz
+	signed char		*lipSamples;			// sample >> 8, first channel
+	int				lipCount;
+	float			lipVolRange;			// loudest |sample >> 8| in the sound
 } sfx_t;
 
 typedef struct {
@@ -151,6 +155,7 @@ typedef struct
 	void (*SoundList)( void );
 	void (*PauseGameSounds)( qboolean pause );	// optional (NULL: no pause support)
 	void (*StopGameSounds)( void );				// optional: stop effects + loops, keep music/streams
+	qboolean (*VoiceLipSync)( int *levels, int numEntities );	// optional (NULL: no lip sync data)
 #ifdef USE_VOIP
 	void (*StartCapture)( void );
 	int (*AvailableCaptureSamples)( void );

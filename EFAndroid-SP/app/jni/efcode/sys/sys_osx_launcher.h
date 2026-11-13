@@ -17,9 +17,19 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 NSString *VSP_HomeBase( void );
 void VSP_Log( NSString *msg );
 BOOL VSP_HasExpansion( NSString *base );
+BOOL VSP_PakChecksum( NSString *path, unsigned int *checksum );	// as the engine's pack checksum
 NSArray<NSString *> *VSP_MissingPatchPaks( NSString *base );	// of pak1.pk3, pak2.pk3
 
 #define LLog( ... ) VSP_Log( [NSString stringWithFormat: __VA_ARGS__] )
+
+// sys_osx.m: VOYAGERSP_TEST_BACKGROUND, the quiet test mode (see there).
+// VSP_ActivateApp and VSP_ShowWindow come forward (activate the app;
+// makeKeyAndOrderFront) except in that mode, where the window goes behind.
+qboolean Sys_MacTestBackground( void );
+void Sys_MacTestBackgroundApp( void );
+void VSP_ActivateApp( void );
+void VSP_ShowWindow( NSWindow *window );
+void VSP_KeepBehindWhenModal( NSWindow *window );	// call before runModalForWindow
 
 // sys_osx_launcher.m: the look of the launcher, reused by the server windows
 BOOL VSP_TestEnvIs( const char *name, const char *value );
@@ -54,6 +64,10 @@ enum { VSP_GT_FFA = 0, VSP_GT_TOURNAMENT = 1, VSP_GT_TEAM = 3, VSP_GT_CTF = 4 };
 @property (nonatomic) BOOL openPort;		// internet: ask the router to forward the port (NAT-PMP / UPnP)
 @property (nonatomic) NSInteger port;
 @property (nonatomic) NSInteger tickRate;		// sv_fps: 20 (Standard, sv_fps left alone) or 40 (High)
+// cMod's qagame (by Noah Metzger) and its lag compensation: sv_cmodGame, g_unlagged 0-2,
+// g_smoothClients, g_unlaggedPredict
+@property (nonatomic) BOOL cmodGame, smoothClients, unlaggedPredict;
+@property (nonatomic) NSInteger unlagged;
 @property (nonatomic, copy) NSArray<NSString *> *rotation;			// map names, in order
 + (instancetype)load;
 - (void)save;
@@ -83,6 +97,7 @@ enum { VSP_GT_FFA = 0, VSP_GT_TOURNAMENT = 1, VSP_GT_TEAM = 3, VSP_GT_CTF = 4 };
 NSArray<VSPMapInfo *> *VSP_MapCatalog( NSString *dataFolder );
 // This Mac's address on the local network (IPv4), or nil.
 NSString *VSP_LANAddress( void );
+BOOL VSP_CmodAvailable( void );		// cMod's game modules are in the app bundle
 
 VSPMapInfo *VSP_FindMap( NSArray<VSPMapInfo *> *maps, NSString *name );
 

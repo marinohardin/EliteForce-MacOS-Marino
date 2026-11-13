@@ -1,6 +1,8 @@
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "b_local.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern team_t TranslateTeamName( const char *name );
 extern	cvar_t	*g_spskill;
@@ -1150,7 +1152,7 @@ void stasis_shooter_active( gentity_t *self )
 			continue;
 		}
 
-		if ( radiusEnts[i]->s.number == 0 )
+		if ( COOP_IsPlayer( radiusEnts[i] ) )
 		{//the player
 			//Must be visible
 			CalcEntitySpot( radiusEnts[i], SPOT_HEAD, end );

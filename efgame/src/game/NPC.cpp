@@ -3,6 +3,7 @@
 //
 
 #include "b_local.h"
+#include "coop_public.h"
 #include "anims.h"
 #include "g_functions.h"
 #include "say.h"
@@ -63,16 +64,21 @@ void NPC_RemoveBody( gentity_t *self )
 	{
 		self->nextthink = level.time + 1000; // try back in a second
 
-		if ( DistanceSquared( g_entities[0].currentOrigin, self->currentOrigin ) <= REMOVE_DISTANCE_SQR )
-		{
-			return;
-		}
+		for ( int coopIdx = 0; coopIdx < COOP_NumPlayers(); coopIdx++ )
+		{//co-op: only when no player sees it
+			gentity_t	*coopPlayer = COOP_PlayerByIndex( coopIdx );
 
-		if ( (InFOV( self, &g_entities[0], 110, 90 )) ) // generous FOV check
-		{
-			if ( (NPC_ClearLOS( &g_entities[0], self->currentOrigin )) )
+			if ( DistanceSquared( coopPlayer->currentOrigin, self->currentOrigin ) <= REMOVE_DISTANCE_SQR )
 			{
 				return;
+			}
+
+			if ( (InFOV( self, coopPlayer, 110, 90 )) ) // generous FOV check
+			{
+				if ( (NPC_ClearLOS( coopPlayer, self->currentOrigin )) )
+				{
+					return;
+				}
 			}
 		}
 	}
@@ -329,7 +335,7 @@ void NPC_DrawSquadPath( squadPath_t *squadPath )
 
 	for(i = 0; i < squadPath->numWaypoints; i++)
 	{
-		if ( gi.inPVS(squadPath->waypoints[i].origin, g_entities[0].currentOrigin) )
+		if ( COOP_AnyPlayerInPVSRev( squadPath->waypoints[i].origin ) )
 		{
 			VectorAdd( squadPath->waypoints[i].origin, playerMins, mins );
 			VectorAdd( squadPath->waypoints[i].origin, playerMaxs, maxs );
@@ -360,7 +366,7 @@ void NPC_ShowDebugInfo (void)
 
 		while( (found = G_Find( found, FOFS(classname), "NPC" ) ) != NULL )
 		{
-			if ( gi.inPVS( found->currentOrigin, g_entities[0].currentOrigin ) )
+			if ( COOP_AnyPlayerInPVSRev( found->currentOrigin ) )
 			{
 				VectorAdd( found->currentOrigin, found->mins, mins );
 				VectorAdd( found->currentOrigin, found->maxs, maxs );

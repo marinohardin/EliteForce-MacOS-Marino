@@ -2,6 +2,7 @@
 
 #include "g_local.h"
 #include "g_functions.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern void G_SetEnemy( gentity_t *self, gentity_t *enemy );
 /*QUAKED fx_spark (0 0 1) (-8 -8 -8) (8 8 8) STARTOFF

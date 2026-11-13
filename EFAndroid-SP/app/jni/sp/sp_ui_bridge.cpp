@@ -13,7 +13,6 @@
 #include "ui_public.h"       // uiimport_t / uiexport_t / UI_API_VERSION (src/ui on include path)
 #include "sp_render.h"       // SPR_* (shared renderer/sound wrappers)
 #include "sp_ui.h"           // neutral SPUI_* interface + HM-side accessors
-#include <dlfcn.h>
 #include <string.h>
 #include <stdarg.h>
 #include <android/log.h>
@@ -31,7 +30,8 @@ static void uwarn(const char* fmt, ...){ va_list a; va_start(a,fmt); __android_l
 
 // Com_Printf/Com_Error/Q_strncpyz are declared C++-linkage by q_shared.h here, so reference
 // them via the C-linkage shim (sp_clink.c) / a local copy instead of the mangled symbols.
-extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*); }
+extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*);
+    void *SP_ModuleLoad(const char*,int); void *SP_ModuleSym(void*,const char*); void SP_ModuleUnload(void*); const char *SP_ModuleError(void); }
 static void sp_strncpyz(char* d, const char* s, int n){ if(n<=0)return; int i=0; for(; i<n-1 && s && s[i]; i++) d[i]=s[i]; d[i]=0; }
 
 // ---- lilium engine services (ABI-compatible with the SP boundary types) ----
@@ -224,11 +224,11 @@ static void SPUI_FillImport(void){
 
 extern "C" int SPUI_Load(void){
     if(g_uiActive) return 1;
-    g_uilib = dlopen(SP_ModulePath("libefui.so"), RTLD_NOW|RTLD_GLOBAL);
-    if(!g_uilib){ uwarn("dlopen libefui.so failed: %s", dlerror()); return 0; }
-    GetUIAPI_t getapi = (GetUIAPI_t)dlsym(g_uilib, "GetUIAPI");
-    if(!getapi) getapi = (GetUIAPI_t)dlsym(g_uilib, "_Z8GetUIAPIv");   // C++-mangled fallback
-    if(!getapi){ uwarn("GetUIAPI symbol not found: %s", dlerror()); return 0; }
+    g_uilib = SP_ModuleLoad(SP_ModulePath("libefui.so"), 1);
+    if(!g_uilib){ uwarn("dlopen libefui.so failed: %s", SP_ModuleError()); return 0; }
+    GetUIAPI_t getapi = (GetUIAPI_t)SP_ModuleSym(g_uilib, "GetUIAPI");
+    if(!getapi) getapi = (GetUIAPI_t)SP_ModuleSym(g_uilib, "_Z8GetUIAPIv");   // C++-mangled fallback
+    if(!getapi){ uwarn("GetUIAPI symbol not found: %s", SP_ModuleError()); return 0; }
     g_ux = getapi();
     if(!g_ux || !g_ux->UI_Init){ uwarn("GetUIAPI returned null/!UI_Init"); return 0; }
     SPUI_FillImport();

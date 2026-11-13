@@ -2,6 +2,7 @@
 // perform the server side effects of a weapon firing
 
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "anims.h"
 #include "b_local.h"
@@ -148,7 +149,7 @@ void WP_FirePhaser( gentity_t *ent, qboolean alt_fire )
 	qboolean	do_damage = qtrue, weak = qfalse;
 
 		// Make sure that the damage trace corresponds with the trace done for the actual effect or weird things could happen
-	if ( ent->s.number == 0 )
+	if ( COOP_IsPlayer( ent ) )
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
 	else
 		VectorCopy( muzzle, start );
@@ -217,7 +218,7 @@ void WP_FireCompressionRifle ( gentity_t *ent, qboolean alt_fire )
 	qboolean	do_damage = qtrue;
 	qboolean	render_impact = qtrue;
 
-	if ( ent->s.number == 0 && !cg_thirdPerson.integer )
+	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) )
 		// The trace start will originate at the eye so we can ensure that it hits the crosshair.
 		// This can cause small clipping errors, but it's probably not that big of a deal at this point.
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
@@ -273,7 +274,7 @@ void WP_FireCompressionRifle ( gentity_t *ent, qboolean alt_fire )
 				tent2 = G_TempEntity( tr.endpos, EV_COMPRESSION_RIFLE_MISS );
 
 				// FIXME:  Is this really an ok place to add this?
-				if ( ent->s.number == 0 )
+				if ( COOP_IsPlayer( ent ) )
 				{
 					//Add the event
 					AddSoundEvent( ent, tr.endpos, 256, AEL_DISCOVERED );
@@ -297,7 +298,7 @@ void WP_FireCompressionRifle ( gentity_t *ent, qboolean alt_fire )
 	{
 		// Do less damage when it's an NPC that is shooting this weapon, this is done so that they can still shoot a lot
 		//	but not necessarily kill everything for you.
-		if ( ent->client->ps.clientNum != 0 )
+		if ( !COOP_IsPlayerNum( ent->client->ps.clientNum ) )
 		{
 			damage *= 0.5;
 		}
@@ -334,7 +335,7 @@ void WP_FireIMOD ( gentity_t *ent, qboolean alt_fire )
 	gentity_t	*traceEnt;
 	qboolean	render_impact = qtrue;
 
-	if ( ent->s.number == 0 && !cg_thirdPerson.integer )
+	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) )
 		// The trace start will originate at the eye so we can ensure that it hits the crosshair.
 		// This can cause small clipping errors, but it's probably not that big of a deal at this point.
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
@@ -353,7 +354,7 @@ void WP_FireIMOD ( gentity_t *ent, qboolean alt_fire )
 
 	traceEnt = &g_entities[ tr.entityNum ];
 
-	if ( ent->s.number == 0 )
+	if ( COOP_IsPlayer( ent ) )
 	{
 		//Add the event
 		AddSoundEvent( ent, tr.endpos, 256, AEL_DISCOVERED );
@@ -478,7 +479,7 @@ void FireScavengerBullet( gentity_t *ent, vec3_t start, vec3_t dir, qboolean gre
 	// See if we need to do less damage, otherwise you'll be dead instantly if this weapon is used against you
 	if ( ent->client )
 	{
-		if ( ent->client->ps.clientNum != 0 )
+		if ( !COOP_IsPlayerNum( ent->client->ps.clientNum ) )
 		{	// Flags effect as being lite version for NPC's
 			bolt->count = 1;
 			
@@ -493,7 +494,7 @@ void FireScavengerBullet( gentity_t *ent, vec3_t start, vec3_t dir, qboolean gre
 	}
 	
 	//Do the damages
-	if ( ent->s.number != 0 )
+	if ( !COOP_IsPlayer( ent ) )
 	{
 		if ( g_spskill->integer == 0 )
 			damage = SCAV_NPC_DAMAGE_EASY;
@@ -579,7 +580,7 @@ void WP_FireScavenger( gentity_t *ent, qboolean alt_fire, qboolean greyscale )
 	}
 	else
 	{
-		if ( ent->s.number == 0 )
+		if ( COOP_IsPlayer( ent ) )
 		{
 			// FIXME: Move in from the side muzzle.  But, it might be much better to have it just come from the main barrel...
 			VectorMA( start, -20, _forward, start );
@@ -795,7 +796,7 @@ void WP_FireStasisAlt( gentity_t *ent )
 		else 
 		{
 			tent2 = G_TempEntity( tr.endpos, EV_STASIS_MISS );
-			if ( ent->s.number == 0 )
+			if ( COOP_IsPlayer( ent ) )
 			{
 				//Add the event
 				AddSoundEvent( ent, tr.endpos, 256, AEL_DISCOVERED );
@@ -917,7 +918,7 @@ void grenadeSpewShrapnel( gentity_t *ent )
 	tent = G_TempEntity( ent->currentOrigin, EV_GRENADE_SHRAPNEL_EXPLODE );
 	VectorCopy( ent->pos1, tent->pos1 );
 
-	if ( ent->owner && ent->owner->s.number == 0 )
+	if ( ent->owner && COOP_IsPlayer( ent->owner ) )
 	{
 		//Add the event
 		AddSoundEvent( ent->owner, ent->currentOrigin, 256, AEL_DISCOVERED );
@@ -1095,7 +1096,7 @@ void FireTetrionBullet( gentity_t *ent, vec3_t start, vec3_t dir )
 			{
 				tent2 = G_TempEntity( tr.endpos, EV_TETRION_MISS );
 
-				if ( ent->s.number == 0 )
+				if ( COOP_IsPlayer( ent ) )
 				{
 					//Add the event
 					AddSoundEvent( ent, tr.endpos, 256, AEL_DISCOVERED );
@@ -1207,7 +1208,7 @@ void WP_FireDreadnoughtBeam( gentity_t *ent )
 	qboolean	do_damage = qtrue;
 
 	// Make sure that the damage trace corresponds with the trace done for the actual effect or weird things could happen
-	if ( ent->s.number == 0 )
+	if ( COOP_IsPlayer( ent ) )
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
 	else
 		VectorCopy( muzzle, start );
@@ -1222,7 +1223,7 @@ void WP_FireDreadnoughtBeam( gentity_t *ent )
 	gi.trace( &tr, muzzle, mins, maxs, end, ent->s.number, MASK_SHOT );
 	traceEnt = &g_entities[ tr.entityNum ];
 
-	if ( !traceEnt->takedamage && ent->s.number == 0 ) 
+	if ( !traceEnt->takedamage && COOP_IsPlayer( ent ) ) 
 	{
 		//Add the event
 		AddSoundEvent( ent, tr.endpos, 256, AEL_DISCOVERED );
@@ -1369,7 +1370,7 @@ void WP_DreadnoughtBurstThink( gentity_t *ent )
 			// Hit a wall...
 			dot = DotProduct( ent->movedir, tr.plane.normal );
 
-			if ( !traceEnt->takedamage && ent->owner && ent->owner->s.number == 0 ) 
+			if ( !traceEnt->takedamage && ent->owner && COOP_IsPlayer( ent->owner ) ) 
 			{
 				//Add the event
 				AddSoundEvent( ent->owner, tr.endpos, 256, AEL_DISCOVERED );
@@ -1810,7 +1811,7 @@ void WP_FireProtonGun ( gentity_t *ent, qboolean alt_fire )
 	qboolean	do_damage = qtrue;
 	qboolean	render_impact = qtrue;
 
-	if ( ent->s.number == 0 && !cg_thirdPerson.integer )
+	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) )
 		// The trace start will originate at the eye so we can ensure that it hits the crosshair.
 		// This can cause small clipping errors, but it's probably not that big of a deal at this point.
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
@@ -1866,7 +1867,7 @@ void WP_FireProtonGun ( gentity_t *ent, qboolean alt_fire )
 				tent2 = G_TempEntity( tr.endpos, EV_PROTON_GUN_MISS );
 
 				// FIXME:  Is this really an ok place to add this?
-				if ( ent->s.number == 0 )
+				if ( COOP_IsPlayer( ent ) )
 				{
 					//Add the event
 					AddSoundEvent( ent, tr.endpos, 256, AEL_DISCOVERED );
@@ -1890,7 +1891,7 @@ void WP_FireProtonGun ( gentity_t *ent, qboolean alt_fire )
 	{
 		// Do less damage when it's an NPC that is shooting this weapon, this is done so that they can still shoot a lot
 		//	but not necessarily kill everything for you.
-		if ( ent->client->ps.clientNum != 0 )
+		if ( !COOP_IsPlayerNum( ent->client->ps.clientNum ) )
 		{
 			damage *= 0.5;
 		}
@@ -2951,7 +2952,7 @@ void CalcMuzzlePoint( gentity_t *ent, vec3_t forward, vec3_t right, vec3_t up, v
 		ViewHeightFix(ent);
 		muzzlePoint[2] += ent->client->ps.viewheight;//By eyes
 		muzzlePoint[2] -= 1;
-		if ( ent->s.number == 0 )
+		if ( COOP_IsPlayer( ent ) )
 			VectorMA( muzzlePoint, 12, forward, muzzlePoint ); // player, don't set this any lower otherwise the projectile will impact immediately when your back is to a wall
 		else
 			VectorMA( muzzlePoint, 2, forward, muzzlePoint ); // NPC, don't set too far forward otherwise the projectile can go through doors
@@ -3011,6 +3012,7 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 
 	ent->alt_fire = alt_fire;
 	CalcMuzzlePoint ( ent, _forward, vright, up, muzzle , 0);
+	COOP_ShotStart( ent, alt_fire );
 
 	// fire the specific weapon
 	switch( ent->s.weapon ) 
@@ -3158,6 +3160,7 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 	default:
 		break;
 	}
+	COOP_ShotEnd();
 }
 
 //DETPACK

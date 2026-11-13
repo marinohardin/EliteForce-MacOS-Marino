@@ -1,6 +1,7 @@
 // g_utils.c -- misc utility functions for game module
 
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 #include "g_nav.h"
 
@@ -74,6 +75,9 @@ void G_SoundOnEnt (gentity_t *ent, soundChannel_t channel, const char *soundPath
 {
 	int	index = G_SoundIndex( (char *)soundPath );
 
+#ifdef EF_COOP
+	COOP_OnDirectSound( ent->s.number, channel, soundPath );	// the guest's replica plays it too
+#endif
 	if ( cgs.sound_precache[ index ] ) 
 	{
 		cgi_S_StartSound( NULL, ent->s.number, channel, cgs.sound_precache[ index ] );
@@ -522,6 +526,7 @@ gentity_t *G_TempEntity( vec3_t origin, int event ) {
 	e->classname = "tempEntity";
 	e->eventTime = level.time;
 	e->freeAfterEvent = qtrue;
+	COOP_TagTempEntity( e );
 
 	VectorCopy( origin, snapped );
 	SnapVector( snapped );		// save network bandwidth
@@ -950,7 +955,9 @@ void G_ChangeMap (const char *mapname, const char *spawntarget, qboolean hub)
 	// Player_RestoreFromPrevLevel carries weapons/ammo/health/etc across the transition. (Retail did this in
 	// the engine; this port's bridge spawns the new map fresh + carries the player via these cvars.)
 	extern void Player_CacheForNextLevel(void);
+	COOP_ReviveAll();	// co-op: nobody goes to the next level down
 	Player_CacheForNextLevel();
+	COOP_CacheForNextLevel();
 
 	if ( spawntarget == NULL ) {
 		spawntarget = "";	//prevent it from becoming "(null)"

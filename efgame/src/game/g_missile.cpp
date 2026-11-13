@@ -1,4 +1,5 @@
 #include "g_local.h"
+#include "coop_public.h"
 #include "g_functions.h"
 
 #define	MISSILE_PRESTEP_TIME	50
@@ -97,7 +98,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace )
 			}
 		}
 
-		if ( ent->owner && ent->owner->s.number == 0 ) 
+		if ( ent->owner && COOP_IsPlayer( ent->owner ) ) 
 		{
 			//Add the event
 			AddSoundEvent( ent->owner, ent->currentOrigin, 128, AEL_DISCOVERED );
@@ -111,7 +112,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace )
 	// check for sticking
 	if ( !other->takedamage && ( ent->s.eFlags & EF_MISSILE_STICK ) ) 
 	{
-		if ( ent->owner && ent->owner->s.number == 0 ) 
+		if ( ent->owner && COOP_IsPlayer( ent->owner ) ) 
 		{
 			//Add the event
 			AddSoundEvent( ent->owner, ent->currentOrigin, 128, AEL_DISCOVERED );
@@ -170,7 +171,7 @@ void G_MissileImpact( gentity_t *ent, trace_t *trace )
 		ent->s.otherEntityNum = other->s.number;
 	}
 
-	if ( ent->owner && ent->owner->s.number == 0 )
+	if ( ent->owner && COOP_IsPlayer( ent->owner ) )
 	{
 		//Add the event
 		AddSoundEvent( ent->owner, ent->currentOrigin, 256, AEL_DISCOVERED );
@@ -217,7 +218,7 @@ void G_ExplodeMissile( gentity_t *ent )
 	dir[0] = dir[1] = 0;
 	dir[2] = 1;
 
-	if ( ent->owner && ent->owner->s.number == 0 )
+	if ( ent->owner && COOP_IsPlayer( ent->owner ) )
 	{
 		//Add the event
 		AddSoundEvent( ent->owner, ent->currentOrigin, 256, AEL_DISCOVERED );

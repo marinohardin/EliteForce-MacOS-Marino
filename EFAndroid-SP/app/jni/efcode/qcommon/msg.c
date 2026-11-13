@@ -2278,3 +2278,39 @@ void MSG_NUinitHuffman() {
 */
 
 //===========================================================================
+
+/*
+=============
+MSG_RegressFields
+
+The regression harness (regress.c): an entityState_t (ps NULL) or a playerState_t (es NULL) as
+"name=value ..." text, every field the network sends (the tables above) plus the player state's
+arrays. The player's ping is left out: the server measures it on the wall clock.
+=============
+*/
+void MSG_RegressFields( const entityState_t *es, const playerState_t *ps, char *buf, int size ) {
+	const netField_t *fields = ps ? playerStateFields : entityStateFields;
+	int numFields = ps ? ARRAY_LEN( playerStateFields ) : ARRAY_LEN( entityStateFields );
+	const byte *base = ps ? (const byte *)ps : (const byte *)es;
+	int i, j, len = 0;
+
+	buf[0] = '\0';
+	for ( i = 0; i < numFields && len < size; i++ ) {
+		const void *p = base + fields[i].offset;
+		if ( fields[i].bits == 0 ) {
+			len += Com_sprintf( buf + len, size - len, "%s%s=%.8g", len ? " " : "", fields[i].name, *(const float *)p );
+		} else {
+			len += Com_sprintf( buf + len, size - len, "%s%s=%d", len ? " " : "", fields[i].name, *(const int *)p );
+		}
+	}
+	if ( ps ) {
+		static const char *names[4] = { "stats", "persistant", "powerups", "ammo" };
+		const int *arrays[4] = { ps->stats, ps->persistant, ps->powerups, ps->ammo };
+		for ( j = 0; j < 4 && len < size; j++ ) {
+			len += Com_sprintf( buf + len, size - len, " %s=", names[j] );
+			for ( i = 0; i < 16 && len < size; i++ ) {
+				len += Com_sprintf( buf + len, size - len, i ? ",%d" : "%d", arrays[j][i] );
+			}
+		}
+	}
+}

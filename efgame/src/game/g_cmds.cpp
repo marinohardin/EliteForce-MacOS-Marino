@@ -1,4 +1,5 @@
 #include "g_local.h"
+#include "coop_public.h"
 #include "objectives.h"
 
 
@@ -554,6 +555,11 @@ void ClientCommand( int clientNum ) {
 	}
 
 	cmd = gi.argv(0);
+
+	if ( COOP_ConsoleCommand( cmd ) )
+	{
+		return;
+	}
 
 	if (Q_stricmp (cmd, "spawn") == 0)
 	{

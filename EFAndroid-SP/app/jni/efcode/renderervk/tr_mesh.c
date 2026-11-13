@@ -304,6 +304,19 @@ void R_AddMD3Surfaces( trRefEntity_t *ent ) {
 		ent->e.frame %= tr.currentModel->md3[0]->numFrames;
 		ent->e.oldframe %= tr.currentModel->md3[0]->numFrames;
 	}
+#ifdef RF_CAP_FRAMES
+	// Elite Force's one-shot animations (explosions, EF_ANIM_ONCE models): the game
+	// counts frames past the end (an explosion's last frame + 1 at the end of its
+	// life), which the check below would turn into frame 0, so the explosion
+	// started over in its last moments. Hold the last frame instead.
+	if ( ent->e.renderfx & RF_CAP_FRAMES ) {
+		const int lastFrame = tr.currentModel->md3[0]->numFrames - 1;
+		if ( ent->e.frame > lastFrame )
+			ent->e.frame = lastFrame;
+		if ( ent->e.oldframe > lastFrame )
+			ent->e.oldframe = lastFrame;
+	}
+#endif
 
 	//
 	// Validate the frames so there is no chance of a crash.

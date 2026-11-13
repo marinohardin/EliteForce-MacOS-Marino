@@ -1,6 +1,7 @@
 #include "cg_local.h"
 #include "../game/anims.h"
 #include "cg_media.h"
+#include "../game/coop_public.h"
 
 /////////////////////  this is a bit kludgy, but it only gives access to one
 //							enum table because of the #define. May get changed.
@@ -576,6 +577,12 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 	} else {
 		// get clientinfo for animation map
 		ci = &cgs.clientinfo[ cent->currentState.clientNum ];
+#ifdef EF_COOP
+		if ( cent->currentState.clientNum >= MAX_CLIENTS && cent->gent && cent->gent->client )
+		{	// a co-op guest views player 2, a client past cgs.clientinfo (as in CG_ResetPlayerEntity)
+			ci = &cent->gent->client->clientInfo;
+		}
+#endif
 		hand.frame = CG_MapTorsoToWeaponFrame( ci, cent->pe.torso.frame, cent->pe.torso.animationNumber&~ANIM_TOGGLEBIT, cent->currentState.weapon, ( cent->currentState.eFlags & EF_FIRING ) );
 		hand.oldframe = CG_MapTorsoToWeaponFrame( ci, cent->pe.torso.oldFrame, cent->pe.torso.animationNumber&~ANIM_TOGGLEBIT, cent->currentState.weapon, ( cent->currentState.eFlags & EF_FIRING ) );
 		hand.backlerp = cent->pe.torso.backlerp;
@@ -673,6 +680,7 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 		VectorCopy(flash.origin, cent->gent->client->renderInfo.muzzlePoint);
 		cent->gent->client->renderInfo.mPCalcTime = cg.time;
 	}
+	COOP_NoteViewMuzzle( flash.origin );
 }
 
 /*
@@ -951,7 +959,7 @@ void CG_ChangeWeapon( int num )
 */
 void CG_ChangeWeapon( int num )
 {
-	gentity_t	*player = &g_entities[0];
+	gentity_t	*player = &g_entities[COOP_ViewClientNum()];
 
 	if ( num < 1 || num >= WP_NUM_WEAPONS ) 
 	{
@@ -1172,6 +1180,7 @@ void CG_FireWeapon( centity_t *cent, qboolean alt_fire )
 			cgi_S_StartSound( NULL, ent->number, CHAN_WEAPON, weap->flashSound );
 		}
 	}
+	COOP_PredictShot( cent, alt_fire );
 }
 
 /*

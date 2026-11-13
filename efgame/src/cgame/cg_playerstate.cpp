@@ -5,6 +5,7 @@
 
 #include "cg_local.h"
 #include "cg_media.h"
+#include "../game/coop_public.h"
 
 /*
 ==============
@@ -225,6 +226,9 @@ void CG_CheckPlayerstateEvents( playerState_t *ps, playerState_t *ops ) {
 		if ( ps->events[i & (MAX_PS_EVENTS-1)] != ops->events[i & (MAX_PS_EVENTS-1)]
 			|| i >= ops->eventSequence ) {
 			event = ps->events[ i & (MAX_PS_EVENTS-1) ];
+			if ( COOP_SkipPlayerstateEvent( event ) ) {
+				continue;
+			}
 
 			cent = &cg_entities[ ps->clientNum ];
 			cent->currentState.event = event;

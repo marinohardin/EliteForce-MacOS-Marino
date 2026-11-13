@@ -11,21 +11,33 @@
 #include "tr_types.h"             // glconfig_t, refEntity_t, refdef_t
 #include "../cgame/cg_public.h"   // cgameImport_t (CG_*), snapshot_t
 #include "../client/vmachine.h"   // cgameExport_t (CG_INIT, CG_DRAW_ACTIVE_FRAME)
-#include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <stdarg.h>
 #include <time.h>
 #include <android/log.h>
+
+// Portable case-insensitive compare (strcasecmp/strncasecmp are POSIX-only; the SP Q_stricmp has
+// C++ linkage here and would not resolve against the C engine).
+static int sp_stricmpn( const char *a, const char *b, int n ){
+    while( n-- > 0 ){
+        int ca = (unsigned char)*a++, cb = (unsigned char)*b++;
+        if( ca >= 'A' && ca <= 'Z' ) ca += 32;
+        if( cb >= 'A' && cb <= 'Z' ) cb += 32;
+        if( ca != cb ) return ca < cb ? -1 : 1;
+        if( !ca ) return 0;
+    }
+    return 0;
+}
 
 // Save-game description typed in the EF Save menu (set by UII_SG_StoreSaveGameComment,
 // sp_ui_bridge.cpp). SP_SaveGame writes it into the COMM chunk so the Load list shows a name.
 extern char g_spSaveComment[128];
 
 // Com_Printf/Com_Error come via the C shim (SP headers declare them C++-linkage).
-extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*); }
+extern "C" { void (*SP_ComPrintf(void))(const char*,...); void SP_ComError(int,const char*,...); const char *SP_ModulePath(const char*);
+    void *SP_ModuleLoad(const char*,int); void *SP_ModuleSym(void*,const char*); void SP_ModuleUnload(void*); const char *SP_ModuleError(void); }
 // Bridge logging. Android: everything to logcat at INFO, as before. Desktop (macos/android/log.h):
 // blog = developer-only chatter, binfo = always shown, bwarn = always shown in yellow.
 #ifdef __ANDROID__
@@ -91,10 +103,20 @@ extern "C" {
     unsigned char *CM_ClusterPVS( int cluster );
     qboolean CM_AreasConnected( int area1, int area2 );
     void  CM_AdjustAreaPortalState( int area1, int area2, qboolean open );
+    int   CM_PortalStateSize( void );                      // save 'PRTS': numAreas^2 ref counts (bytes)
+    const int *CM_PortalState( void );
+    qboolean CM_SetPortalState( const int *counts, int size );
     int   CM_BoxLeafnums( const vec3_t mins, const vec3_t maxs, int *list, int listsize, int *lastLeaf );
     void  Cvar_Register( vmCvar_t *vmCvar, const char *varName, const char *defaultValue, int flags );
     void  Cvar_Update( vmCvar_t *vmCvar );
     void  Cmd_ArgsBuffer( char *buffer, int bufferLength );
+    // qcommon/regress.c: the regression harness (macos/regress.sh), all no-ops unless +set regress_log
+    qboolean Regress_Active( void );
+    int   Regress_Seed( void );
+    void  Regress_SeedRand( int gameTime );
+    void  Regress_BeginFrame( const char *map, int gameTime );
+    void  Regress_State( int kind, int num, const char *fields );
+    void  Regress_EndFrame( void );
 }
 
 // ---- game module ----
@@ -113,6 +135,111 @@ static vmMain_t g_vmMain = NULL;
 // directly because vmMain's int arguments can't carry a 64-bit pointer. NULL if the module lacks it.
 typedef int (*camPos_t)( float *pos );
 static camPos_t g_camPos = NULL;
+// The game's state dump for the regression harness (g_regress.cpp G_RegressDump), called after every
+// game frame when the harness is on (SP_GameRunFrame). NULL if the module lacks it.
+typedef void (*regressDump_t)( void (*emit)( int kind, int num, const char *fields ) );
+static regressDump_t g_regressDump = NULL;
+
+#ifdef EF_COOP
+// Single-player co-op: the game's co-op code gets the guest's input from the engine's co-op
+// connection (efcode/sys/sys_coop_net.c) through this table (game/coop_bridge.h).
+#include "coop_bridge.h"
+extern "C" {
+    int         CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *forwardmove,
+                                    signed char *rightmove, signed char *upmove );
+    const char *CoopNet_GuestName( void );
+    const char *CoopNet_GuestSex( void );
+    int         CoopNet_HostHasGuest( void );
+    int         CoopNet_GuestViewTime( void );
+}
+static qboolean SP_CoopGuestCmd( usercmd_t *cmd ){
+    int angles[3], buttons = 0, weapon = 0; signed char fwd = 0, side = 0, up = 0;
+    if( !CoopNet_GuestInput( angles, &buttons, &weapon, &fwd, &side, &up ) ) return qfalse;
+    cmd->angles[0] = angles[0]; cmd->angles[1] = angles[1]; cmd->angles[2] = angles[2];
+    cmd->buttons = buttons; cmd->weapon = (byte)weapon;
+    cmd->forwardmove = fwd; cmd->rightmove = side; cmd->upmove = up;
+    return qtrue;
+}
+static qboolean SP_CoopGuestConnected( void ){ return CoopNet_HostHasGuest() ? qtrue : qfalse; }
+static void SP_CoopSetBridge( void ){
+    typedef void (*coopSetBridge_t)( const coopBridge_t * );
+    static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName, SP_CoopGuestConnected,
+                                   CoopNet_GuestViewTime, CoopNet_GuestSex };
+    coopSetBridge_t set = (coopSetBridge_t)SP_ModuleSym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
+    if( set ) set( &bridge );
+}
+// The replica (co-op M1): the host sends its world after every game frame; a guest's level
+// (sp_coop 2 at its start) runs no game frames and writes the host's frames into its entities
+// (game/coop_bridge.h, efcode/sys/sys_coop_net.c).
+extern "C" {
+#include "../efcode/sys/sys_coop_net.h"
+    qboolean CL_InGameCinematicActive( void );   // cl_cin.c
+    void     SCR_StopCinematic( void );
+}
+static const coopReplica_t *g_coopRep = NULL;   // the game module's replica functions
+static int  g_coopReplica = 0;      // this level is a guest's replica
+static int  g_coopLevelId = 0;      // host: counts level starts, so the guest knows a new level from a frame
+static int  g_coopApplied = 0;      // guest: the last host frame written into this level
+static int  g_coopAppliedAt = 0;    // ...and when (Sys_Milliseconds), for the cgame's clock
+static int  g_coopCmdSeen = 0;      // guest: the newest host server command passed to the cgame
+static int  g_coopHoldLevel = 0;    // host: this level's start waits for the guest to load it (0: no wait)
+static int  g_coopHoldAt = 0;       // ...since (Sys_Milliseconds; 0 until the first drawn frame)
+static int  g_coopHoldSent = 0;     // ...and the last frame sent meanwhile
+#define COOP_HOLD_MAX  30000        // ms: a guest that hasn't loaded the level by then isn't waited for
+#define COOP_CMDS 64
+static int  g_coopSeq = 0;          // guest: its commands (never reset: the host takes only newer numbers)
+static int  g_coopAck = 0;          // guest: the newest of them the host applied (see SP_CoopMakeCmd)
+static int  SP_CoopCurrentCmd( void );
+// Co-op saves. The .sav stays a plain single-player save (player 2 isn't in it, see the game's
+// coop_save.cpp); player 2's health, armor, weapon and ammo go to <name>.coop next to it, which single
+// player never reads. Loading the save hands them to the game the way a map change does (coop_p2save,
+// read at the level start). A save without player 2 removes an old .coop of the same name.
+extern "C" {
+    void  FS_WriteFile( const char *qpath, const void *buffer, int size );
+    void  FS_HomeRemove( const char *homePath );
+    qboolean FS_FileExists( const char *file );
+}
+static void SP_CoopWriteSideFile( const char *name ){
+    char p2[1024], path[96];
+    Cvar_VariableStringBuffer( "coop_p2saved", p2, sizeof(p2) );
+    snprintf( path, sizeof(path), "saves/%s.coop", name );
+    if( p2[0] ){
+        FS_WriteFile( path, p2, (int)strlen( p2 ) );
+        blog("co-op: wrote %s (player 2: %s)\n", path, p2);
+    } else if( FS_FileExists( path ) ){
+        FS_HomeRemove( path );
+    }
+    Cvar_Set( "coop_p2saved", "" );
+}
+static void SP_CoopReadSideFile( const char *name ){
+    char path[96], p2[1024]; void *buf = NULL;
+    snprintf( path, sizeof(path), "saves/%s.coop", name );
+    long len = FS_ReadFile( path, &buf );
+    if( len > 0 && buf ){
+        int n = len < (long)sizeof(p2) - 1 ? (int)len : (int)sizeof(p2) - 1;
+        memcpy( p2, buf, n ); p2[n] = 0;
+        FS_FreeFile( buf );
+        Cvar_Set( "coop_p2save", p2 );
+        blog("co-op: read %s (player 2: %s)\n", path, p2);
+    } else {
+        if( buf ) FS_FreeFile( buf );
+        char cur[8]; Cvar_VariableStringBuffer( "coop_p2save", cur, sizeof(cur) );
+        if( cur[0] ) Cvar_Set( "coop_p2save", "" );   // (not the last level's: this save starts afresh)
+    }
+}
+// host: a level starts with a guest connected: hold its first game frame until the guest has it too
+static void SP_CoopHoldStart( void ){
+    g_coopHoldLevel = ( g_coopRep && !g_coopReplica && CoopNet_HostHasGuest() ) ? g_coopLevelId : 0;
+    g_coopHoldAt = 0; g_coopHoldSent = 0;
+}
+static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd );
+static void SP_CoopGetReplica( void ){
+    typedef const coopReplica_t *(*coopGetReplica_t)( void );
+    coopGetReplica_t get = (coopGetReplica_t)SP_ModuleSym( g_lib, "COOP_GetReplica" );
+    g_coopRep = get ? get() : NULL;
+    if( g_coopRep && g_coopRep->version != COOP_REPLICA_VERSION ) g_coopRep = NULL;
+}
+#endif
 static intptr_t SP_VmMain( int cmd, int a0=0, int a1=0, int a2=0, int a3=0, int a4=0, int a5=0, int a6=0, int a7=0 ){
     return g_vmMain( cmd, a0, a1, a2, a3, a4, a5, a6, a7 );
 }
@@ -126,7 +253,11 @@ static int        g_numLinked = 0;
 static char       g_curMap[64] = {0};   // current SP map name (for save framing + transitions)
 static int        g_entClip[SP_MAX_ENT];   // bmodel clipHandle per entity number (for mover traces)
 static int        g_entArea[SP_MAX_ENT][2]; // [0]=areanum [1]=areanum2 (-1 none); per-entity, set at link (retail svEntity_t)
-static qboolean   g_entPortalOpen[SP_MAX_ENT]; // per-door areaportal open state -> idempotent guard vs CM ref-count under/overflow
+static signed char g_entPortalOpen[SP_MAX_ENT]; // per-door areaportal state: 1 open, 0 closed, -1 unknown (a load
+                                                // restored CM's counts from the save's PRTS) -> guard vs CM ref-count drift
+static int        *g_loadPortals = NULL;        // a user load's PRTS chunk, applied in SP_FinishTransition
+static int         g_loadPortalsSize = 0;
+static void SP_DropLoadPortals( void ){ free(g_loadPortals); g_loadPortals = NULL; g_loadPortalsSize = 0; }
 static int SP_EntNum( gentity_t *e ){ return (int)(((unsigned char*)e - (unsigned char*)ge->gentities) / ge->gentitySize); }
 
 
@@ -423,8 +554,17 @@ static void W_AdjustAreaPortalState( gentity_t *ent, qboolean open ){
     int eNum = SP_EntNum(ent);
     if( eNum < 0 || eNum >= SP_MAX_ENT ) return;
     if( g_entArea[eNum][1] == -1 ) return;            // doesn't straddle two areas -> no portal to toggle
-    if( g_entPortalOpen[eNum] == open ) return;       // already in this state -> avoid CM ref-count drift
-    g_entPortalOpen[eNum] = open;
+    signed char was = g_entPortalOpen[eNum];
+    if( was == (open ? 1 : 0) ) return;               // already in this state -> avoid CM ref-count drift
+    g_entPortalOpen[eNum] = open ? 1 : 0;
+    // Unknown (the portal counts came from a save, which doesn't say which entity holds them): a close only
+    // releases a portal that is actually held open, so it can't go negative (CM ERR_DROPs on that).
+    if( was < 0 && !open ){
+        int a1 = g_entArea[eNum][0], a2 = g_entArea[eNum][1];
+        int size = CM_PortalStateSize(), n = 0;
+        while( (n+1)*(n+1)*(int)sizeof(int) <= size ) n++;
+        if( a1 < 0 || a2 < 0 || a1 >= n || a2 >= n || CM_PortalState()[a1*n + a2] <= 0 ) return;
+    }
     CM_AdjustAreaPortalState( g_entArea[eNum][0], g_entArea[eNum][1], open );
 }
 static qboolean W_AreasConnected( int a, int b ){ return CM_AreasConnected(a,b); }
@@ -434,17 +574,45 @@ static int   I_FS_ReadFile( const char *name, void **buf ){ return (int)FS_ReadF
 static void *I_Malloc( int bytes ){ return malloc((size_t)bytes); }
 static void  I_Free( void *p ){ free(p); }
 static int   g_spMovieQueued = 0;   // the game queued "inGameCinematic" this frame (see SP_DrawFrame's skip)
+#ifdef EF_COOP
+static int   g_coopMovieSeq = 0;    // host: counts the in-game movies the game started (the guest plays them too)
+static char  g_coopMovie[64];       // ...and its name
+static void  SP_CoopNoteMovie( const char *t );
+#endif
 static void  I_SendConsole( const char *t ){
-    if( t && !strncasecmp( t, "inGameCinematic", 15 ) ) g_spMovieQueued = 1;
+    if( t && !sp_stricmpn( t, "inGameCinematic", 15 ) ){
+        g_spMovieQueued = 1;
+#ifdef EF_COOP
+        SP_CoopNoteMovie( t );
+#endif
+    }
     Cbuf_AddText(t);
 }
 static void  I_DropClient( int n, const char *r ){ (void)n;(void)r; }
+#ifdef EF_COOP
+// Co-op host: who each server command is for. The game addresses story text (centre prints,
+// subtitles) to every client (-1), messages for a player to that player's number: player 1's (0)
+// show here only, player 2's go to the guest only (here too while no guest is connected).
+#define COOP_FOR_ALL    0
+#define COOP_FOR_HOST   1
+#define COOP_FOR_GUEST  2
+static signed char g_svCmdFor[SC_RING];
+static int SP_CoopCmdTarget( int n ){
+    if( n < 0 || !g_coopRep || g_coopReplica ) return COOP_FOR_ALL;
+    int p2 = g_coopRep->ViewEntity();
+    if( p2 > 0 && n == p2 ) return CoopNet_HostHasGuest() ? COOP_FOR_GUEST : COOP_FOR_ALL;
+    return COOP_FOR_HOST;
+}
+#endif
 static void  I_SendServerCmd( int n, const char *fmt, ... ){
     (void)n;
     g_svCmdSeq++;
     va_list a; va_start(a,fmt);
     vsnprintf( g_svCmds[g_svCmdSeq & (SC_RING-1)], sizeof(g_svCmds[0]), fmt, a );
     va_end(a);
+#ifdef EF_COOP
+    g_svCmdFor[g_svCmdSeq & (SC_RING-1)] = (signed char)SP_CoopCmdTarget( n );
+#endif
 }
 static void  I_SetCS( int n, const char *s ){
     if(n>=0&&n<CS_MAX){
@@ -536,6 +704,7 @@ static int   g_sOverride[MAX_GENTITIES];
 // g_sOverride[] from that each frame before ge->RunFrame.
 static int   g_voiceEnd[MAX_GENTITIES];
 extern "C" int S_StopAllSoundsCount( void );   // snd_main.c: bumps on every S_StopAllSounds / S_StopGameSounds
+extern "C" qboolean S_VoiceLipSync( int *levels, int numEntities );   // snd_main.c: lip sync levels
 static void SP_ClearVoiceTimers(void){
     memset(g_voiceEnd, 0, sizeof(g_voiceEnd)); memset(g_sOverride, 0, sizeof(g_sOverride));
 }
@@ -545,6 +714,15 @@ static void SP_ClearVoiceTimers(void){
 // too (retail stops drawing the 3D view during a skip).
 static int   s_spSoundsBlocked = 0;
 static int   s_spSkipDraw = 0;
+static int   s_spWasPaused = 0;     // SP_DrawFrame edge state: the last frame was paused / skipping
+static int   s_spWasSkipping = 0;
+// The gates are set per drawn frame, so the last frame's values outlive the level: quitting from the
+// pause menu left s_spSoundsBlocked at 1, and the next game's level-start frames (run before its first
+// drawn frame) dropped their sounds -- borg1's opening captain's log was lost and its dialog wait ended
+// at once. A new game, load or abort starts with every gate open (SP_UnloadGame).
+static void SP_ResetFrameGates(void){
+    s_spSoundsBlocked = 0; s_spSkipDraw = 0; s_spWasPaused = 0; s_spWasSkipping = 0;
+}
 // Retail cutscene skip: Use Item in a camera scene sets skippingCinematic 1 + timescale 100 and the game
 // clears both when the camera ends (g_active.cpp ClientThink_real); an in-game movie clears them too
 // (cl_cin.c). This ends a skip wherever the level ends without the game seeing the camera end.
@@ -552,6 +730,34 @@ static void SP_EndCutsceneSkip(void){
     if( Cvar_VariableIntegerValue("skippingCinematic") ){
         Cvar_Set("skippingCinematic", "0");
         Cvar_Set("timescale", "1");
+    }
+}
+// gi.S_Override[ent] is the face, not a flag: the cgame draws head->customSkin = ci->headSkin + S_Override.
+// The head skins are -1 blink, -2 frown, -3 frown+blink, -4 neutral, -5..-8 mouth shapes. The sound
+// code sets it from the voice's own volume: -1 while talking but quiet (eyes open, mouth at rest), 5..8 by
+// loudness, 0 when not talking (the cgame then blinks and frowns on its own). The mixer computes the same
+// thing now (S_VoiceLipSync, snd_dma.c). The value also gates the dialog `wait` (nonzero keeps the script's
+// TID_CHAN_VOICE task pending), which g_voiceEnd keeps timing, so a talker is never 0 before its line ends.
+// Called every sim tick and every render frame (the cgame reads the array while drawing).
+// With the regression harness on, the mixer's level is not used: it follows the sound playing on the wall
+// clock, and the cgame's head bob (CG_AddHeadBob) draws random numbers when it jumps, so game state
+// would vary from run to run. The fixed mouth cycle below keeps runs identical.
+static void SP_UpdateVisemes(void){
+    static int levels[MAX_GENTITIES];
+    qboolean mixer = S_VoiceLipSync( levels, MAX_GENTITIES ) && !Regress_Active();
+    for(int i=0;i<MAX_GENTITIES;i++){
+        if(g_voiceEnd[i] > g_levelTime){
+            if( mixer ){
+                g_sOverride[i] = levels[i] ? levels[i] : -1;
+            } else {
+                // no lip sync data (OpenAL backend): cycle the mouth shapes at a talking cadence
+                unsigned h = (unsigned)(g_levelTime/80 + i*131);
+                h = h*1103515245u + 12345u;
+                g_sOverride[i] = 5 + (int)((h>>16) % 4);
+            }
+        } else {
+            g_sOverride[i] = 0;
+        }
     }
 }
 static void SP_UpdateVoiceOverride(void){
@@ -570,22 +776,19 @@ static void SP_UpdateVoiceOverride(void){
           SP_ClearVoiceTimers();
       }
       s_lastStops = stops; s_lastTime = g_levelTime; }
-    // gi.S_Override[ent] is the facial VISEME index, not a flag: the cgame draws
-    // head->customSkin = ci->headSkin + S_Override, where the head ships 8 mouth-shape skins
-    // (head_*-1..8) now registered as viseme extensions in the renderer (RE_RegisterSkin). Retail
-    // derives the index from the playing CHAN_VOICE sample amplitude; our ioq3 mixer doesn't export
-    // that yet, so while a voice line plays we APPROXIMATE lip-sync by cycling the viseme 1..8 at a
-    // talking cadence (per-entity phase so characters don't lip-sync in lock-step). 0 = mouth closed
-    // (the cgame then runs its own idle blink/frown). This also still gates the dialog `wait` (any
-    // nonzero value keeps the TID_CHAN_VOICE task pending until g_voiceEnd elapses).
-    for(int i=0;i<MAX_GENTITIES;i++){
-        if(g_voiceEnd[i] > g_levelTime){
-            unsigned h = (unsigned)(g_levelTime/80 + i*131);   // ~12 Hz, offset per entity
-            h = h*1103515245u + 12345u;                        // cheap LCG hash -> natural variation
-            g_sOverride[i] = 1 + (int)((h>>16) % 8);           // viseme 1..8 (mouth shapes)
-        } else {
-            g_sOverride[i] = 0;                                // not talking -> closed/idle
-        }
+    SP_UpdateVisemes();
+}
+
+// One game frame at g_levelTime. With the regression harness on (qcommon/regress.c), rand() is
+// reseeded first and the game's state is logged after; otherwise this is just the voice update +
+// ge->RunFrame it always was.
+static void SP_GameRunFrame(void){
+    Regress_SeedRand( g_levelTime );
+    SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+    if( Regress_Active() && g_regressDump ){
+        Regress_BeginFrame( g_curMap, g_levelTime );
+        g_regressDump( Regress_State );
+        Regress_EndFrame();
     }
 }
 
@@ -606,10 +809,14 @@ extern "C" void SP_UnloadGame( void ){
     if( g_lib ){
         if( g_spActive && g_vmMain )            SP_VmMain(CG_SHUTDOWN, 0,0,0);   // cgame teardown
         if( g_spActive && ge && ge->Shutdown )  ge->Shutdown();                // game/level teardown
-        dlclose( g_lib );
+        SP_ModuleUnload( g_lib );
     }
     g_lib = NULL; ge = NULL; g_vmMain = NULL; g_camPos = NULL; g_spActive = 0;
+#ifdef EF_COOP
+    g_coopRep = NULL; g_coopReplica = 0;
+#endif
     SP_EndCutsceneSkip();   // a load / new game / abort ends any camera-scene skip (timescale back to 1)
+    SP_ResetFrameGates();   // ... and the pause/skip sound and draw gates
     // H3: g_linked[] holds raw gentity_t* into the module we just dlclose'd. Leaving them dangling is a
     // use-after-free waiting for one missing g_spActive gate. The next spawn resets g_numLinked anyway;
     // zero them now so nothing can walk a freed pointer in between.
@@ -618,9 +825,9 @@ extern "C" void SP_UnloadGame( void ){
 
 extern "C" qboolean SP_LoadGame( const char *solib ){
     if( g_lib ) SP_UnloadGame();   // drop the stale module first -> every (re)load lands on a fresh, zeroed .so
-    g_lib = dlopen( SP_ModulePath( solib ), RTLD_NOW );
-    if(!g_lib){ bwarn("SP_LoadGame: dlopen failed: %s\n", dlerror()); return qfalse; }
-    GetGameAPI_t GetGameAPI = (GetGameAPI_t)dlsym(g_lib, "_Z10GetGameAPIP13game_import_t");
+    g_lib = SP_ModuleLoad( SP_ModulePath( solib ), 0 );
+    if(!g_lib){ bwarn("SP_LoadGame: dlopen failed: %s\n", SP_ModuleError()); return qfalse; }
+    GetGameAPI_t GetGameAPI = (GetGameAPI_t)SP_ModuleSym(g_lib, "_Z10GetGameAPIP13game_import_t");
     if(!GetGameAPI){ bwarn("SP_LoadGame: GetGameAPI not found\n"); return qfalse; }
 
     static game_import_t gi; memset(&gi,0,sizeof(gi));
@@ -645,10 +852,15 @@ extern "C" qboolean SP_LoadGame( const char *solib ){
     ge = GetGameAPI(&gi);
     if(!ge){ bwarn("SP_LoadGame: GetGameAPI returned NULL\n"); return qfalse; }
     // wire the cgame syscall dispatcher (no-op) so server-side FX calls don't hit a null pointer
-    dllEntry_t dllEntry = (dllEntry_t)dlsym(g_lib, "_Z8dllEntryPFiizE");
+    dllEntry_t dllEntry = (dllEntry_t)SP_ModuleSym(g_lib, "_Z8dllEntryPFiizE");
     if(dllEntry) dllEntry(SP_CgameSyscall);
-    g_vmMain = (vmMain_t)dlsym(g_lib, "_Z6vmMainiiiiiiiii");
-    g_camPos = (camPos_t)dlsym(g_lib, "_Z15CG_GetCameraPosPf");   // optional (snapshot loop-sound culling)
+    g_vmMain = (vmMain_t)SP_ModuleSym(g_lib, "_Z6vmMainiiiiiiiii");
+    g_camPos = (camPos_t)SP_ModuleSym(g_lib, "_Z15CG_GetCameraPosPf");   // optional (snapshot loop-sound culling)
+    g_regressDump = (regressDump_t)SP_ModuleSym(g_lib, "G_RegressDump");  // optional (the regression harness)
+#ifdef EF_COOP
+    SP_CoopSetBridge();   // before the level's InitGame
+    SP_CoopGetReplica();
+#endif
     blog("SP_LoadGame: ge=%p apiversion=%d gentitySize=%d\n", (void*)ge, ge->apiversion, ge->gentitySize);
     return (ge->apiversion==GAME_API_VERSION) ? qtrue : qfalse;
 }
@@ -697,6 +909,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     // transition takes g_levelTime from the save (SP_LoadGameFile/SP_FinishTransition), unaffected.
     g_numLinked = 0; g_levelTime = 1000;
     memset(g_entPortalOpen, 0, sizeof(g_entPortalOpen));  // New Game: CM (re)loaded -> all areaportals start sealed
+    SP_DropLoadPortals();                                 // a stale, never-applied load's portal state
     Cvar_Set( "cl_paused", "0" );   // EF1 SP 1:1: retail SV_SpawnServer unpauses every spawn (sv_init.c:464)
     memset(g_voiceEnd, 0, sizeof(g_voiceEnd)); memset(g_sOverride, 0, sizeof(g_sOverride)); // fresh map: no stale voices
     // BRIDGE-side statics dlclose does NOT touch (these live in libmain, not libefgame) — reset per map:
@@ -716,9 +929,17 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
     // — needed for the renderer world load (Route b) AND the cgame levelshot / mission-info text.
     snprintf(g_configstrings[CS_SERVERINFO], sizeof(g_configstrings[0]), "\\mapname\\%s\\sv_maxclients\\1", mapname);
     if(!ge){ bwarn("no game loaded\n"); return qfalse; }
-    ge->Init( mapname, "", checksum, entstring, g_levelTime, Sys_Milliseconds(), Sys_Milliseconds(),
+    ge->Init( mapname, "", checksum, entstring, g_levelTime, Regress_Active() ? Regress_Seed() : Sys_Milliseconds(), Sys_Milliseconds(),
               (SavedGameJustLoaded_e)0, qfalse );
     blog("SP_SpawnServer: ge->Init done. num_entities=%d linked=%d\n", ge->num_entities, g_numLinked);
+#ifdef EF_COOP
+    g_coopLevelId++;
+    g_coopApplied = 0; g_coopCmdSeen = 0;
+    // a guest's replica level (sp_coop 2, applied by InitGame): no game frames, the host's come instead
+    g_coopReplica = ( g_coopRep && Cvar_VariableIntegerValue( "sp_coop" ) == 2 ) ? 1 : 0;
+    SP_CoopHoldStart();
+    if( !g_coopReplica )
+#endif
     SP_RunFrames( SP_SETTLE_FRAMES );   // retail SV_SpawnServer settle frames, before SP_StartClient connects the player
     // C1 (reclaim path only): bring the renderer we tore down above back up BEFORE SP_StartClient's CG_INIT
     // loads the new world. Mirrors SP_FinishTransition's SP_FillGlConfig()+SPR_InitRenderer() ordering. On the
@@ -738,7 +959,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
 // NPC_Begin here (with its beam-in event), movers and spawn scripts start, and the player isn't in the level
 // yet. Same order as retail: RunFrame at the current time, then advance by 100.
 extern "C" void SP_RunFrames( int n ){
-    for(int i=0;i<n;i++){ SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime); g_levelTime += 100; }
+    for(int i=0;i<n;i++){ SP_GameRunFrame(); g_levelTime += 100; }
     blog("SP_RunFrames: settled %d frames, levelTime now %d, num_entities=%d\n", n, g_levelTime, ge->num_entities);
 }
 
@@ -770,8 +991,9 @@ static void SP_SettleClient( int ticks ){
         g_levelTime += SP_SV_FRAMEMSEC;
         g_cmdNum++;
         g_lastcmd.serverTime = g_levelTime;
+        Regress_SeedRand( g_levelTime );
         ge->ClientThink(0, &g_lastcmd);
-        SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+        SP_GameRunFrame();
     }
     if(p0->client) g_weaponSelect = ((playerState_t*)p0->client)->weapon;
     blog("SP_SettleClient: %d ticks, levelTime now %d\n", ticks, g_levelTime);
@@ -800,33 +1022,41 @@ static void BuildGameState(void){
 // borgfieldhum.wav in holodeck.bsp; g_target.cpp links them "so the server can determine who to send updates
 // to") ran on through Tuvok's speech and into the turbolift, quieter only with distance.
 // The bridge still sends every entity, so nothing the cgame draws or predicts changes; it only drops the loop of
-// an entity outside the view's PVS. Only the cluster PVS, which is fixed per map: the area test also depends on
-// the areaportal state, which a save load doesn't restore yet (all portals start closed), so it could silence a
-// loop behind a door that's really open. So this drops a subset of the loops retail dropped, never more.
+// an entity outside the view's PVS, or in an area that a closed door (areaportal) cuts off from the view's area,
+// (a hum behind a shut door is silent). The area test needs the real portal state, which loads
+// restore since 1.4.0 (the save's PRTS chunk). An entity counts as connected if ANY area it touches is,
+// so this never drops a loop that should be heard.
 // No culling when the view is outside the map (no cluster), for unlinked or broadcast entities, or for an
-// entity spanning more leafs than we look at.
-struct SP_View { const unsigned char *pvs; };
+// entity spanning more leafs than we look at. No area test when the view leaf has no area.
+struct SP_View { const unsigned char *pvs; int area; };
 static void SP_GetView( SP_View *v ){
-    v->pvs = NULL;
+    v->pvs = NULL; v->area = -1;
     vec3_t org;
     if( !g_camPos || !g_camPos( org ) ){
         VectorCopy( g_snap.ps.origin, org );
         org[2] += g_snap.ps.viewheight;
     }
-    int cluster = CM_LeafCluster( CM_PointLeafnum( org ) );
+    int leaf = CM_PointLeafnum( org );
+    int cluster = CM_LeafCluster( leaf );
     if( cluster < 0 ) return;
     v->pvs = CM_ClusterPVS( cluster );
+    v->area = CM_LeafArea( leaf );
 }
 static qboolean SP_EntInView( const SP_View *v, gentity_t *e ){
     if( !v->pvs || !e->linked || (e->svFlags & SVF_BROADCAST) ) return qtrue;
     int leafs[128], lastLeaf = 0;
     int num = CM_BoxLeafnums( e->absmin, e->absmax, leafs, 128, &lastLeaf );
     if( num >= 128 ) return qtrue;
-    for( int i = 0; i < num; i++ ){
+    qboolean inPVS = qfalse, anyArea = qfalse, connected = ( v->area < 0 ) ? qtrue : qfalse;
+    for( int i = 0; i < num && !(inPVS && connected); i++ ){
         int c = CM_LeafCluster( leafs[i] );
-        if( c >= 0 && (v->pvs[c >> 3] & (1 << (c & 7))) ) return qtrue;
+        if( c >= 0 && (v->pvs[c >> 3] & (1 << (c & 7))) ) inPVS = qtrue;
+        if( !connected ){
+            int a = CM_LeafArea( leafs[i] );
+            if( a >= 0 ){ anyArea = qtrue; if( CM_AreasConnected( v->area, a ) ) connected = qtrue; }
+        }
     }
-    return qfalse;
+    return ( inPVS && ( connected || !anyArea ) ) ? qtrue : qfalse;
 }
 
 static void BuildSnapshot(void){
@@ -838,7 +1068,18 @@ static void BuildSnapshot(void){
                                 // the predicted view (visible during timescale<1 slow-mo). Stamping = prediction
                                 // tracks the snapshot (predicted_player_state = snap.ps), no spurious replay.
     gentity_t* p0 = SP_GEntity(0);
+#ifdef EF_COOP
+    if( g_coopReplica && g_coopRep && g_coopRep->ViewEntity() > 0 ) p0 = SP_GEntity( g_coopRep->ViewEntity() );
+#endif
     if(p0->client) g_snap.ps = *(playerState_t*)p0->client;
+#ifdef EF_COOP
+    if( g_coopReplica ){
+        // the guest's prediction: the host's player 2 as of the guest command it applied last;
+        // command times count in the guest's commands (50 ms each, see SP_CoopUserCmd)
+        g_snap.cmdNum = g_coopAck;
+        g_snap.ps.commandTime = g_coopAck * SP_SV_FRAMEMSEC;
+    }
+#endif
     int n=0;
     SP_View view; SP_GetView( &view );
     // Start at 0 to INCLUDE the local player's own entity (entity 0). Q3 ships the client's own entity in
@@ -894,43 +1135,58 @@ static void SP_CgameConsoleCmd(void){
 static void SP_CgameAddCommand(const char *name){
     static char names[256][32]; static int count = 0;
     if(!name || !name[0]) return;
-    for(int i = 0; i < count; i++) if(!strcasecmp(names[i], name)) return;
+    for(int i = 0; i < count; i++) if(!sp_stricmpn(names[i], name, 0x7fffffff)) return;
     if(count < 256 && strlen(name) < sizeof(names[0])){ strcpy(names[count], name); count++; }
     Cmd_AddCommand(name, SP_CgameConsoleCmd);
 }
 
 // ---------------------------------------------------------------------------
-// AS_* ambient-sound-set system (sound/sound.txt). In retail these are ENGINE
-// traps (AS_ParseFile, S_UpdateAmbientSet, AS_AddLocalSet, AS_GetBModelSound). The SP port
-// replaced the engine, so they live here. Previously stubbed (return 0/-1) ->
-// every map's ambient bed + randomized atmosphere was SILENT. Grammar is a flat
-// sequence of blocks (3 set types):
-//   <generalSet|localSet|bmodelSet> "<name>" { <keywords> }
-//   loopedWave <f>            -> registers sound/<f>.wav        (looping bed)
-//   subWaves   <pre> <n>...   -> registers sound/<pre>/<n>.wav  (random one-shots)
-//   volRange   <min> <max>    (0..255; advisory, see note)
-//   radius     <n>            (engine spatializes by distance already; advisory)
-//   timeBetweenWaves <min> <max>  seconds between random subwaves
-// Defaults match retail: tbw 10/25 s, volRange 255/255, radius 250. The looped
-// bed is anchored on ENTITYNUM_NONE (MAX_GENTITIES-1) — a sentinel the cgame
-// never uses for a real entity's loopSound, so it can't collide. Re-added every
-// frame because loops are cleared per frame (CG_S_CLEARLOOPINGSOUNDS).
+// Ambient sound sets (sound/sound.txt). The cgame reaches them through engine traps (CG_AS_PARSESETS,
+// CG_AS_ADDENTRY, CG_S_UPDATEAMBIENTSET, CG_S_ADDLOCALSET, CG_AS_GETBMODELSOUND); the SP port has no
+// separate sound module for them, so they live here.
+// The file is line based. A header (type, amsdir, outdir, basedir: settings of the tool that wrote it,
+// ignored here), `;` comment lines, then the sets: a "generalSet|localSet|bmodelSet NAME" line followed by
+// that set's keyword lines, up to the next set or the end of the file. A { } block around the keywords
+// is accepted too.
+//   loopedWave <f>                sound/<f>.wav, the set's looping sound
+//   subWaves <dir> <n1> <n2> ...  sound/<dir>/<n>.wav: random one-shots for general and local sets; for a
+//                                 bmodel set the mover's start, moving (looped) and stop sounds, in order
+//   timeBetweenWaves <min> <max>  seconds between one-shots (none when max is 0)
+//   volRange <min> <max>          one-shot volume, 0..255
+//   radius <n>                    kept but unused: the mixer already fades a sound by distance
+// The three kinds are looked up separately (dntractor is both a localSet and a bmodelSet):
+//   general  the map's ambience: worldspawn's soundSet, switched by triggers through CS_AMBIENT_SET. Its loop
+//            plays at the listener on ENTITYNUM_NONE (MAX_GENTITIES-1, never a real entity's loop slot),
+//            re-added every frame like every loop; its one-shots play on the player.
+//   local    an entity's own loop and one-shots at its origin (target_speaker, fx_bolt, func_usable ...),
+//            silent while the entity is out of view, like the snapshot loops (SP_EntInView).
+//   bmodel   door, plat and lift sounds (g_mover.cpp G_PlayDoorSound / G_PlayDoorLoopSound).
+// A set's sounds are registered when the cgame loads the sets if the map names it (CG_AS_ADDENTRY), and on
+// first use otherwise (the world's own set, which the precache list leaves out).
 // ---------------------------------------------------------------------------
-#define AS_MAX_SETS      512
-#define AS_MAX_SUBWAVES  9
+#define AS_MAX_SETS      256
+#define AS_MAX_SUBWAVES  16
+#define AS_MAX_PRECACHE  128
+enum { AS_GENERAL, AS_LOCAL, AS_BMODEL };
 struct as_set_t {
     char name[64];
-    int  type;                       // 0 general, 1 local, 2 bmodel
+    int  type;                       // AS_GENERAL, AS_LOCAL, AS_BMODEL
     int  tbwMin, tbwMax;             // seconds
     int  volMin, volMax;             // 0..255
     int  radius;
+    char loopPath[MAX_QPATH];
+    char subPaths[AS_MAX_SUBWAVES][MAX_QPATH];
+    int  numSubWaves;
+    bool registered;                 // looped/subWaves hold sound handles
     int  looped;                     // sfxHandle, 0 = none
     int  subWaves[AS_MAX_SUBWAVES];
-    int  numSubWaves;
-    int  nextWave;                   // realtime ms of next general-set subwave
+    int  nextWave;                   // Sys_Milliseconds of a general set's next one-shot
 };
 static as_set_t s_asSets[AS_MAX_SETS];
 static int      s_asNumSets = 0;
+static bool     s_asParsed = false;
+static char     s_asPrecache[AS_MAX_PRECACHE][64];
+static int      s_asNumPrecache = 0;
 static const float s_asZero[3] = {0,0,0};
 
 // Local string helpers — the engine's q_shared funcs are C-linkage and not visible to this C++ TU.
@@ -940,8 +1196,8 @@ static int  AS_stricmp(const char* a, const char* b){
 }
 static void AS_strcpy(char* d, const char* s, int n){ if(n<=0) return; int i=0; for(; i<n-1 && s[i]; i++) d[i]=s[i]; d[i]=0; }
 // Self-contained tokenizer (avoids C/C++ linkage mismatch vs the engine's C COM_Parse).
-// allowNL=false returns "" at end of line (for the subWaves "<prefix> <name>... EOL" grammar).
-// Handles // and /* */ comments, "quoted" set names, and standalone { } tokens.
+// allowNL=false returns "" at the end of the line (every keyword takes its values from its own line).
+// Handles ; and // line comments, /* */ comments, "quoted" names and standalone { } tokens.
 static char* AS_Tok(char** dp, bool allowNL){
     static char tok[256];
     char* p = *dp; tok[0] = 0;
@@ -952,7 +1208,7 @@ static char* AS_Tok(char** dp, bool allowNL){
             p++;
         }
         if(!*p){ *dp=p; return tok; }
-        if(p[0]=='/' && p[1]=='/'){ while(*p && *p!='\n') p++; continue; }
+        if(*p==';' || (p[0]=='/' && p[1]=='/')){ while(*p && *p!='\n') p++; continue; }
         if(p[0]=='/' && p[1]=='*'){ p+=2; while(*p && !(p[0]=='*'&&p[1]=='/')) p++; if(*p) p+=2; continue; }
         break;
     }
@@ -964,117 +1220,163 @@ static char* AS_Tok(char** dp, bool allowNL){
     } else if(*p=='{' || *p=='}'){
         tok[n++]=*p++;
     } else {
-        while(*p && (unsigned char)*p > ' ' && *p!='{' && *p!='}' && *p!='"'){ if(n<255) tok[n++]=*p; p++; }
+        while(*p && (unsigned char)*p > ' ' && *p!='{' && *p!='}' && *p!='"' && *p!=';'){ if(n<255) tok[n++]=*p; p++; }
     }
     tok[n]=0; *dp=p; return tok;
 }
-static as_set_t* AS_FindSet(const char* name){
-    if(!name || !name[0]) return NULL;
+static void AS_SkipLine(char** dp){ while(AS_Tok(dp,false)[0]){} }
+static void AS_Range(char** dp, int* lo, int* hi){
+    *lo = atoi(AS_Tok(dp,false)); *hi = atoi(AS_Tok(dp,false));
+    if(*lo > *hi){ int t=*lo; *lo=*hi; *hi=t; }
+}
+static as_set_t* AS_Lookup(const char* name, int type){
     for(int i=0;i<s_asNumSets;i++)
-        if(!AS_stricmp(s_asSets[i].name, name)) return &s_asSets[i];
+        if(s_asSets[i].type==type && !AS_stricmp(s_asSets[i].name, name)) return &s_asSets[i];
     return NULL;
+}
+static void AS_Register(as_set_t* s){
+    if(s->registered) return;
+    s->registered = true;
+    if(s->loopPath[0]){
+        s->looped = SPR_S_RegisterSound(s->loopPath);
+        if(s->looped < 1) bwarn("AS_ParseSets: ^3Unable to load ambient sound \"%s\"\n", s->loopPath);
+    }
+    for(int i=0;i<s->numSubWaves;i++){
+        s->subWaves[i] = SPR_S_RegisterSound(s->subPaths[i]);
+        if(s->subWaves[i] < 1) bwarn("AS_ParseSets: ^3Unable to load ambient sound \"%s\"\n", s->subPaths[i]);
+    }
+}
+static void SP_AS_ParseSets(void);
+static as_set_t* AS_FindSet(const char* name, int type){
+    if(!name || !name[0]) return NULL;
+    if(!s_asParsed) SP_AS_ParseSets();       // the game can ask for a mover's sounds before the cgame loads the sets
+    as_set_t* s = AS_Lookup(name, type);
+    if(s) AS_Register(s);
+    return s;
 }
 static int AS_RandInterval(const as_set_t* s){
     int span = s->tbwMax - s->tbwMin;
     int secs = s->tbwMin + (span>0 ? (rand()%(span+1)) : 0);
     return secs*1000;
 }
-static int AS_RandVolume(const as_set_t* s){   // 0-255; retail picks a random subwave volume in [volMin,volMax]
+static int AS_RandVolume(const as_set_t* s){   // 0-255, a random one-shot volume in [volMin,volMax]
     int span = s->volMax - s->volMin;
     return s->volMin + (span>0 ? (rand()%(span+1)) : 0);
 }
+static bool AS_HasWaves(const as_set_t* s){ return s->numSubWaves > 0 && s->tbwMax > 0; }
+static void SP_AS_AddPrecache(const char* name){
+    if(!name || !name[0] || s_asNumPrecache >= AS_MAX_PRECACHE) return;
+    AS_strcpy(s_asPrecache[s_asNumPrecache++], name, sizeof(s_asPrecache[0]));
+}
 static void SP_AS_ParseSets(void){
     s_asNumSets = 0;
+    s_asParsed = true;
     void* buf = NULL;
     int len = (int)FS_ReadFile("sound/sound.txt", &buf);
     if(len <= 0 || !buf){
         bwarn("AS_ParseSets: ^1Couldn't load ambient sound sets from sound/sound.txt\n");
+        s_asNumPrecache = 0;
         return;
     }
     char* p = (char*)buf;
+    as_set_t* s = NULL;                                  // the set the keyword lines belong to
     for(;;){
         const char* tok = AS_Tok(&p,true);
         if(!tok[0]) break;                               // EOF
         int type = -1;
-        if(!AS_stricmp(tok,"generalSet"))     type = 0;
-        else if(!AS_stricmp(tok,"localSet"))  type = 1;
-        else if(!AS_stricmp(tok,"bmodelSet")) type = 2;
-        if(type < 0) continue;                           // skip stray token
-        char setName[64];
-        AS_strcpy(setName, AS_Tok(&p,true), sizeof(setName));
-        if(AS_Tok(&p,true)[0] != '{') continue;            // expect '{'
-        if(AS_FindSet(setName) || s_asNumSets >= AS_MAX_SETS){
-            int depth = 1;                               // dup/full: consume the block
-            while(depth){ const char* t=AS_Tok(&p,true); if(!t[0])break; if(t[0]=='{')depth++; else if(t[0]=='}')depth--; }
+        if(!AS_stricmp(tok,"generalSet"))     type = AS_GENERAL;
+        else if(!AS_stricmp(tok,"localSet"))  type = AS_LOCAL;
+        else if(!AS_stricmp(tok,"bmodelSet")) type = AS_BMODEL;
+        if(type >= 0){
+            char setName[64];
+            AS_strcpy(setName, AS_Tok(&p,false), sizeof(setName));
+            AS_SkipLine(&p);
+            s = NULL;                                    // a skipped set's keywords are skipped too
+            if(!setName[0] || !AS_stricmp(setName,"{")) continue;
+            if(AS_Lookup(setName, type)){ bwarn("AS_ParseSets: ^3Duplicate ambient set \"%s\"\n", setName); continue; }
+            if(s_asNumSets >= AS_MAX_SETS){ bwarn("AS_ParseSets: ^3Too many ambient sets, \"%s\" skipped\n", setName); continue; }
+            s = &s_asSets[s_asNumSets++];
+            memset(s, 0, sizeof(*s));
+            AS_strcpy(s->name, setName, sizeof(s->name));
+            s->type=type; s->tbwMin=10; s->tbwMax=25; s->volMin=255; s->volMax=255; s->radius=250;
             continue;
         }
-        as_set_t* s = &s_asSets[s_asNumSets++];
-        memset(s, 0, sizeof(*s));
-        AS_strcpy(s->name, setName, sizeof(s->name));
-        s->type=type; s->tbwMin=10; s->tbwMax=25; s->volMin=255; s->volMax=255; s->radius=250;
-        for(;;){
-            tok = AS_Tok(&p,true);
-            if(!tok[0] || tok[0]=='}') break;
-            if(!AS_stricmp(tok,"loopedWave")){
-                char path[256]; snprintf(path,sizeof(path),"sound/%s.wav",AS_Tok(&p,true));
-                s->looped = SPR_S_RegisterSound(path);
-                if(s->looped < 1) bwarn("AS_ParseSets: ^3Unable to load ambient sound \"%s\"\n", path);
-            } else if(!AS_stricmp(tok,"subWaves")){
-                char prefix[128]; AS_strcpy(prefix, AS_Tok(&p,false), sizeof(prefix));
-                const char* wn;
-                while((wn=AS_Tok(&p,false))[0]){
-                    if(s->numSubWaves >= AS_MAX_SUBWAVES){ bwarn("AS_ParseSets: ^3Too many subwaves on set \"%s\"\n", s->name); break; }
-                    char path[256]; snprintf(path,sizeof(path),"sound/%s/%s.wav",prefix,wn);
-                    s->subWaves[s->numSubWaves++] = SPR_S_RegisterSound(path);
-                }
-            } else if(!AS_stricmp(tok,"volRange")){
-                s->volMin = atoi(AS_Tok(&p,false)); s->volMax = atoi(AS_Tok(&p,false));
-                if(s->volMin > s->volMax){ int t=s->volMin; s->volMin=s->volMax; s->volMax=t; }
-            } else if(!AS_stricmp(tok,"timeBetweenWaves")){
-                s->tbwMin = atoi(AS_Tok(&p,false)); s->tbwMax = atoi(AS_Tok(&p,false));
-                if(s->tbwMin > s->tbwMax){ int t=s->tbwMin; s->tbwMin=s->tbwMax; s->tbwMax=t; }
-            } else if(!AS_stricmp(tok,"radius")){
-                s->radius = atoi(AS_Tok(&p,false));
-            } else {
-                bwarn("AS_ParseSets: ^3Unknown ambient set keyword \"%s\"\n", tok);
+        if(tok[0]=='{' || tok[0]=='}') continue;         // the { } form: the block only groups the keywords
+        if(!s){ AS_SkipLine(&p); continue; }            // header lines
+        if(!AS_stricmp(tok,"loopedWave")){
+            const char* f = AS_Tok(&p,false);
+            if(f[0]) snprintf(s->loopPath,sizeof(s->loopPath),"sound/%s.wav",f);
+        } else if(!AS_stricmp(tok,"subWaves")){
+            char dir[MAX_QPATH]; AS_strcpy(dir, AS_Tok(&p,false), sizeof(dir));
+            const char* wn;
+            while((wn=AS_Tok(&p,false))[0]){
+                if(s->numSubWaves >= AS_MAX_SUBWAVES){ bwarn("AS_ParseSets: ^3Too many subwaves on set \"%s\"\n", s->name); break; }
+                snprintf(s->subPaths[s->numSubWaves++],sizeof(s->subPaths[0]),"sound/%s/%s.wav",dir,wn);
             }
+        } else if(!AS_stricmp(tok,"volRange")){
+            AS_Range(&p, &s->volMin, &s->volMax);
+            if(s->volMin < 0) s->volMin = 0;
+            if(s->volMax > 255) s->volMax = 255;
+        } else if(!AS_stricmp(tok,"timeBetweenWaves")){
+            AS_Range(&p, &s->tbwMin, &s->tbwMax);
+            if(s->tbwMin < 0) s->tbwMin = 0;
+        } else if(!AS_stricmp(tok,"radius")){
+            s->radius = atoi(AS_Tok(&p,false));
+        } else {
+            bwarn("AS_ParseSets: ^3Unknown ambient set keyword \"%s\"\n", tok);
         }
+        AS_SkipLine(&p);
     }
     FS_FreeFile(buf);
-    blog("AS_ParseFile: Parsed %d ambient set(s)\n", s_asNumSets);
+    for(int i=0;i<s_asNumPrecache;i++)                   // the sets this map names
+        for(int j=0;j<s_asNumSets;j++)
+            if(!AS_stricmp(s_asSets[j].name, s_asPrecache[i])) AS_Register(&s_asSets[j]);
+    blog("AS_ParseFile: Parsed %d ambient set(s), %d named by the map\n", s_asNumSets, s_asNumPrecache);
+    s_asNumPrecache = 0;
 }
 static void SP_AS_UpdateAmbientSet(const char* name, const float* origin){
-    as_set_t* s = AS_FindSet(name);
+    as_set_t* s = AS_FindSet(name, AS_GENERAL);
     if(!s) return;
     if(s->looped > 0 && !s_spSoundsBlocked)
-        SPR_S_AddLoopingSound(MAX_GENTITIES-1, origin, s_asZero, s->looped);   // bed on ENTITYNUM_NONE
-    if(s->numSubWaves > 0){
+        SPR_S_AddLoopingSound(MAX_GENTITIES-1, origin, s_asZero, s->looped);   // the loop on ENTITYNUM_NONE
+    if(AS_HasWaves(s)){
         int now = Sys_Milliseconds();
-        if(s->nextWave == 0)        s->nextWave = now + AS_RandInterval(s);     // delay first blip
+        if(s->nextWave == 0)        s->nextWave = now + AS_RandInterval(s);     // delay the first one-shot
         else if(now >= s->nextWave){
             int h = s->subWaves[rand()%s->numSubWaves];
-            if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(NULL, 0, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // non-positional, volRange
+            if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(NULL, 0, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // on the player
             s->nextWave = now + AS_RandInterval(s);
         }
     }
 }
+// Returns the entity's next one-shot time (the cgame keeps it in gent->setTime).
 static int SP_AS_AddLocalSet(const char* name, const float* origin, int entID, int setTime){
-    int now = Sys_Milliseconds();
-    as_set_t* s = AS_FindSet(name);
-    if(!s) return now;                                                          // retail: "retry next frame"
-    if(s->looped > 0 && entID>=0 && entID<MAX_GENTITIES && !s_spSoundsBlocked)
+    as_set_t* s = AS_FindSet(name, AS_LOCAL);
+    if(!s || entID < 0 || entID >= MAX_GENTITIES) return setTime;
+    if(entID != 0 && entID < ge->num_entities){
+        SP_View view; SP_GetView( &view );
+        if( !SP_EntInView( &view, SP_GEntity(entID) ) ) return setTime;           // behind a closed door / out of the PVS
+    }
+    if(s->looped > 0 && !s_spSoundsBlocked)
         SPR_S_AddLoopingSound(entID, origin, s_asZero, s->looped);
-    if(s->numSubWaves > 0 && now >= setTime){
-        int h = s->subWaves[rand()%s->numSubWaves];
-        if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(origin, entID, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));   // positional, volRange
-        return now + AS_RandInterval(s);
+    if(AS_HasWaves(s)){
+        int now = Sys_Milliseconds();
+        // first time in view, or a time from another run (a loaded save): schedule the first one-shot
+        if(setTime <= 0 || setTime > now + s->tbwMax*1000) return now + AS_RandInterval(s);
+        if(now >= setTime){
+            int h = s->subWaves[rand()%s->numSubWaves];
+            if(h > 0 && !s_spSoundsBlocked) SPR_S_StartSoundVol(origin, entID, 0 /*CHAN_AUTO*/, h, AS_RandVolume(s));
+            return now + AS_RandInterval(s);
+        }
     }
     return setTime;
 }
+// The mover sound for stage 0 start, 1 moving (looped), 2 stop, or -1 for none: G_PlayDoorSound only
+// skips on -1, so a 0 would send EV_BMODEL_SOUND with an empty sound on every door.
 static int SP_AS_GetBModelSound(const char* name, int stage){
-    as_set_t* s = AS_FindSet(name);
+    as_set_t* s = AS_FindSet(name, AS_BMODEL);
     if(s && stage>=0 && stage < s->numSubWaves && s->subWaves[stage] > 0) return s->subWaves[stage];
-    return -1;                                                                  // sentinel: no sound (door early-out; never a stale 0 handle)
+    return -1;
 }
 
 static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
@@ -1091,7 +1393,10 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     }
     if( s_spSoundsBlocked ){   // paused or skipping: no new game sounds (the music still plays)
         switch(cmd){
-        case CG_S_STARTSOUND: case CG_S_STARTLOCALSOUND: case CG_S_ADDLOOPINGSOUND:
+        case CG_S_STARTSOUND:
+            if( (int)A(2) == 3 || (int)A(2) == 4 ) blog("voice: dropped start on ent %d (sounds blocked)\n", (int)A(1));
+            return 0;
+        case CG_S_STARTLOCALSOUND: case CG_S_ADDLOOPINGSOUND:
             return 0;
         default: break;
         }
@@ -1170,11 +1475,20 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     case CG_GETSERVERCOMMAND: {
         int seq = (int)A(0);
         if( seq <= 0 || seq > g_svCmdSeq || seq <= g_svCmdSeq - SC_RING ) return qfalse;
+#ifdef EF_COOP
+        if( g_svCmdFor[seq & (SC_RING-1)] == COOP_FOR_GUEST ) return qfalse;   // player 2's: the guest shows it
+#endif
         Cmd_TokenizeString( g_svCmds[seq & (SC_RING-1)] );   // cgame then reads via CG_ARGC/CG_ARGV
         return qtrue;
     }
+#ifdef EF_COOP
+    case CG_GETCURRENTCMDNUMBER: if( g_coopReplica ) return SP_CoopCurrentCmd(); return g_cmdNum;
+    case CG_GETUSERCMD:    if( g_coopReplica ) return SP_CoopUserCmd( (int)A(0), (usercmd_t*)P(1) );
+                           *(usercmd_t*)P(1) = g_lastcmd; return qtrue;
+#else
     case CG_GETCURRENTCMDNUMBER: return g_cmdNum;
     case CG_GETUSERCMD:    *(usercmd_t*)P(1) = g_lastcmd; return qtrue;
+#endif
     // Weapon select AND the cgame mouse-look sensitivity scale. The 2nd arg (VMF(1)) feeds
     // cl.cgameSensitivity, which CL_MouseMove multiplies the mouse delta by — if left 0 (the
     // CL_ClearState default), touch/mouse look is dead (x0) while key/joystick look still works.
@@ -1212,7 +1526,7 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
             int dur = SPR_S_GetSampleLength(sSfx);
             g_voiceEnd[sEnt] = g_levelTime + (dur>0 ? dur : 2500);
             blog("voice: ent %d talks %d ms from levelTime %d\n", sEnt, dur>0 ? dur : 2500, g_levelTime);
-            g_sOverride[sEnt] = 1;
+            g_sOverride[sEnt] = -1;   // talking, mouth at rest until the mixer has a level
         }
         return 0; }
     case CG_S_STARTLOCALSOUND:    SPR_S_StartLocalSound((int)A(0),(int)A(1)); return 0;
@@ -1223,15 +1537,13 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     case CG_S_STARTBACKGROUNDTRACK: SPR_S_StartBackgroundTrack((const char*)P(0),(const char*)P(1)); return 0;
     // force-feedback (DirectInput joystick rumble; irrelevant on Android) -> no-op
     case CG_FF_STARTFX: case CG_FF_ENSUREFX: case CG_FF_STOPFX: case CG_FF_STOPALLFX: return 0;
-    // ambient-sound sets: real AS_* subsystem (sound/sound.txt), ported from the retail engine (see above).
+    // ambient sound sets (sound/sound.txt, see SP_AS_ParseSets above)
     case CG_AS_PARSESETS:         SP_AS_ParseSets(); return 0;
-    case CG_AS_ADDENTRY:          return 0;   // precache filter; ParseSets already registers every set's sounds
+    case CG_AS_ADDENTRY:          SP_AS_AddPrecache((const char*)P(0)); return 0;   // a set this map uses
     case CG_S_UPDATEAMBIENTSET:   SP_AS_UpdateAmbientSet((const char*)P(0),(const float*)P(1)); return 0;
     // args: 0=name 1=listener_origin 2=origin 3=entID 4=time (listener unused; engine spatializes by origin)
     case CG_S_ADDLOCALSET:        return SP_AS_AddLocalSet((const char*)P(0),(const float*)P(2),(int)A(3),(int)A(4));
-    // CG_AS_GETBMODELSOUND returns the bmodelSet subwave handle for the given stage, or -1 ("no sound") on miss.
-    // -1 (NOT 0) is required: g_mover.cpp G_PlayDoorSound only early-outs on -1; returning 0 would fire
-    // G_AddEvent(EV_BMODEL_SOUND, 0) (bogus sfx-handle-0) on every door. Retail: AS_GetBModelSound.
+    // the bmodel set's sound for a mover stage, or -1 for none (see SP_AS_GetBModelSound)
     case CG_AS_GETBMODELSOUND: return SP_AS_GetBModelSound((const char*)P(0),(int)A(1));
     case CG_R_DRAWSCREENSHOT:
         // EF1 SP 1:1: on a full-save load (g_eSavedGameJustLoaded==eFULL) CG_DrawInformation draws the saved
@@ -1378,7 +1690,12 @@ extern "C" qboolean SP_FinishTransition(void){
         g_levelTime = 1000;
     }
     ge->Init(g_transMap, g_transSpawn, checksum, entstring, g_levelTime,
-             Sys_Milliseconds(), Sys_Milliseconds(), sg, g_transHub ? qtrue : qfalse);
+             Regress_Active() ? Regress_Seed() : Sys_Milliseconds(), Sys_Milliseconds(), sg, g_transHub ? qtrue : qfalse);
+#ifdef EF_COOP
+    g_coopLevelId++;
+    g_coopReplica = 0;   // a replica level starts only through SP_SpawnServer (the guest's map load)
+    SP_CoopHoldStart();
+#endif
     // Fresh spawn (eAUTO: forward transition or autosave load): retail SV_SpawnServer's settle frames, before the
     // player connects. Not for an eFULL user load: ReadLevel below replaces every entity with the saved, already
     // settled ones, so frames run on the fresh spawn would only start scripts that the load then throws away.
@@ -1425,6 +1742,21 @@ extern "C" qboolean SP_FinishTransition(void){
     } else if( s_sgFile ){
         SG_Close();   // forward transition (eAUTO): discard the level snapshot; the player carries via cvars
     }
+    // A user (eFULL) load: put back which areaportals were open,
+    // after the spawn. Without it every door read as closed after a load: an open door blocked sight, and the
+    // CM counts no longer matched the doors. The save doesn't record which entity holds which portal, so the
+    // per-entity guard goes to "unknown" (see W_AdjustAreaPortalState). An autosave (eAUTO) respawns every entity
+    // fresh, with its doors closed, so its counts are not applied.
+    if( g_transGameFlag == 0 && g_loadPortals ){
+        if( CM_SetPortalState( g_loadPortals, g_loadPortalsSize ) ){
+            memset(g_entPortalOpen, -1, sizeof(g_entPortalOpen));
+            int open=0; for(int i=0;i<g_loadPortalsSize/(int)sizeof(int);i++) if(g_loadPortals[i]>0) open++;
+            blog("SP_FinishTransition: restored areaportal state (%d bytes, %d open entries)\n", g_loadPortalsSize, open);
+        } else {
+            blog("SP_FinishTransition: save's areaportal state is %d bytes, map has %d -> ignored\n", g_loadPortalsSize, CM_PortalStateSize());
+        }
+    }
+    SP_DropLoadPortals();
     memset(&g_lastcmd,0,sizeof(g_lastcmd)); g_lastcmd.serverTime = g_levelTime;
     SP_ResetViewAngles();   // the usercmd angles restart at 0, matching g_lastcmd (see SP_ResetViewAngles)
     ge->ClientBegin(0, &g_lastcmd, sg);
@@ -1454,7 +1786,7 @@ extern "C" qboolean SP_FinishTransition(void){
     // Fresh spawn: let the player land and the spawn scripts/events play out before the first snapshot (the load
     // screen stays up, see SP_SettleClient). An eFULL load shows the saved moment as it was, with one frame.
     if( sg == eAUTO ) SP_SettleClient( SP_SETTLE_CLIENT_TICKS );
-    else { SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime); }
+    else { SP_GameRunFrame(); }
     BuildSnapshot();
     BuildGameState();                   // rebuild AFTER ClientBegin so CS_PLAYERS+0 (player model) is in the
                                         // gamestate the cgame reads at CG_INIT (no live CG_CONFIGSTRING path)
@@ -1511,6 +1843,9 @@ static int g_pendingAutosave = 0;
 //    re-locks the player) and the loadout is restored via Player_RestoreFromPrevLevel from the carry cvars.
 static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
     if(!ge || !g_spActive || !name || !name[0]){ bwarn("save: not in a game\n"); return; }
+#ifdef EF_COOP
+    if( g_coopReplica ){ SP_ComPrintf()("co-op: only the host saves the game\n"); return; }
+#endif
     // Cutscene gate (retail SV_CanSave -> GameAllowedToSaveHere == !in_camera). Retail SV_SaveGame only checks
     // it for gameFlag 0: `if ((param_2==0) && !SV_CanSave) return;`. So an eAUTO autosave (bEAUTO) is NEVER
     // gated -- it writes immediately even during the opening cinematic, which is SAFE now that it is eAUTO:
@@ -1598,10 +1933,9 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
     }
     I_Append('TIME', &tnow, 4);
     I_Append('TIMR', &zero, 4);
-    // PRTS: retail emits a particle/precip grid chunk here, between TIMR and CSCN. The port
-    // doesn't simulate that grid (particles reseed on spawn), but write a zero PRTS so the chunk stream is
-    // structurally retail-identical and frames the same on both sides; SP_LoadGameFile read-skips it.
-    { static unsigned char prts[1296]; I_Append('PRTS', prts, (int)sizeof(prts)); }
+    // PRTS: the areaportal reference counts (numAreas^2 ints). Which doors
+    // are open, so sight, PVS and sound culling stay right after a load. (1.3.0 and older wrote 1296 zero bytes.)
+    I_Append('PRTS', (void*)CM_PortalState(), CM_PortalStateSize());
     // CSCN/CSIN/CSDA: persist the configstring table so a load can rebuild the EXACT index->string map that
     // every entity's s.modelindex (and the cgame's model_draw[]/sound indices) were assigned against. The
     // bridge's g_configstrings lives in libmain and is NEVER cleared per-map, so a load that doesn't restore
@@ -1616,11 +1950,17 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
           I_Append('CSIN', &i, 4);
           I_Append('CSDA', g_configstrings[i], (int)strlen(g_configstrings[i])+1);
       } }
+#ifdef EF_COOP
+    if( g_coopRep ) Cvar_Set( "coop_p2saved", "" );   // the co-op game fills it in WriteLevel (player 2's state)
+#endif
     ge->WriteLevel(bEAUTO);                     // eFULL(qfalse): gclient + full entity table; eAUTO(qtrue): entity 0 + objectives/ICARUS only
     SG_Close();
     char to[96]; snprintf(to,sizeof(to),"saves/%s.sav", name);
     FS_Rename("saves/current.sav", to);
     binfo("save: wrote %s (map %s, t=%d, %s)\n", to, g_curMap, tnow, bEAUTO ? "eAUTO" : "eFULL");
+#ifdef EF_COOP
+    if( g_coopRep ) SP_CoopWriteSideFile( name );
+#endif
 }
 
 // Public save entry (the `save` console command, deferred-autosave writer, quick-save): always eFULL, exactly
@@ -1648,11 +1988,17 @@ static void SP_WriteEntryAutosave(void){
 
 extern "C" void SP_LoadGameFile(const char* name){
     if(!name || !name[0]) return;
+#ifdef EF_COOP
+    if( g_coopReplica ){ SP_ComPrintf()("co-op: player 2 can't load a game (coop_disconnect leaves the host first)\n"); return; }
+#endif
     // P1-1: don't clobber an already-pending load/transition (consume-once g_transMap). A load requested while
     // another is mid-flight would overwrite the pending map + reuse __trans.sav -> wrong-map desync.
     if( g_transMap[0] ){ bwarn("SP_LoadGameFile: '%s' already pending -> ignoring overlapping load '%s'\n", g_transMap, name); return; }
     char path[96]; snprintf(path,sizeof(path),"saves/%s.sav", name);
     if(!SG_OpenRead(path)){ bwarn("load: open failed %s\n", path); return; }
+#ifdef EF_COOP
+    SP_CoopReadSideFile( name );
+#endif
     static unsigned char shot[256*256*4];
     char comm[128], mpcm[1024]; int ncvc=0, game=0, tnow=0, timr=0, cscn=0;
     // EFSP 4:3: cg_forceAspect is a DISPLAY preference (the video-menu Aspect toggle), not gameplay state. The
@@ -1723,7 +2069,11 @@ extern "C" void SP_LoadGameFile(const char* name){
         for(int i=0;i<32;i++){ char d[512]; d[0]=0; I_ReadSG('ADPT', d,0,0); d[sizeof(d)-1]=0; char nm[32]; snprintf(nm,sizeof(nm),"borgadapt%d",i); Cvar_Set(nm,d); }
     }
     I_ReadSG('TIME',&tnow,4,0); I_ReadSG('TIMR',&timr,4,0);
-    { void* pr=0; if(I_ReadSGOpt('PRTS',0,0,&pr)>0 && pr) free(pr); }   // L-1: consume retail's particle-grid chunk if present
+    // PRTS: the areaportal counts. CM isn't loaded for the save's map yet, so keep it
+    // for SP_FinishTransition. Old port saves wrote zeros here (all doors closed: what they loaded as before).
+    SP_DropLoadPortals();
+    { void* pr=0; int n=I_ReadSGOpt('PRTS',0,0,&pr);
+      if( n>0 && pr && game==0 ){ g_loadPortals=(int*)pr; g_loadPortalsSize=n; } else free(pr); }
     I_ReadSG('CSCN',&cscn,4,0);
     // Restore the saved configstring table (retail SV_ReadGame: clear the whole table, then write each saved
     // index->string back). The cgame's model_draw[]/sound indices and every entity's s.modelindex were assigned
@@ -1790,6 +2140,11 @@ extern "C" qboolean SP_StartClient(void){
     SP_ResetViewAngles();   // the usercmd angles restart at 0, matching g_lastcmd (see SP_ResetViewAngles)
     ge->ClientBegin(0, &g_lastcmd, (SavedGameJustLoaded_e)0);
     blog("SP_StartClient: client connected+begun\n");
+#ifdef EF_COOP
+    extern int SP_CoopReplicaApply( void );
+    if( g_coopReplica ) SP_CoopReplicaApply();   // the host's newest frame, before the cgame starts
+    else
+#endif
     SP_SettleClient( SP_SETTLE_CLIENT_TICKS );   // player lands, spawn scripts start, spawn events expire
     BuildSnapshot();
     // Rebuild the gamestate AFTER ClientBegin/RunFrame so it includes configstrings the game set during
@@ -1810,6 +2165,9 @@ extern "C" qboolean SP_StartClient(void){
     blog("SP_StartClient: CG_INIT returned OK\n");
     g_spActive = 1;
     SP_EndLoad();   // SP cgame is live now -> SP_DrawFrame owns the screen; stop the load screen
+#ifdef EF_COOP
+    if( g_coopReplica ) return qtrue;   // only the host saves
+#endif
     SP_WriteEntryAutosave();   // New Game = fresh entry -> level-start autosave for death-respawn
     return qtrue;
 }
@@ -1819,8 +2177,9 @@ extern "C" void SP_ClientFrames(int n){
         g_levelTime += 50;
         g_lastcmd.serverTime = g_levelTime;
         g_cmdNum++;
+        Regress_SeedRand( g_levelTime );
         ge->ClientThink(0, &g_lastcmd);
-        SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+        SP_GameRunFrame();
         BuildSnapshot();
         // Trail cg.time by one tick (clamped to snap #1) so priming frames present a valid snap/nextSnap
         // pair, matching SP_DrawFrame. With only one snap so far the clamp pins cg.time to base (nextSnap
@@ -1874,6 +2233,9 @@ extern "C" void SP_AbortState(void){
 // repeat of 'map <same-map>' that would otherwise reload and hit the renderer's redundant-world guard.
 extern "C" const char* SP_CurMap(void){ return g_curMap; }
 extern "C" {
+#ifdef EF_COOP
+    void  SCR_DrawBigString( int x, int y, const char *s, float alpha, qboolean noColorEscape );   // cl_scrn.c
+#endif
     void  S_PauseGameSounds( qboolean pause );   // snd_main.c: hold / resume the game's sounds + music
     void  S_StopGameSounds( void );              // snd_main.c: stop effects + loops, keep the music
     void  S_ClearLoopingSounds( qboolean killall );
@@ -1902,6 +2264,342 @@ static void SP_DrawSkipProgress(void){
     }
     SPR_SetColor(NULL);
 }
+#ifdef EF_COOP
+// ---- co-op replica: the host's side ----
+// The host's newest server commands for the guest (not player 1's own, and not the configstring
+// updates: those travel as configstrings) as [newest seq][count] then count x ([seq][text\0]), for
+// the guest to hand its cgame what's new.
+static int SP_CoopCommandsImage( unsigned char *buf, int size ){
+    int seqs[32], n = 0;
+    for( int seq = g_svCmdSeq; seq > 0 && seq > g_svCmdSeq - SC_RING && n < 32; seq-- ){
+        if( !strncmp( g_svCmds[seq & (SC_RING-1)], "cs ", 3 ) ) continue;
+        if( g_svCmdFor[seq & (SC_RING-1)] == COOP_FOR_HOST ) continue;
+        seqs[n++] = seq;
+    }
+    int len = 0;
+    memcpy( buf + len, &g_svCmdSeq, 4 ); len += 4;
+    memcpy( buf + len, &n, 4 ); len += 4;
+    int put = 0;
+    for( int i = n - 1; i >= 0; i-- ){
+        const char *t = g_svCmds[seqs[i] & (SC_RING-1)];
+        int tl = (int)strlen( t ) + 1;
+        if( len + 4 + tl > size - 88 ) break;
+        memcpy( buf + len, &seqs[i], 4 ); len += 4;
+        memcpy( buf + len, t, tl ); len += tl;
+        put++;
+    }
+    memcpy( buf + 4, &put, 4 );
+    // then whether this level's start is held for the guest, whether a movie plays here now, and the
+    // newest in-game movie: [held][playing][seq][name\0] (seq 0: none yet)
+    int held = ( g_coopHoldLevel && g_coopHoldLevel == g_coopLevelId ) ? 1 : 0;
+    int playing = CL_InGameCinematicActive() ? 1 : 0;
+    memcpy( buf + len, &held, 4 ); len += 4;
+    memcpy( buf + len, &playing, 4 ); len += 4;
+    int ml = (int)strlen( g_coopMovie ) + 1;
+    memcpy( buf + len, &g_coopMovieSeq, 4 ); len += 4;
+    memcpy( buf + len, g_coopMovie, ml ); len += ml;
+    return len;
+}
+// The game started an in-game movie ("inGameCinematic <name>"): the guest plays it too.
+static void SP_CoopNoteMovie( const char *t ){
+    char name[64]; int n = 0;
+    t += 15;
+    while( *t == ' ' || *t == '"' ) t++;
+    while( *t && *t != ' ' && *t != '"' && *t != '\n' && *t != ';' && n < (int)sizeof(name) - 1 ){
+        char c = *t++;
+        if( !isalnum( (unsigned char)c ) && c != '_' && c != '-' && c != '.' && c != '/' ) return;   // not a movie name
+        name[n++] = c;
+    }
+    name[n] = 0;
+    if( !n ) return;
+    g_coopMovieSeq++;
+    memcpy( g_coopMovie, name, n + 1 );
+}
+// After every game frame while a guest is connected: the world as replica slots.
+static void SP_CoopHostFrame( void ){
+    static unsigned char buf[512 * 1024];
+    static int warned;
+    if( !g_coopRep || g_coopReplica || !g_spActive ) return;
+    if( !CoopNet_HostFrameBegin( g_coopLevelId, g_levelTime, g_curMap ) ) return;
+    static unsigned frameCount = 0;
+    frameCount++;
+    for( int i = 0; i < ge->num_entities && i < COOP_SLOT_CS; i++ ){
+        // one player 2 can't see or hear: its last image again, but a fresh one now and then
+        int every = g_coopRep->SendEvery( i );
+        if( every > 1 && ( frameCount + i ) % every && CoopNet_HostFrameSlotKeep( i ) ) continue;
+        int n = g_coopRep->WriteEntity( i, buf, sizeof(buf) );
+        if( n > 0 ) CoopNet_HostFrameSlot( i, buf, n );
+        else if( n < 0 && !warned ){ warned = 1; bwarn("co-op: entity %d's image is too big; not sent\n", i); }
+    }
+    for( int i = 0; i < CS_MAX && i < COOP_SLOT_GLOBALS - COOP_SLOT_CS; i++ ){
+        if( g_configstrings[i][0] ) CoopNet_HostFrameSlot( COOP_SLOT_CS + i, g_configstrings[i], (int)strlen(g_configstrings[i]) + 1 );
+    }
+    int n = g_coopRep->WriteGlobals( buf, sizeof(buf) );
+    if( n > 0 ) CoopNet_HostFrameSlot( COOP_SLOT_GLOBALS, buf, n );
+    n = SP_CoopCommandsImage( buf, sizeof(buf) );
+    CoopNet_HostFrameSlot( COOP_SLOT_COMMANDS, buf, n );
+    CoopNet_HostFrameEnd();
+}
+
+// ---- co-op replica: the guest's side ----
+// In-game movies. The host's game pauses while one plays; the guest plays the same movie (both start
+// it in the same host frame), and stops it when the host's game goes on again (the movie ended or the
+// host skipped it), so neither waits long for the other. A guest whose copy ends first, or who skips
+// it, sees "Host paused" until the host's ends.
+static int g_coopMovieSeen = 0;     // guest: the newest host movie seen (played, or left out on joining)
+static int g_coopMovieSynced = 0;   // ...decided for this level which one is current (see below)
+static int g_coopMovieOn = 0;       // ...one of them is playing here
+static int g_coopMovieHeld = 0;     // ...and the host's game has paused for it since
+static void SP_CoopGuestMovie( int seq, const char *name, qboolean hostPlaying ){
+    if( !g_spActive ) return;   // (decided once the cgame runs)
+    if( !g_coopMovieSynced ){
+        // the first frame of a level here (joining, or following the host): the host's newest movie
+        // only if it plays there now (it may have started while this guest loaded the level)
+        g_coopMovieSynced = 1;
+        qboolean current = ( seq > 0 && seq != g_coopMovieSeen && hostPlaying ) ? qtrue : qfalse;
+        g_coopMovieSeen = seq;
+        if( !current ) return;
+    } else {
+        if( seq <= g_coopMovieSeen ){
+            if( seq < g_coopMovieSeen ) g_coopMovieSeen = seq;   // a new host session counts from 0
+            return;
+        }
+        g_coopMovieSeen = seq;
+    }
+    if( !name[0] ) return;
+    blog("co-op: the host plays the movie %s; playing it here too\n", name);
+    char cmd[96]; snprintf( cmd, sizeof(cmd), "inGameCinematic %.63s\n", name );
+    Cbuf_AddText( cmd );
+    g_coopMovieOn = 1; g_coopMovieHeld = 0;
+}
+// every guest frame: end the movie here once the host's game has gone on after pausing for it
+static void SP_CoopGuestMovieFrame( int paused ){
+    if( !g_coopMovieOn ) return;
+    if( !CL_InGameCinematicActive() ){
+        if( g_coopMovieHeld || !paused ) g_coopMovieOn = 0;   // over here (it ended, or the guest skipped it)
+        else return;                                        // (queued, not started yet)
+    }
+    if( paused == 1 ) g_coopMovieHeld = 1;
+    else if( g_coopMovieHeld && !paused ){
+        blog("co-op: the host's movie is over; stopping it here\n");
+        SCR_StopCinematic();
+        g_coopMovieOn = 0;
+    }
+}
+static qboolean SP_CoopSlotSame( int a, int b, int slot, const unsigned char **data, int *len ){
+    *len = CoopNet_GuestFrameSlot( b, slot, data );
+    if( !a ) return qfalse;
+    const unsigned char *od; int ol = CoopNet_GuestFrameSlot( a, slot, &od );
+    return ( ol == *len && ( !ol || !memcmp( od, *data, ol ) ) ) ? qtrue : qfalse;
+}
+// One host frame into this level: the slots that differ from the last frame applied (all of them
+// when that one is gone or there was none).
+static void SP_CoopApplyFrame( int frame, int time ){
+    int prev = g_coopApplied, lid, t, ack;
+    if( prev && !CoopNet_GuestFrameInfo( prev, &lid, &t, &ack ) ) prev = 0;
+    const unsigned char *d; int len;
+    if( !SP_CoopSlotSame( prev, frame, COOP_SLOT_GLOBALS, &d, &len ) ) g_coopRep->ApplyGlobals( d, len );
+    int top = ge->num_entities;
+    for( int i = 0; i < COOP_SLOT_CS; i++ ){
+        if( SP_CoopSlotSame( prev, frame, i, &d, &len ) ) continue;
+        if( !len && i >= top && i >= ge->num_entities ) continue;   // free and never used here
+        g_coopRep->ApplyEntity( i, d, len );
+        gentity_t *e = SP_GEntity( i );
+        if( len && e->inuse && e->bmodel && e->s.modelindex > 0 && e->s.modelindex < CM_NumInlineModels() )
+            g_entClip[i] = CM_InlineModel( e->s.modelindex );   // traces through this brush model (W_SetBrushModel)
+    }
+    for( int i = 0; i < CS_MAX && i < COOP_SLOT_GLOBALS - COOP_SLOT_CS; i++ ){
+        if( SP_CoopSlotSame( prev, frame, COOP_SLOT_CS + i, &d, &len ) ) continue;
+        if( i == CS_SERVERINFO ) continue;   // this copy's own (the map name is the same)
+        I_SetCS( i, len ? (const char *)d : "" );   // the cgame hears of it when it runs
+    }
+    len = CoopNet_GuestFrameSlot( frame, COOP_SLOT_COMMANDS, &d );
+    if( len >= 8 ){
+        int newest, count, pos = 8, held = 0;
+        memcpy( &newest, d, 4 ); memcpy( &count, d + 4, 4 );
+        // the commands, then [held][movie seq][movie time][movie name]
+        const unsigned char *tail = NULL;
+        { int p = 8, i;
+          for( i = 0; i < count && p + 5 <= len; i++ ){ int tl = (int)strnlen( (const char *)d + p + 4, len - p - 4 ); if( p + 4 + tl >= len ) break; p += 4 + tl + 1; }
+          if( i == count && p + 13 <= len && !d[len - 1] ){ tail = d + p; memcpy( &held, tail, 4 ); } }
+        // joining: only what comes from now on; but a level the host holds for this guest is new,
+        // so all of its story text so far (an opening scroll text, the first subtitles) is shown
+        if( !prev ) g_coopCmdSeen = held ? 0 : newest;
+        for( int i = 0; i < count && pos + 5 <= len; i++ ){
+            int seq; memcpy( &seq, d + pos, 4 ); pos += 4;
+            const char *text = (const char *)d + pos;
+            int tl = (int)strnlen( text, len - pos );
+            if( pos + tl >= len ) break;
+            pos += tl + 1;
+            if( seq > g_coopCmdSeen && g_spActive ){ I_SendServerCmd( 0, "%s", text ); g_coopCmdSeen = seq; }   // (kept until the cgame runs)
+        }
+        if( newest < g_coopCmdSeen ) g_coopCmdSeen = newest;   // (the host's count restarts with a level)
+        if( tail ){
+            int playing, mseq;
+            memcpy( &playing, tail + 4, 4 ); memcpy( &mseq, tail + 8, 4 );
+            if( !prev ) g_coopMovieSynced = 0;
+            SP_CoopGuestMovie( mseq, (const char *)tail + 12, playing ? qtrue : qfalse );
+        }
+    }
+    g_coopRep->ApplyDone( g_spActive ? qtrue : qfalse );
+    g_coopApplied = frame;
+    g_coopAppliedAt = Sys_Milliseconds();
+    g_levelTime = time;
+}
+// The guest's commands. One is made for every host frame taken in (the host applies one a frame),
+// numbered g_coopSeq and kept here; each frame says the newest the host applied (g_coopAck). The
+// cgame's prediction (cg_predict.cpp, on in a replica) starts from that frame's player 2 and replays
+// the commands after it, then the one being made now. Their times are their numbers * 50 ms, and the
+// snapshot's commandTime is the acked number's (BuildSnapshot), so every replayed command moves
+// player 2 for one host frame, as the host's ClientThink will.
+static int       g_coopBtn = 0;     // buttons pressed since the last command
+static int       g_coopSeqAt = 0;   // when the last command was made (Sys_Milliseconds)
+static int       g_coopHostPaused = 0;  // the host's game isn't going on (CoopNet_GuestHostPaused)
+static int       g_coopPausedSince = 0; // ...and how far into its frame the guest's command was then
+static usercmd_t g_coopCmds[COOP_CMDS];
+// What the guest's screen showed, in the host's level time, for the host's check of its shots
+// (co-op lag compensation): the frame the cgame's predicted shot was aimed in, if that came after
+// the last command went; else the newest drawn (a shot of this command that the cgame predicts once
+// it has gone is aimed in that one).
+static int       g_coopDrawnTime = 0;   // the cgame time of the last drawn frame
+static int       g_coopSentView = 0;    // ...as sent with the last command
+static void SP_CoopMakeCmd( void ){
+    usercmd_t c = g_lastcmd;
+    c.buttons |= g_coopBtn;
+    int an[3] = { c.angles[0], c.angles[1], c.angles[2] };
+    int shotTime = g_coopRep ? g_coopRep->TakeShotTime() : 0;
+    int viewTime = ( shotTime > g_coopSentView || ( shotTime && g_coopSentView - shotTime > 1000 ) ) ? shotTime : g_coopDrawnTime;   // (or a new level)
+    g_coopSeqAt = Sys_Milliseconds();
+    if( !CoopNet_GuestQueueCmd( g_coopSeq + 1, an, c.buttons, c.weapon, c.forwardmove, c.rightmove, c.upmove, viewTime ) ) return;
+    g_coopSeq++;
+    g_coopBtn = 0;
+    g_coopSentView = viewTime;
+    c.serverTime = g_coopSeq * SP_SV_FRAMEMSEC;
+    g_coopCmds[g_coopSeq & (COOP_CMDS-1)] = c;
+}
+static int SP_CoopCurrentCmd( void ){
+    if( g_coopSeq - g_coopAck >= COOP_CMDS - 4 ) return g_coopAck;   // too far ahead of the host: no replay
+    return g_coopSeq + 1;   // + the one being made
+}
+static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd ){
+    if( n == g_coopSeq + 1 ){
+        int since = Sys_Milliseconds() - g_coopSeqAt;
+        if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC ) since = SP_SV_FRAMEMSEC;
+        if( g_coopHostPaused ) since = g_coopPausedSince;   // held where the pause found it
+        *cmd = g_lastcmd;
+        cmd->serverTime = g_coopSeq * SP_SV_FRAMEMSEC + since;
+        return qtrue;
+    }
+    if( n <= 0 || n > g_coopSeq || n <= g_coopSeq - COOP_CMDS ) return qfalse;
+    *cmd = g_coopCmds[n & (COOP_CMDS-1)];
+    return qtrue;
+}
+// The host's frames that came in since the last call (at most 4, oldest first), each into this level
+// and a snapshot, and a command for each. Returns how many.
+extern "C" int SP_CoopReplicaApply( void ){
+    int newest = CoopNet_GuestNewestFrame(), applied = 0;
+    if( !g_coopReplica || !g_coopRep || !newest || newest <= g_coopApplied ) return 0;
+    int first = ( g_coopApplied && newest - g_coopApplied <= 4 ) ? g_coopApplied + 1 : newest;
+    for( int f = first; f <= newest; f++ ){
+        int lid, t, ack;
+        if( !CoopNet_GuestFrameInfo( f, &lid, &t, &ack ) || lid != CoopNet_GuestLevelId() ) continue;
+        int lastTime = g_coopApplied ? g_levelTime : -1;
+        SP_CoopApplyFrame( f, t );
+        applied++;
+        if( ack > g_coopAck && ack <= g_coopSeq ) g_coopAck = ack;
+        if( g_spActive ) CoopNet_GuestLevelReady( lid );
+        if( t == lastTime ) continue;   // the host holds its level's start for this guest: no game time passed
+        if( g_spActive ) SP_CoopMakeCmd();
+        if( g_spActive ){
+            g_cmdNum++;
+            g_lastcmd.serverTime = g_levelTime;
+            BuildSnapshot();
+        }
+    }
+    return applied;
+}
+// The guest's render frame: no game frames here; the host's frames come in instead, and the cgame draws
+// one host frame behind the newest (as the host's own view does), moving on with real time between them.
+// While the host's game is paused (or its frames stop coming) the guest's world holds too: player 2's
+// input is held where it was (so its prediction stays put), the game's sounds are held as in the host's
+// own pause, and a line says why.
+static void SP_CoopReplicaDrawFrame( int stereo ){
+    int paused = CoopNet_GuestHostPaused();
+    if( paused && !g_coopHostPaused ){
+        int since = Sys_Milliseconds() - g_coopSeqAt;
+        if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC ) since = SP_SV_FRAMEMSEC;
+        g_coopPausedSince = since;
+        blog("co-op: the host's game %s\n", paused == 1 ? "paused" : "stopped sending frames");
+    } else if( !paused && g_coopHostPaused ){
+        blog("co-op: the host's game goes on\n");
+    }
+    g_coopHostPaused = paused;
+    SP_CoopGuestMovieFrame( paused );
+    if( !paused ){
+      int an[3]; signed char fwd=0,side=0,up=0; int btn=0;
+      SPR_GetLatestCmd(an,&fwd,&side,&up,&btn);
+      g_lastcmd.angles[0]=an[0]; g_lastcmd.angles[1]=an[1]; g_lastcmd.angles[2]=an[2];
+      g_lastcmd.forwardmove=fwd; g_lastcmd.rightmove=side; g_lastcmd.upmove=up; g_lastcmd.buttons=btn;
+      g_lastcmd.weapon = (byte)g_weaponSelect; g_coopBtn |= btn; }
+    SP_CoopReplicaApply();
+    int since = Sys_Milliseconds() - g_coopAppliedAt;
+    if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC - 1 ) since = SP_SV_FRAMEMSEC - 1;
+    int cgTime = g_levelTime - SP_SV_FRAMEMSEC + since;
+    if( cgTime < g_snapBaseTime ) cgTime = g_snapBaseTime;
+    // the host skips a cutscene: the guest's view is the skip screen too, and the game's sounds stop
+    int skipping = Cvar_VariableIntegerValue( "skippingCinematic" );
+    if( skipping && !s_spWasSkipping ){ S_StopGameSounds(); SP_ClearVoiceTimers(); blog("co-op: the host skips the cutscene\n"); }
+    s_spWasSkipping = skipping;
+    S_PauseGameSounds( paused ? qtrue : qfalse );   // (nothing to do when they aren't held)
+    s_spSoundsBlocked = ( paused || skipping ) ? 1 : 0; s_spSkipDraw = skipping;
+    SP_UpdateVisemes();
+    SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+    g_coopDrawnTime = cgTime;
+    s_spSkipDraw = 0;
+    if( skipping ){
+        SP_DrawSkipProgress();
+        S_ClearLoopingSounds( qtrue );
+    }
+    if( paused || skipping ){
+        if( paused ) S_ClearLoopingSounds( qtrue );   // the frame above re-added the loops; silent, like the host's pause
+        const char *text = paused == 1 ? "Host paused" : paused ? "Waiting for the host" : "Host is skipping the cutscene";
+        if( !CL_InGameCinematicActive() )
+            SCR_DrawBigString( 320 - (int)strlen( text ) * 8, 232, text, 1.0f, qtrue );   // 16-pixel characters, centred on 640x480
+    }
+}
+// The host's render frame while a new level (a New Game, a map change, a load) waits for the guest to
+// load it too, so both start it together: no game frames (the level's time stands still, as in a pause),
+// the frozen frame drawn with a line saying so, and a frame for the guest now and then (the first one
+// tells it which map to load). Over when the guest has the level up, leaves, or takes too long.
+static int SP_CoopHolding( int stereo ){
+    if( !g_coopHoldLevel ) return 0;
+    int now = Sys_Milliseconds();
+    if( !g_coopHoldAt ) g_coopHoldAt = now;
+    const char *why = NULL;
+    if( g_coopHoldLevel != g_coopLevelId || !CoopNet_HostHasGuest() ) why = "the guest left";
+    else if( CoopNet_HostGuestLevel() == g_coopHoldLevel ) why = "player 2 has it";
+    else if( now - g_coopHoldAt > COOP_HOLD_MAX ) why = "player 2 is taking too long; going on without waiting";
+    if( why ){
+        blog("co-op: level start held %d ms for player 2 (%s)\n", now - g_coopHoldAt, why);
+        if( now - g_coopHoldAt > COOP_HOLD_MAX ) SP_ComPrintf()("co-op: %s\n", why);
+        g_coopHoldLevel = 0;
+        SP_CoopHostFrame();   // (the guest's next frame says the level isn't held any more)
+        return 0;
+    }
+    if( !g_coopHoldSent || now - g_coopHoldSent >= 250 ){ g_coopHoldSent = now; SP_CoopHostFrame(); }
+    S_PauseGameSounds( qtrue );
+    s_spSoundsBlocked = 1;
+    int cgTime = g_levelTime - SP_SV_FRAMEMSEC + g_simResidual;
+    if( cgTime >= g_levelTime )    cgTime = g_levelTime - 1;
+    if( cgTime < g_snapBaseTime )  cgTime = g_snapBaseTime;
+    SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
+    S_ClearLoopingSounds( qtrue );
+    const char *text = "Waiting for player 2";
+    SCR_DrawBigString( 320 - (int)strlen( text ) * 8, 232, text, 1.0f, qtrue );
+    return 1;
+}
+#endif
+
 // Advance the sim by REAL elapsed wall-clock time each rendered frame. This keeps the original's
 // smooth per-frame structure (RunFrame every frame -> smooth view) while running at CORRECT speed
 // (the prior code added a fixed 50ms/frame -> 3x at 60fps; a 20Hz accumulator was correct-speed but
@@ -1915,13 +2613,17 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     if(lastReal == 0) lastReal = now;
     int delta = now - lastReal; lastReal = now;
     if(delta < 1) delta = 1; if(delta > 100) delta = 100;   // clamp hitches (no >100ms sim jumps)
+    if( Regress_Active() ) delta = SP_SV_FRAMEMSEC;          // regression harness: one game frame per drawn frame
+#ifdef EF_COOP
+    if( g_coopReplica ){ SP_CoopReplicaDrawFrame( stereo ); return; }
+    if( SP_CoopHolding( stereo ) ) return;
+#endif
 
     // PAUSE when the in-game menu (ESC), the console or an in-game movie is up: retail SP pauses the
     // server; our loopback has no server, so freeze the sim here -- do NOT advance g_levelTime or run
     // ClientThink/RunFrame; just re-draw the frozen frame behind the menu. (lastReal is already updated
     // above, so unpausing won't time-jump.)
     { extern int SP_MenuPaused(void);
-      static int s_wasPaused = 0;
       if( SP_MenuPaused() ){
         // Hold the game's sounds and the music where they are (S_PauseGameSounds): they used to be
         // stopped with S_StopAllSounds on this edge, which lost the music and the current voice line for
@@ -1931,7 +2633,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         // dropped while paused (s_spSoundsBlocked).
         S_PauseGameSounds( qtrue );
         s_spSoundsBlocked = 1;
-        if( !s_wasPaused ){ s_wasPaused = 1;
+        if( !s_spWasPaused ){ s_spWasPaused = 1;
             // Grab the save-menu thumbnail ONCE here, on the gameplay->menu edge (not every gameplay
             // second). The capture is a full-screen GPU readback that stalls the Adreno pipeline ~100ms;
             // doing it per-second during play was the dominant stutter. You only save from this menu, so a
@@ -1961,7 +2663,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         S_ClearLoopingSounds(qtrue);
         return;
       }
-      if( s_wasPaused ){ s_wasPaused = 0; blog("EFSP: unpaused: game sounds resume\n"); }
+      if( s_spWasPaused ){ s_spWasPaused = 0; blog("EFSP: unpaused: game sounds resume\n"); }
       S_PauseGameSounds( qfalse );   // resume held sounds where they were (no-op when not held)
     }
 
@@ -1970,16 +2672,15 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     // and a load / quit ends it (SP_UnloadGame, CL_Disconnect). While skipping, timescale drives the sim
     // (below), the 3D view isn't drawn (a progress screen instead), and the game's sounds stop -- like
     // retail, which killed every sound but the music when a skip started.
-    static int s_wasSkipping = 0;
     int skipping = Cvar_VariableIntegerValue("skippingCinematic");
-    if( skipping && !s_wasSkipping ){
+    if( skipping && !s_spWasSkipping ){
         S_StopGameSounds();      // effects, voices, loops; the music plays on
         SP_ClearVoiceTimers();
         blog("EFSP: cutscene skip started (timescale %g)\n", Cvar_VariableValue("timescale"));
-    } else if( !skipping && s_wasSkipping ){
+    } else if( !skipping && s_spWasSkipping ){
         blog("EFSP: cutscene skip ended at levelTime %d\n", g_levelTime);
     }
-    s_wasSkipping = skipping;
+    s_spWasSkipping = skipping;
     s_spSoundsBlocked = skipping;
     g_spMovieQueued = 0;
 
@@ -2018,14 +2719,28 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     if( g_simResidual > SP_SV_FRAMEMSEC * maxTicks )   // hitch cap: bound catch-up, no spiral
         g_simResidual = SP_SV_FRAMEMSEC * maxTicks;
     int simStart = Sys_Milliseconds();
+#ifdef EF_COOP
+    int coopSkipFrames = 0;
+#endif
     while( g_simResidual >= SP_SV_FRAMEMSEC ) {
         g_simResidual -= SP_SV_FRAMEMSEC;
         g_levelTime   += SP_SV_FRAMEMSEC;
         g_cmdNum++;
         g_lastcmd.serverTime = g_levelTime;
+        Regress_SeedRand( g_levelTime );
         ge->ClientThink(0, &g_lastcmd);
-        SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
+        // The game ends a skip in ClientThink (the camera is over: skippingCinematic 0, timescale 1), and the
+        // RunFrame right after it is already normal play: the script's next voice line starts there. Blocking
+        // sounds for the whole frame (from `skipping` above) dropped that line, and with no voice timer the
+        // dialog wait finished at once, so the line was lost for good.
+        if( skipping ) s_spSoundsBlocked = Cvar_VariableIntegerValue("skippingCinematic") ? 1 : 0;
+        SP_GameRunFrame();
         BuildSnapshot();
+#ifdef EF_COOP
+        // (while skipping, many game frames run per drawn frame: the guest gets the last of them, below)
+        if( !skipping ) SP_CoopHostFrame();
+        else coopSkipFrames++;
+#endif
         if( skipping ){
             if( !Cvar_VariableIntegerValue("skippingCinematic") || g_spMovieQueued ){
                 g_simResidual %= SP_SV_FRAMEMSEC;   // skip over: back to real time from here
@@ -2035,6 +2750,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         }
     }
 
+#ifdef EF_COOP
+    if( coopSkipFrames ) SP_CoopHostFrame();
+#endif
     // Deferred autosave: an autosave requested during a cutscene (in_camera) was held back by SP_SaveGame so it
     // wouldn't capture mid-cinematic state. Write it now that the cutscene has ended, so the death-respawn
     // checkpoint is a clean post-cinematic state instead of one that reloads with the player free-walking the
@@ -2057,6 +2775,7 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     int skipNow = Cvar_VariableIntegerValue("skippingCinematic") && !g_spMovieQueued;
     s_spSoundsBlocked = skipNow;
     s_spSkipDraw = skipNow;
+    SP_UpdateVisemes();   // mouths follow the voice per render frame, not per sim tick
     SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
     s_spSkipDraw = 0;
     if( skipNow ){

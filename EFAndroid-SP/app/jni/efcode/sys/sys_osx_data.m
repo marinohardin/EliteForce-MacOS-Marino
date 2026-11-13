@@ -34,17 +34,29 @@ The same actions are console commands (macos_launcher, macos_switchmode,
 macos_showsaves, macos_showgamefolder, macos_changegamefolder,
 macos_deletesettings).
 
+The game window's close button and Cmd+W (the Window menu's Close) ask
+"Quit <app>?" first (Sys_MacConfirmQuit); Cmd+Q and the app menu's Quit
+still quit at once.
+
 Delete Saves & Settings only ever moves ~/Library/Application Support/
 <MACOS_HOMEPATH_NAME> to the Trash, after the engine has shut down. It never
 touches a user-chosen game folder or anything outside that directory.
 
 Test hooks (environment variables, for automated tests without clicking):
+  VOYAGERSP_TEST_BACKGROUND=1  the quiet background mode (sys_osx.m): the panels
+                               and alerts here never activate the app
   VOYAGERSP_TEST_CHOOSE=<dir>  use <dir> instead of showing the open panel
   VOYAGERSP_TEST_INPLACE=1     ...with the "in place" checkbox ticked
   VOYAGERSP_TEST_CONFIRM=1     answer confirmation alerts with the first button
   VOYAGERSP_TEST_NOTRASH=1     log instead of moving to the Trash
   VOYAGERSP_TEST_NORELAUNCH=1  log instead of relaunching the app
   VOYAGERSP_TEST_PANEL_TIMEOUT=<s>  log the open panel's size and cancel it after <s> s
+  VOYAGERSP_TEST_QUIT_ANSWER=quit|cancel  answer the "Quit?" sheet after 2 s
+  VOYAGERSP_TEST_QUIT_PRESS=<s>:<what>,...  at <s> s after the first frame, do
+                               <what> to the game window: front (make the app
+                               active, the window key), close (its close
+                               button), cmdw, cmdq (those keys) or key (a plain
+                               K, for in_keyboardDebug); each is logged
 ===========================================================================
 */
 
@@ -78,7 +90,8 @@ void SNDDMA_PauseOutput( qboolean pause );	// sdl_snd.c
 #endif
 
 #ifndef MACOS_HOMEPATH_NAME
-#define MACOS_HOMEPATH_NAME "EliteForce-MacOS"
+#include "sys_platform.h"
+#define MACOS_HOMEPATH_NAME EF_HOMEPATH_NAME	// "EliteForce-MacOS"
 #endif
 
 #define KEY_GAMEFOLDER	@"GameFolder"
@@ -87,6 +100,11 @@ void SNDDMA_PauseOutput( qboolean pause );	// sdl_snd.c
 #define MSG_PAK0_ON_CD	@"pak0.pk3 is missing — minimum CD installs leave it on the CD; copy it from BaseEF on the CD into this BaseEF folder, or choose a full installation."
 
 extern NSString *Sys_MacAppBundlePath( void );
+// sys_osx.m: VOYAGERSP_TEST_BACKGROUND, the quiet test mode
+extern qboolean Sys_MacTestBackground( void );
+extern void Sys_MacTestBackgroundApp( void );
+extern void VSP_ActivateApp( void );
+extern void VSP_KeepBehindWhenModal( NSWindow *window );
 
 static NSMutableString *earlyLog;	// messages from before Com_Init, replayed into the console
 static qboolean pendingDelete;
@@ -202,7 +220,7 @@ static NSInteger Alert( NSAlertStyle style, NSString *title, NSString *text, NSA
 		[a addButtonWithTitle: b];
 	if( destructiveFirst && [[[a buttons] objectAtIndex: 0] respondsToSelector: @selector(setHasDestructiveAction:)] )
 		[[[a buttons] objectAtIndex: 0] setHasDestructiveAction: YES];
-	[NSApp activateIgnoringOtherApps: YES];
+	VSP_ActivateApp( );
 	r = [a runModal] - NSAlertFirstButtonReturn;
 	return r;
 }
@@ -389,7 +407,8 @@ static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NS
 	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
 		CopyWorker( job );
 	} );
-	[NSApp activateIgnoringOtherApps: YES];
+	VSP_ActivateApp( );
+	VSP_KeepBehindWhenModal( panel );
 	session = [NSApp beginModalSessionForWindow: panel];
 	while( !job->done )
 	{
@@ -711,7 +730,7 @@ static BOOL RunChooser( NSString **outBasepath )
 				[op setAccessoryViewDisclosed: YES];
 			MacLog( @"[dialog] Choose your Elite Force folder (open panel, options %.0fx%.0f pt)",
 				[[opts view] frame].size.width, [[opts view] frame].size.height );
-			[NSApp activateIgnoringOtherApps: YES];
+			VSP_ActivateApp( );
 			if( getenv( "VOYAGERSP_TEST_PANEL_TIMEOUT" ) )
 			{
 				NSTimer *t = [NSTimer timerWithTimeInterval: atof( getenv( "VOYAGERSP_TEST_PANEL_TIMEOUT" ) ) repeats: NO block: ^( NSTimer *timer ) {
@@ -935,7 +954,7 @@ int VSP_AddGameFiles( void )
 		[op setPrompt: @"Add"];
 		[op setMessage: @"Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), "
 			"or GOG's installer (setup_….exe)"];
-		[NSApp activateIgnoringOtherApps: YES];
+		VSP_ActivateApp( );
 		if( [op runModal] != NSModalResponseOK )
 			return 0;
 		for( NSURL *u in [op URLs] )
@@ -1020,33 +1039,22 @@ int VSP_AddGameFiles( void )
 	return (int)[src count];
 }
 
-/*
-=================
-VSP_HasExpansion
-
-qtrue when the Expansion Pack's data is there: Virtual Voyager's first map
-(the same test as the single-player main menu), in a .pk3 or loose, in the
-homepath's baseEF or the game folder base.
-=================
-*/
-// qtrue if the zip (pk3) at path has an entry named name (any case). Reads
-// only the central directory, without the engine's unzip code, which
-// allocates from the zone (not there yet while the launcher runs).
-static BOOL ZipHasEntry( NSString *path, const char *name )
+// The central directory of the zip (pk3) at path, or nil. Read without the engine's unzip
+// code, which allocates from the zone (not there yet while the launcher runs).
+static NSData *ZipCentralDirectory( NSString *path )
 {
 	NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath: path];
 	unsigned long long size, tailStart;
 	NSData *tail, *cd;
-	const unsigned char *t, *p, *end;
+	const unsigned char *t;
 	unsigned int cdSize, cdOffset;
-	size_t nameLen = strlen( name );
 	long i;
 
 	if( !fh )
-		return NO;
+		return nil;
 	size = [fh seekToEndOfFile];
 	if( size < 22 )
-		return NO;
+		return nil;
 	tailStart = size > 65536 + 22 ? size - ( 65536 + 22 ) : 0;
 	[fh seekToFileOffset: tailStart];
 	tail = [fh readDataOfLength: (NSUInteger)( size - tailStart )];
@@ -1056,17 +1064,25 @@ static BOOL ZipHasEntry( NSString *path, const char *name )
 		if( t[i] == 'P' && t[i+1] == 'K' && t[i+2] == 5 && t[i+3] == 6 )
 			break;
 	if( i < 0 )
-		return NO;
+		return nil;
 	cdSize = t[i+12] | t[i+13] << 8 | t[i+14] << 16 | (unsigned)t[i+15] << 24;
 	cdOffset = t[i+16] | t[i+17] << 8 | t[i+18] << 16 | (unsigned)t[i+19] << 24;
 	if( (unsigned long long)cdOffset + cdSize > size )
-		return NO;
+		return nil;
 	[fh seekToFileOffset: cdOffset];
 	cd = [fh readDataOfLength: cdSize];
 	[fh closeFile];
-	p = [cd bytes];
-	end = p + [cd length];
-	while( p + 46 <= end && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 )
+	return cd;
+}
+
+// qtrue if the zip (pk3) at path has an entry named name (any case)
+static BOOL ZipHasEntry( NSString *path, const char *name )
+{
+	NSData *cd = ZipCentralDirectory( path );
+	const unsigned char *p = [cd bytes], *end = p + [cd length];
+	size_t nameLen = strlen( name );
+
+	while( cd && p + 46 <= end && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 )
 	{
 		unsigned n = p[28] | p[29] << 8, x = p[30] | p[31] << 8, c = p[32] | p[33] << 8;
 		if( p + 46 + n > end )
@@ -1078,6 +1094,44 @@ static BOOL ZipHasEntry( NSString *path, const char *name )
 	return NO;
 }
 
+/*
+=================
+VSP_PakChecksum
+
+A pk3's checksum as the engine computes it when it loads the pack (the block
+checksum of the CRCs of its non-empty files, in order), from the central
+directory alone. NO when it isn't a readable zip.
+=================
+*/
+BOOL VSP_PakChecksum( NSString *path, unsigned int *checksum )
+{
+	NSData *cd = ZipCentralDirectory( path );
+	const unsigned char *p = [cd bytes], *end = p + [cd length];
+	NSMutableData *crcs = [NSMutableData data];
+
+	if( !cd )
+		return NO;
+	while( p + 46 <= end && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 )
+	{
+		unsigned n = p[28] | p[29] << 8, x = p[30] | p[31] << 8, c = p[32] | p[33] << 8;
+		unsigned uncompressed = p[24] | p[25] << 8 | p[26] << 16 | (unsigned)p[27] << 24;
+		if( uncompressed > 0 )
+			[crcs appendBytes: p + 16 length: 4];		// the CRC-32, little-endian as the engine keeps it
+		p += 46 + n + x + c;
+	}
+	*checksum = Com_BlockChecksum( [crcs bytes], (int)[crcs length] );
+	return YES;
+}
+
+/*
+=================
+VSP_HasExpansion
+
+qtrue when the Expansion Pack's data is there: Virtual Voyager's first map
+(the same test as the single-player main menu), in a .pk3 or loose, in the
+homepath's baseEF or the game folder base.
+=================
+*/
 BOOL VSP_HasExpansion( NSString *base )
 {
 	static const char *probe = "maps/tour/deck02.bsp";
@@ -1146,6 +1200,7 @@ const char *Sys_MacResolveGameData( int argc, char **argv )
 		MacLog( @"Game data not found (no %s/pak0.pk3 in the remembered folder, \"%@\" or next to the app)",
 			BASEGAME, HomeBase() );
 		SDL_InitSubSystem( SDL_INIT_VIDEO );
+		Sys_MacTestBackgroundApp( );
 		if( !RunChooser( &chosen ) )
 		{
 			SDL_Quit( );
@@ -1541,6 +1596,8 @@ our File menu (right after the application menu) and add it if not: once at
 startup, and again should SDL ever rebuild the menu bar (bundle only).
 =================
 */
+static void TestQuitPress( void );
+
 void Sys_MacFrame( void )
 {
 	static VSPMenuTarget *target;
@@ -1560,6 +1617,8 @@ void Sys_MacFrame( void )
 		Com_Printf( "[pointer] catcher 0x%x r_fullscreen %d ", Key_GetCatcher(), Cvar_VariableIntegerValue( "r_fullscreen" ) );
 		Cmd_WindowState();
 	}
+
+	TestQuitPress();
 
 	if( notBundle || ( ++checks & 15 ) )
 		return;
@@ -1587,5 +1646,154 @@ void Sys_MacFrame( void )
 		Com_Printf( "[skipnotify]macOS: %s the File menu (%s)\n", logged ? "re-added" : "added",
 			[[[[bar itemArray] valueForKey: @"title"] componentsJoinedByString: @" | "] UTF8String] );
 		logged = qtrue;
+	}
+}
+
+/*
+=================
+Sys_MacConfirmQuit
+
+The game window's close button or Cmd+W (SDL_WINDOWEVENT_CLOSE, sdl_input.c):
+ask before quitting, as a sheet on the window. Cmd+Q and the app menu's Quit
+come as SDL_QUIT and don't ask. Single player waits for the answer (the game
+stops and the sound pauses, as while a menu-bar menu is open); Holomatch
+keeps running underneath. The sheet has the keyboard while it is up, so no
+keys reach the game, and IN_Frame frees the pointer since the game window
+lost the input focus; after Cancel both come back to the game.
+=================
+*/
+static NSAlert *quitAlert;
+
+static void QuitAnswered( NSWindow *win, NSModalResponse r )
+{
+	BOOL quit = ( r == NSAlertFirstButtonReturn );
+
+	MacLog( @"[quit] answered %@", quit ? @"Quit" : @"Cancel" );
+	if( quit )
+		Cbuf_ExecuteText( EXEC_APPEND, "quit Closed window\n" );
+	else if( [NSApp isActive] )
+		[win makeKeyWindow];	// the keyboard back to the game (not always so after the sheet)
+}
+
+void Sys_MacConfirmQuit( void )
+{
+	extern void *IN_CocoaWindow( void );	// sdl_input.c
+
+	@autoreleasepool {
+		NSWindow *win = (NSWindow *)IN_CocoaWindow();
+		NSString *name = [[NSRunningApplication currentApplication] localizedName];
+		const char *answer = getenv( "VOYAGERSP_TEST_QUIT_ANSWER" );
+		BOOL wait = !Com_Holomatch();
+		NSAlert *a;
+
+		if( quitAlert )
+			return;		// already asking
+		if( !win || TestEnv( "VOYAGERSP_TEST_NODIALOG" ) )
+		{
+			QuitAnswered( win, NSAlertFirstButtonReturn );
+			return;
+		}
+
+		a = [[[NSAlert alloc] init] autorelease];
+		[a setMessageText: [NSString stringWithFormat: @"Quit %@?", [name length] ? name : @"Elite Force"]];
+		if( wait )
+			[a setInformativeText: @"Progress since your last save is lost."];
+		[a addButtonWithTitle: @"Quit"];		// Return
+		[a addButtonWithTitle: @"Cancel"];		// Escape
+		quitAlert = [a retain];
+		MacLog( @"[quit] asking \"%@\" (%@, fullscreen %d)", [a messageText],
+			wait ? @"single player, paused" : @"Holomatch, running",
+			( [win styleMask] & NSWindowStyleMaskFullScreen ) != 0 );
+
+		[a beginSheetModalForWindow: win completionHandler: ^( NSModalResponse r ) {
+			[quitAlert release];
+			quitAlert = nil;
+			if( wait )
+				[NSApp stopModalWithCode: r];
+			else
+				QuitAnswered( win, r );
+		}];
+		if( answer && *answer )
+		{
+			NSModalResponse r = !strcmp( answer, "quit" ) ? NSAlertFirstButtonReturn : NSAlertSecondButtonReturn;
+			dispatch_after( dispatch_time( DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC ), dispatch_get_main_queue(), ^{
+				if( quitAlert == a )
+					[win endSheet: [a window] returnCode: r];
+			} );
+		}
+		if( wait )
+		{
+			NSModalResponse r;
+
+			SNDDMA_PauseOutput( qtrue );
+			r = [NSApp runModalForWindow: [a window]];
+			SNDDMA_PauseOutput( qfalse );
+			QuitAnswered( win, r );
+		}
+	}
+}
+
+// VOYAGERSP_TEST_QUIT_PRESS (see the top of this file)
+static void TestQuitPress( void )
+{
+	extern void *IN_CocoaWindow( void );
+	static NSMutableArray *steps;
+	static int start;
+	static qboolean parsed;
+
+	if( !parsed )
+	{
+		const char *v = getenv( "VOYAGERSP_TEST_QUIT_PRESS" );
+
+		parsed = qtrue;
+		if( !v || !*v )
+			return;
+		steps = [[@( v ) componentsSeparatedByString: @","] mutableCopy];
+		start = Sys_Milliseconds();
+	}
+	if( ![steps count] )
+		return;
+
+	@autoreleasepool {
+		NSArray *step = [[steps objectAtIndex: 0] componentsSeparatedByString: @":"];
+		NSWindow *win = (NSWindow *)IN_CocoaWindow();
+		NSString *what;
+		unsigned short code = 0;
+		NSString *chars = nil;
+		NSEventModifierFlags mods = 0;
+
+		if( [step count] != 2 || !win || Sys_Milliseconds() - start < [[step objectAtIndex: 0] intValue] * 1000 )
+			return;
+		[steps removeObjectAtIndex: 0];
+		what = [step objectAtIndex: 1];
+		MacLog( @"[quit] test: %@ (window %ld, fullscreen %d, key %d, active %d)", what, (long)[win windowNumber],
+			( [win styleMask] & NSWindowStyleMaskFullScreen ) != 0, [win isKeyWindow], [NSApp isActive] );
+		if( [what isEqualToString: @"front"] )
+		{
+			VSP_ActivateApp( );
+			if( Sys_MacTestBackground( ) )
+				[win makeKeyWindow];		// the quiet test mode: not brought forward
+			else
+				[win makeKeyAndOrderFront: nil];
+			return;
+		}
+		if( [what isEqualToString: @"close"] )
+		{
+			[[win standardWindowButton: NSWindowCloseButton] performClick: nil];
+			return;
+		}
+		if( [what isEqualToString: @"cmdw"] )
+			code = 13, chars = @"w", mods = NSEventModifierFlagCommand;
+		else if( [what isEqualToString: @"cmdq"] )
+			code = 12, chars = @"q", mods = NSEventModifierFlagCommand;
+		else if( [what isEqualToString: @"key"] )
+			code = 40, chars = @"k";
+		else
+			return;
+		for( int up = 0; up < 2; up++ )
+			[NSApp postEvent: [NSEvent keyEventWithType: up ? NSEventTypeKeyUp : NSEventTypeKeyDown
+				location: NSZeroPoint modifierFlags: mods timestamp: [[NSProcessInfo processInfo] systemUptime]
+				windowNumber: [win windowNumber] context: nil characters: chars
+				charactersIgnoringModifiers: chars isARepeat: NO keyCode: code] atStart: NO];
 	}
 }

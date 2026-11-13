@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "../qcommon/qcommon.h"
 #include "sys_local.h"
 #include "windows.h"
+#include <signal.h>
 
 #define QCONSOLE_HISTORY 32
 
@@ -48,6 +49,87 @@ static int qconsole_cursor;
 
 static HANDLE qconsole_hout;
 static HANDLE qconsole_hin;
+
+// A dedicated server whose stdin is not a console (a parent app, the launcher's server window,
+// drives it through pipes): console input events don't exist there, so a thread reads stdin and
+// hands out complete lines (as con_tty.c does with its stdin pipe). Output is plain text on stderr
+// (colour codes stripped, UTF-8); a closed pipe quits the server normally from the main loop.
+extern volatile sig_atomic_t sys_quitSignal;
+static qboolean qconsole_pipe;
+static CRITICAL_SECTION qconsole_pipe_lock;
+static char qconsole_pipe_buf[ MAX_EDIT_LINE * 4 ];
+static int qconsole_pipe_len;
+static volatile LONG qconsole_pipe_eof;
+
+static DWORD WINAPI CON_PipeReader( LPVOID unused )
+{
+	char tmp[ 512 ];
+	DWORD n;
+
+	while( ReadFile( qconsole_hin, tmp, sizeof( tmp ), &n, NULL ) && n > 0 )
+	{
+		DWORD done = 0;
+
+		while( done < n )
+		{
+			int room, take;
+
+			EnterCriticalSection( &qconsole_pipe_lock );
+			room = (int)sizeof( qconsole_pipe_buf ) - 1 - qconsole_pipe_len;
+			take = (int)( n - done ) < room ? (int)( n - done ) : room;
+			if( take > 0 )
+			{
+				memcpy( qconsole_pipe_buf + qconsole_pipe_len, tmp + done, take );
+				qconsole_pipe_len += take;
+				done += take;
+			}
+			LeaveCriticalSection( &qconsole_pipe_lock );
+			if( take <= 0 )
+				Sleep( 10 );	// the main loop hasn't taken the pending lines yet
+		}
+	}
+	InterlockedExchange( &qconsole_pipe_eof, 1 );
+	return 0;
+}
+
+static char *CON_PipeInput( void )
+{
+	static char text[ MAX_EDIT_LINE ];
+	char *nl;
+	int len, used;
+
+	EnterCriticalSection( &qconsole_pipe_lock );
+	nl = (char *)memchr( qconsole_pipe_buf, '\n', qconsole_pipe_len );
+	if( !nl && qconsole_pipe_len > 0 && ( qconsole_pipe_eof || qconsole_pipe_len >= (int)sizeof( qconsole_pipe_buf ) - 1 ) )
+		nl = qconsole_pipe_buf + qconsole_pipe_len;		// the last line without a newline, or an overlong one
+	if( !nl )
+	{
+		LeaveCriticalSection( &qconsole_pipe_lock );
+		return NULL;
+	}
+	len = (int)( nl - qconsole_pipe_buf );
+	used = len + ( nl < qconsole_pipe_buf + qconsole_pipe_len ? 1 : 0 );
+	if( len > 0 && qconsole_pipe_buf[ len - 1 ] == '\r' )
+		len--;
+	if( len > (int)sizeof( text ) - 1 )
+		len = sizeof( text ) - 1;
+	memcpy( text, qconsole_pipe_buf, len );
+	text[ len ] = '\0';
+	qconsole_pipe_len -= used;
+	memmove( qconsole_pipe_buf, qconsole_pipe_buf + used, qconsole_pipe_len );
+	LeaveCriticalSection( &qconsole_pipe_lock );
+	return text;
+}
+
+// plain UTF-8 text on stderr (unbuffered); a closed pipe: the parent is gone, quit normally
+static void CON_PipeWrite( const char *text )
+{
+	if( fputs( text, stderr ) == EOF || fflush( stderr ) == EOF )
+	{
+		if( !sys_quitSignal )
+			sys_quitSignal = SIGTERM;
+	}
+}
 
 /*
 ==================
@@ -210,6 +292,9 @@ static void CON_Show( void )
 	CHAR_INFO line[ MAX_EDIT_LINE ];
 	WORD attrib;
 
+	if( qconsole_pipe )
+		return;
+
 	GetConsoleScreenBufferInfo( qconsole_hout, &binfo );
 
 	// if we're in the middle of printf, don't bother writing the buffer
@@ -297,6 +382,8 @@ CON_Shutdown
 */
 void CON_Shutdown( void )
 {
+	if( qconsole_pipe )
+		return;		// the reader thread may be blocked in ReadFile on stdin: leave the handles
 	CON_Hide( );
 	SetConsoleMode( qconsole_hin, qconsole_orig_mode );
 	SetConsoleCursorInfo( qconsole_hout, &qconsole_orig_cursorinfo );
@@ -315,6 +402,21 @@ void CON_Init( void )
 	CONSOLE_SCREEN_BUFFER_INFO info;
 	int i;
 
+	// The game is a GUI program: started with +set dedicated from Explorer or a
+	// shortcut it has no console, so open one. Started from a console (or with
+	// redirected handles, a parent reading pipes) it keeps what it has.
+	if( sys_headless && !GetConsoleWindow( ) )
+	{
+		HANDLE out = GetStdHandle( STD_OUTPUT_HANDLE );
+
+		if( ( out == NULL || out == INVALID_HANDLE_VALUE ) && AllocConsole( ) )
+		{
+			freopen( "CONIN$", "r", stdin );
+			freopen( "CONOUT$", "w", stdout );
+			freopen( "CONOUT$", "w", stderr );
+		}
+	}
+
 	// handle Ctrl-C or other console termination
 	SetConsoleCtrlHandler( CON_CtrlHandler, TRUE );
 
@@ -325,6 +427,22 @@ void CON_Init( void )
 	qconsole_hout = GetStdHandle( STD_OUTPUT_HANDLE );
 	if( qconsole_hout == INVALID_HANDLE_VALUE )
 		return;
+
+	if( sys_headless && qconsole_hin != NULL && GetFileType( qconsole_hin ) == FILE_TYPE_PIPE )
+	{
+		DWORD mode;
+
+		// stdin is a pipe, not a console: a parent drives this server
+		if( !GetConsoleMode( qconsole_hin, &mode ) )
+		{
+			InitializeCriticalSection( &qconsole_pipe_lock );
+			qconsole_pipe = qtrue;
+			if( !CreateThread( NULL, 0, CON_PipeReader, NULL, 0, NULL ) )
+				qconsole_pipe = qfalse;
+			else
+				return;		// no console to set up
+		}
+	}
 
 	GetConsoleMode( qconsole_hin, &qconsole_orig_mode );
 
@@ -363,6 +481,9 @@ char *CON_Input( void )
 	WORD key = 0;
 	int i;
 	int newlinepos = -1;
+
+	if( qconsole_pipe )
+		return CON_PipeInput( );
 
 	if( !GetNumberOfConsoleInputEvents( qconsole_hin, &events ) )
 		return NULL;
@@ -555,8 +676,13 @@ void CON_WindowsColorPrint( const char *msg )
 			{
 				buffer[ length ] = '\0';
 #ifdef UNICODE
-				Sys_UTF8ToWide( wbuffer, buffer, ARRAY_LEN( wbuffer ) );
-				fputws( wbuffer, stderr );
+				if( qconsole_pipe )
+					CON_PipeWrite( buffer );
+				else
+				{
+					Sys_UTF8ToWide( wbuffer, buffer, ARRAY_LEN( wbuffer ) );
+					fputws( wbuffer, stderr );
+				}
 #else
 				fputs( buffer, stderr );
 #endif
@@ -568,7 +694,10 @@ void CON_WindowsColorPrint( const char *msg )
 				// Reset color and then add the newline
 				SetConsoleTextAttribute( qconsole_hout, CON_ColorCharToAttrib( COLOR_WHITE ) );
 #ifdef UNICODE
-				fputws( L"\n", stderr );
+				if( qconsole_pipe )
+					CON_PipeWrite( "\n" );
+				else
+					fputws( L"\n", stderr );
 #else
 				fputs( "\n", stderr );
 #endif
@@ -597,8 +726,13 @@ void CON_WindowsColorPrint( const char *msg )
 	{
 		buffer[ length ] = '\0';
 #ifdef UNICODE
-		Sys_UTF8ToWide( wbuffer, buffer, ARRAY_LEN( wbuffer ) );
-		fputws( wbuffer, stderr );
+		if( qconsole_pipe )
+			CON_PipeWrite( buffer );
+		else
+		{
+			Sys_UTF8ToWide( wbuffer, buffer, ARRAY_LEN( wbuffer ) );
+			fputws( wbuffer, stderr );
+		}
 #else
 		fputs( buffer, stderr );
 #endif

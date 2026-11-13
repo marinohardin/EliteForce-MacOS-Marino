@@ -5,6 +5,7 @@
 #include "cg_media.h"
 #include "cg_text.h"
 #include "../game/objectives.h"
+#include "../game/coop_public.h"
 #include "../game/speakers.h"
 #include "../speedrun/PlayerOverbouncePrediction.hpp"
 #include "../speedrun/strafe_helper/strafe_helper.h"
@@ -841,9 +842,9 @@ static void CG_DrawTeleportEffects( void )
 {
 	centity_t		*cent;
 
-	cent = &cg_entities[0];
+	cent = &cg_entities[COOP_ViewClientNum()];
 
-	if ( cg.snap->ps.clientNum != 0 || cg.renderingThirdPerson || !cent->gent )
+	if ( cg.snap->ps.clientNum != COOP_ViewClientNum() || cg.renderingThirdPerson || !cent->gent )
 	{
 		return;
 	}
@@ -1755,7 +1756,7 @@ static void CG_DrawCrosshairNames( void ) {
 	char		*string;
 	int			textI;
 	qboolean	scanAll = qfalse;
-	centity_t	*player = &cg_entities[0];
+	centity_t	*player = &cg_entities[COOP_ViewClientNum()];
 
 	if ( (!cg_drawCrosshairNames.integer&&player->gent->client->ps.weapon!=WP_TRICORDER) || cg.renderingThirdPerson ) //!cg_drawCrosshair.integer still need infoStrings if no crosshair
 	{
@@ -2011,7 +2012,7 @@ static void CG_DrawTED (void) {
 	float		scale;
 	vec3_t		vec;
 	centity_t	*cent;
-	centity_t	*player = &cg_entities[0];
+	centity_t	*player = &cg_entities[COOP_ViewClientNum()];
 	static	qboolean	radarOn = qfalse;
 	static	int			radarToggleDebounceTime = 0;
 
@@ -2327,7 +2328,7 @@ void CG_DrawAssimilation( void )
 {
 	static vec4_t	color;
 
-	if ( g_entities[0].s.eFlags & EF_ASSIMILATED )
+	if ( g_entities[COOP_ViewClientNum()].s.eFlags & EF_ASSIMILATED )
 	{//throw the assimilation shader on view
 		for ( int i = 0; i < 4; i++ )
 		{
@@ -2522,6 +2523,7 @@ static void CG_Draw2D( void )
 	if ( !CG_DrawScoreboard() ) {
 		CG_DrawCenterString();
 	}
+	COOP_DrawStatus();
 
 	if (cg.showInformation)
 	{

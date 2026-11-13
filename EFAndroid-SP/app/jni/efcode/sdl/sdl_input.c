@@ -43,6 +43,39 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define KMOD_SCROLL KMOD_RESERVED
 #endif
 
+/*
+VOYAGERSP_TEST_BACKGROUND (macOS, see sys_osx.m): the quiet test mode for
+automated runs. IN_Frame never captures the mouse or hides the cursor, keyboard,
+mouse, wheel and controller input from the system is dropped (console commands
+on stdin, +exec and the test hooks still work), and losing the focus or being
+minimized doesn't set com_unfocused / com_minimized, so the game runs as if
+focused. Without it, nothing changes.
+*/
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+qboolean Sys_MacTestBackground( void );
+#define IN_TestBackground( ) Sys_MacTestBackground( )
+#else
+#define IN_TestBackground( ) qfalse
+#endif
+
+static qboolean IN_TestBackgroundDrops( const SDL_Event *e )
+{
+	switch( e->type )
+	{
+		case SDL_KEYDOWN: case SDL_KEYUP: case SDL_TEXTINPUT: case SDL_TEXTEDITING:
+		case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: case SDL_MOUSEWHEEL:
+		case SDL_JOYAXISMOTION: case SDL_JOYBALLMOTION: case SDL_JOYHATMOTION:
+		case SDL_JOYBUTTONDOWN: case SDL_JOYBUTTONUP:
+		case SDL_CONTROLLERAXISMOTION: case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP:
+		case SDL_FINGERDOWN: case SDL_FINGERUP: case SDL_FINGERMOTION:
+			return qtrue;
+		case SDL_WINDOWEVENT:
+			return e->window.event == SDL_WINDOWEVENT_FOCUS_LOST || e->window.event == SDL_WINDOWEVENT_MINIMIZED;
+		default:
+			return qfalse;
+	}
+}
+
 static cvar_t *in_keyboardDebug     = NULL;
 static cvar_t *in_utf8              = NULL;
 
@@ -539,15 +572,21 @@ listener, IN_CocoaMovePending reports the state (in_mousestate) and
 IN_CocoaClearStalePointerState clears it once no mouse button is down, with
 SDL's own methods, so relative mode and the grab apply again.
 */
-static id IN_CocoaListener( void )
+// the game window's NSWindow (NULL when there is none), also for sys_osx_data.m
+void *IN_CocoaWindow( void )
 {
 	Uint32 ( *props3 )( void * ) = IN_SDL3Symbol( "SDL_GetWindowProperties" );
 	void *( *ptr3 )( Uint32, const char *, void * ) = IN_SDL3Symbol( "SDL_GetPointerProperty" );
-	id nswindow;
 
 	if ( !SDL_window || !props3 || !ptr3 )
-		return nil;
-	nswindow = (id)ptr3( props3( SDL_window ), "SDL.window.cocoa.window", NULL );
+		return NULL;
+	return ptr3( props3( SDL_window ), "SDL.window.cocoa.window", NULL );
+}
+
+static id IN_CocoaListener( void )
+{
+	id nswindow = (id)IN_CocoaWindow( );
+
 	if ( !nswindow )
 		return nil;
 	return ( (id (*)( id, SEL ))objc_msgSend )( nswindow, sel_registerName( "delegate" ) );
@@ -596,14 +635,9 @@ static qboolean IN_CocoaClearStalePointerState( void )
 // the window's mouseConfinementRect width (the grab), -1 when unknown
 static int IN_CocoaConfinementWidth( void )
 {
-	Uint32 ( *props3 )( void * ) = IN_SDL3Symbol( "SDL_GetWindowProperties" );
-	void *( *ptr3 )( Uint32, const char *, void * ) = IN_SDL3Symbol( "SDL_GetPointerProperty" );
-	id nswindow;
+	id nswindow = (id)IN_CocoaWindow( );
 	CGRect r;
 
-	if ( !SDL_window || !props3 || !ptr3 )
-		return -1;
-	nswindow = (id)ptr3( props3( SDL_window ), "SDL.window.cocoa.window", NULL );
 	if ( !IN_CocoaResponds( nswindow, "mouseConfinementRect" ) )
 		return -1;
 	r = ( (CGRect (*)( id, SEL ))objc_msgSend )( nswindow, sel_registerName( "mouseConfinementRect" ) );
@@ -1907,6 +1941,9 @@ static void IN_ProcessEvents( void )
 
 	while( SDL_PollEvent( &e ) )
 	{
+		if( IN_TestBackground( ) && IN_TestBackgroundDrops( &e ) )
+			continue;
+
 		switch( e.type )
 		{
 			case SDL_KEYDOWN:
@@ -2266,6 +2303,18 @@ static void IN_ProcessEvents( void )
 						break;
 #endif
 
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+					// The close button and Cmd+W (the Window menu's Close) ask
+					// before quitting (sys_osx_data.m); IN_Init keeps SDL from
+					// turning them into SDL_QUIT. Cmd+Q still quits at once.
+					case SDL_WINDOWEVENT_CLOSE:
+						{
+							extern void Sys_MacConfirmQuit( void );
+							IN_DeactivateMouse( cls.glconfig.isFullscreen, qtrue );
+							Sys_MacConfirmQuit( );
+						}
+						break;
+#endif
 					case SDL_WINDOWEVENT_MINIMIZED:    Cvar_SetValue( "com_minimized", 1 ); break;
 					case SDL_WINDOWEVENT_RESTORED:
 					case SDL_WINDOWEVENT_MAXIMIZED:    Cvar_SetValue( "com_minimized", 0 ); break;
@@ -2361,7 +2410,8 @@ void IN_Frame( void )
 	}
 #endif
 
-	IN_JoyMove( );
+	if( !IN_TestBackground( ) )
+		IN_JoyMove( );
 
 	// If not DISCONNECTED (main menu) or ACTIVE (in game), we're loading
 	loading = ( clc.state != CA_DISCONNECTED && clc.state != CA_ACTIVE );
@@ -2369,7 +2419,12 @@ void IN_Frame( void )
 	// update isFullscreen since it might of changed since the last vid_restart
 	cls.glconfig.isFullscreen = Cvar_VariableIntegerValue( "r_fullscreen" ) != 0;
 
-	if( ( !cls.glconfig.isFullscreen || IN_FULLSCREEN_IS_DESKTOP ) && ( Key_GetCatcher( ) & KEYCATCH_CONSOLE ) )
+	if( IN_TestBackground( ) )
+	{
+		// the quiet test mode: never take the pointer (always windowed, sdl_glimp.c)
+		IN_DeactivateMouse( qfalse, qtrue );
+	}
+	else if( ( !cls.glconfig.isFullscreen || IN_FULLSCREEN_IS_DESKTOP ) && ( Key_GetCatcher( ) & KEYCATCH_CONSOLE ) )
 	{
 		// Console is down in windowed mode (or macOS fullscreen)
 		IN_DeactivateMouse( cls.glconfig.isFullscreen, qtrue );
@@ -2466,6 +2521,11 @@ void IN_Init( void *windowData )
 	}
 #endif
 
+#if defined( __APPLE__ ) && !defined( __ANDROID__ )
+	// closing the game window comes as SDL_WINDOWEVENT_CLOSE only (asks first)
+	SDL_SetHint( SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0" );
+#endif
+
 #if defined(PROTOCOL_HANDLER) && defined(__APPLE__)
 	SDL_EventState( SDL_DROPFILE, SDL_ENABLE );
 #endif
@@ -2493,6 +2553,8 @@ void IN_Init( void *windowData )
 #endif
 
 	appState = SDL_GetWindowFlags( SDL_window );
+	if( IN_TestBackground( ) )
+		appState = SDL_WINDOW_INPUT_FOCUS;		// runs as if focused
 	Cvar_SetValue( "com_unfocused",	!( appState & SDL_WINDOW_INPUT_FOCUS ) );
 	Cvar_SetValue( "com_minimized", appState & SDL_WINDOW_MINIMIZED );
 

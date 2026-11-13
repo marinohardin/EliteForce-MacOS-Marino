@@ -13,6 +13,7 @@
 # Every non-system dylib (and its transitive deps) is copied into
 # Contents/Frameworks and relinked to @rpath, so the .app runs without Homebrew.
 # The game data is NOT bundled (see Sys_MacCheckGameData in efcode/sys/sys_osx.m).
+# cMod's game modules are, when a copy is at hand: see macos/cmod/README.txt (CMOD_PAK).
 set -eu
 
 APP_NAME="${APP_NAME:-Elite Force}"
@@ -24,15 +25,25 @@ BUNDLE_ID="${BUNDLE_ID:-org.voyagersp.macos}"
 BREW="${BREW:-$(brew --prefix 2>/dev/null || echo /opt/homebrew)}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ENGINE_BUILD="$ROOT/build-macos"
-GAME_BUILD="$ROOT/efgame/buildmac"
+# Single-player co-op (experimental) is in the app by default (the release has it), built in its
+# own folders (build-macos-coop, efgame/buildmac-coop) so build-macos stays the build without it.
+# EF_COOP=0: no co-op, from build-macos and efgame/buildmac (the regression harness does this).
+EF_COOP="${EF_COOP:-1}"
+case "$EF_COOP" in
+0|OFF|off|no|NO) COOP_FLAG=OFF ;;
+*) COOP_FLAG=ON
+   ENGINE_BUILD="${ENGINE_BUILD:-$ROOT/build-macos-coop}"
+   GAME_BUILD="${GAME_BUILD:-$ROOT/efgame/buildmac-coop}" ;;
+esac
+ENGINE_BUILD="${ENGINE_BUILD:-$ROOT/build-macos}"
+GAME_BUILD="${GAME_BUILD:-$ROOT/efgame/buildmac}"
 DIST="$ROOT/dist"
 # assembled under a name without spaces (the relink queue below splits on
 # them), then renamed to "$APP_NAME.app"
 FINAL="$DIST/$APP_NAME.app"
 APP="$DIST/.assembling-$$.app"
 # the macOS port's own version (not the Android app's versionName)
-VERSION="${VERSION:-1.3.0}"
+VERSION="${VERSION:-1.4.0}"
 BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 # ---- 1. build ---------------------------------------------------------------
@@ -47,12 +58,19 @@ if [ -z "${NO_BUILD:-}" ]; then
 		MIN_MACOS="$MIN_MACOS_TARGET" "$ROOT/macos/build-ffmpeg.sh"
 	[ -f "$DEPS/lib/pkgconfig/sdl2.pc" ] && [ "$(otool -l "$DEPS/lib/libSDL3.0.dylib" | awk '/minos/{print $2; exit}')" = "$MIN_MACOS_TARGET" ] ||
 		MIN_MACOS="$MIN_MACOS_TARGET" "$ROOT/macos/build-deps.sh"
-	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET"
+	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_COOP=$COOP_FLAG
 	cmake --build "$GAME_BUILD" -j"$(sysctl -n hw.ncpu)"
 	cmake -S "$ROOT/EFAndroid-SP/app/jni/macos" -B "$ENGINE_BUILD" -DEF_FFMPEG_PREFIX="$FFMPEG" \
-		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_APP_VERSION="$VERSION"
+		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_APP_VERSION="$VERSION" -DEF_COOP=$COOP_FLAG
 	cmake --build "$ENGINE_BUILD" -j"$(sysctl -n hw.ncpu)"
 fi
+# the engine and the game modules must agree on co-op (NO_BUILD=1 takes whatever is there)
+for cache in "$ENGINE_BUILD/CMakeCache.txt" "$GAME_BUILD/CMakeCache.txt"; do
+	built="$(sed -n 's/^EF_COOP:BOOL=//p' "$cache" 2>/dev/null)"
+	[ "$built" = "$COOP_FLAG" ] || {
+		echo "$(dirname "$cache") is not a co-op $COOP_FLAG build (EF_COOP=${built:-?}): build it, or set EF_COOP=0/1 to match" >&2
+		exit 1; }
+done
 
 # ---- 2. layout --------------------------------------------------------------
 echo "Assembling $FINAL"
@@ -84,7 +102,7 @@ for dep in $(otool -L "$MACOS/efsp" | awk '/@rpath\/lib(av|sw)/{print $1}'); do
 	cp -L "$FFMPEG/lib/$base" "$FW/$base"
 done
 # LGPL: FFmpeg's license text, plus where its exact source and build options are
-FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/macos/build-ffmpeg.sh")"
+FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/deps/versions.sh")"	# shared pins
 mkdir -p "$RES/licenses"
 cp "$ROOT/build-ffmpeg/ffmpeg-$FF_VERSION/COPYING.LGPLv2.1" "$RES/licenses/FFmpeg-LGPL-2.1.txt"
 cat > "$RES/licenses/FFmpeg-README.txt" <<EOF_FF
@@ -99,6 +117,18 @@ cp "$ROOT/THIRD_PARTY_LICENSES.md" "$ROOT/LICENSE" "$RES/licenses/"
 cp "$ROOT/efgame/STEF Game Source License.doc" "$RES/licenses/"
 cp "$ROOT/macos/MoltenVK_icd.json" "$RES/vulkan/icd.d/MoltenVK_icd.json"
 cp "$ROOT/macos/Credits.html" "$RES/Credits.html"	# the About panel shows it
+# cMod's game modules by Noah Metzger (Chomenor), included with his permission (macos/cmod/README.txt):
+# CMOD_PAK=<file>, default the newest macos/cmod/pakcmod-release-*.pk3 (a local copy: pk3s aren't in git).
+# The engine checks its checksum against cMod's list of releases (qcommon/files.c).
+CMOD_PAK="${CMOD_PAK:-$(ls "$ROOT"/macos/cmod/pakcmod-release-*.pk3 2>/dev/null | sort | tail -1)}"
+if [ -n "$CMOD_PAK" ] && [ -f "$CMOD_PAK" ]; then
+	mkdir -p "$RES/cmod"
+	cp "$CMOD_PAK" "$RES/cmod/"
+	cp "$ROOT/macos/cmod/README.txt" "$ROOT/efgame/STEF Game Source License.doc" "$RES/cmod/"
+	echo "cMod game modules: $(basename "$CMOD_PAK")"
+else
+	echo "Note: no cMod pk3 (macos/cmod/pakcmod-release-*.pk3 or CMOD_PAK): building without cMod's game modules"
+fi
 "$ROOT/macos/icon/make-icns.sh" "$RES/AppIcon.icns"
 chmod u+w "$FW"/*
 

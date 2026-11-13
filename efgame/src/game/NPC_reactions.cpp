@@ -1,5 +1,6 @@
 //NPC_reactions.cpp
 #include "b_local.h"
+#include "coop_public.h"
 #include "anims.h"
 #include "g_functions.h"
 #include "characters.h"
@@ -60,7 +61,7 @@ static void NPC_CheckAttacker( gentity_t *other )
 		return;
 
 	//Special case player interactions
-	if ( other == &g_entities[0] )
+	if ( COOP_IsPlayerPtr( other ) )
 	{
 		//Account for the skill level to skew the results
 		float	luckThreshold;
@@ -84,6 +85,17 @@ static void NPC_CheckAttacker( gentity_t *other )
 			break;
 		}
 
+#ifdef EF_COOP
+		// co-op: fighting one player and shot by the other: turn on the shooter (same odds)
+		if ( COOP_Active() && COOP_IsPlayer( NPC->enemy ) )
+		{
+			if ( random() > luckThreshold )
+			{
+				COOP_TakePlayerEnemy( other );
+			}
+			return;
+		}
+#endif
 		//Randomly pick up the target
 		if ( random() > luckThreshold )
 		{
@@ -262,6 +274,8 @@ void NPC_Pain( gentity_t *self, gentity_t *other, int damage )
 
 	if ( other == self ) 
 		return;
+
+	COOP_NoteAttacker( self, other );
 
 	//MCG: Ignore damage from your own team for now
 	if ( other->client )
@@ -557,6 +571,16 @@ qboolean G_PlayerGreet( gentity_t *self, qboolean useWhenDone )
 		{
 			//G_SoundOnEnt( user, CHAN_VOICE, greeting );
 			cgi_S_StartSound (NULL, 0, CHAN_VOICE, greeting );
+#ifdef EF_COOP
+			for ( int c = 0; c < CHARACTER_NUM_CHARS; c++ )
+			{
+				if ( CharacterNames[c].soundIndex == greeting && CharacterNames[c].sound )
+				{
+					COOP_OnDirectSound( 0, CHAN_VOICE, CharacterNames[c].sound );	// the guest hears it too
+					break;
+				}
+			}
+#endif
 
 			//Responder waits until Munro is done talking then makes the NPC respond.
 			gentity_t *responder = G_Spawn();
@@ -587,7 +611,7 @@ void NPC_UseResponse( gentity_t *self, gentity_t *user, qboolean useWhenDone )
 		return;
 	}
 
-	if ( user->s.number != 0 )
+	if ( !COOP_IsPlayer( user ) )
 	{//not used by the player
 		if ( useWhenDone )
 		{
@@ -622,7 +646,7 @@ void NPC_UseResponse( gentity_t *self, gentity_t *user, qboolean useWhenDone )
 		}
 	}
 
-	if ( !noGreet && user->s.number == 0 && G_PlayerGreet( self, useWhenDone ) )
+	if ( !noGreet && COOP_IsPlayer( user ) && G_PlayerGreet( self, useWhenDone ) )
 	{
 		return;
 	}
@@ -668,7 +692,7 @@ void NPC_Use( gentity_t *self, gentity_t *other, gentity_t *activator )
 					}
 				}
 			}
-			else if ( !self->enemy && activator->s.number == 0 && !gi.S_Override[self->s.number] && !(self->NPC->scriptFlags&SCF_NO_RESPONSE) )
+			else if ( !self->enemy && COOP_IsPlayer( activator ) && !gi.S_Override[self->s.number] && !(self->NPC->scriptFlags&SCF_NO_RESPONSE) )
 			{//I don't have an enemy and I'm not talking and I was used by the player
 				NPC_UseResponse( self, other, qfalse );
 			}
@@ -681,7 +705,7 @@ void NPC_Use( gentity_t *self, gentity_t *other, gentity_t *activator )
 		{//Heal me NOW, dammit!
 			NPC_TakePatient( activator );
 		}
-		else if ( !self->enemy && activator->s.number == 0 && !gi.S_Override[self->s.number] && !(self->NPC->scriptFlags&SCF_NO_RESPONSE) )
+		else if ( !self->enemy && COOP_IsPlayer( activator ) && !gi.S_Override[self->s.number] && !(self->NPC->scriptFlags&SCF_NO_RESPONSE) )
 		{//I don't have an enemy and I'm not talking and I was used by the player
 			NPC_UseResponse( self, other, qfalse );
 		}

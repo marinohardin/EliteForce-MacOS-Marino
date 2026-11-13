@@ -4,6 +4,7 @@
 #include "g_local.h"
 #include "fields.h"
 #include "objectives.h"
+#include "coop_public.h"
 #include "../cgame/cg_camera.h"
 
 
@@ -425,15 +426,8 @@ void EnumerateField(field_t *pField, byte *pbBase)
 	}
 }
 
-#ifdef __LP64__
-// ILP32<->LP64 savegame transcoder (g_savetranscode.cpp). On 64-bit builds the raw struct-dump chunks
-// GENT/GCLI/GNPC/LVLC are (de)serialized in the canonical 32-bit on-disk layout, so saves stay
-// byte-identical to the armv7/PC-retail format. Returns NULL for width-stable chids (raw passthrough).
-extern const void* SG_TranscodeDesc(unsigned long chid);
-extern int  SG_TranscodePack(const void* desc, const unsigned char* native, unsigned char* disk);
-extern void SG_TranscodeUnpack(const void* desc, const unsigned char* disk, unsigned char* native);
-extern int  SG_TranscodeDiskSize(const void* desc);
-#endif
+// ILP32<->64-bit savegame transcoder (LP64 and Win64 LLP64): see g_savetranscode.h.
+#include "g_savetranscode.h"
 
 void EnumerateFields(field_t *pFields, byte *pbData, unsigned long ulChid, int iLen)
 {
@@ -452,7 +446,7 @@ void EnumerateFields(field_t *pFields, byte *pbData, unsigned long ulChid, int i
 	
 	// save out raw data...
 	//
-#ifdef __LP64__
+#ifdef EF_SAVE_TRANSCODE
 	{
 		const void *sgd = SG_TranscodeDesc(ulChid);
 		if ( sgd ) {
@@ -556,7 +550,7 @@ void EvaluateFields(field_t *pFields, byte *pbData, byte *pbOriginalRefData, uns
 //	{
 //		// load some new stuff that wasn't in the original file
 //	}
-#ifdef __LP64__
+#ifdef EF_SAVE_TRANSCODE
 	int iReadSize;
 	{
 		const void *sgd = SG_TranscodeDesc(ulChid);
@@ -653,6 +647,10 @@ void WriteGEntities(qboolean qbAutosave)
 	{
 		gentity_t* ent = &g_entities[i];
 
+		if ( COOP_IsP2( ent ) )
+		{
+			continue;	// player 2 is never saved
+		}
 		if ( ent->inuse ) 
 		{
 			iCount++;
@@ -665,6 +663,10 @@ void WriteGEntities(qboolean qbAutosave)
 	{
 		gentity_t* ent = &g_entities[i];
 
+		if ( COOP_IsP2( ent ) )
+		{
+			continue;
+		}
 		if ( ent->inuse)
 		{
 			gi.AppendToSaveGame('EDNM', (void *)&i, sizeof(i));
@@ -930,6 +932,8 @@ extern int	BMS_MID;	//from g_mover
 
 void WriteLevel(qboolean qbAutosave)
 {
+	COOP_PreSave();
+
 	if (!qbAutosave) //-always save the client
 	{
 		// write out one client - us!
@@ -1028,7 +1032,7 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 
 qboolean GameAllowedToSaveHere(void)
 {
-	return !in_camera;
+	return !in_camera && !COOP_AnyoneDown();
 }
 
 //////////////////// eof /////////////////////

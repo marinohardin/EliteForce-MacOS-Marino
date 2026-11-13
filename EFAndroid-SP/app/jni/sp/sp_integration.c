@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE   // dladdr / Dl_info
+#endif
 // sp_integration.c — HM-side glue: the SPR_* renderer wrappers (call the HM `re` refexport),
 // the `spmap` console command, and SP-mode state. Compiled with the HM engine headers.
 #include "../efcode/qcommon/q_shared.h"
@@ -8,8 +11,13 @@
 #include "sp_ui.h"      // SPUI_IsActive/SetActiveMenu + SP_BeginLoad/EndLoad/IsLoading prototypes
 
 #include <signal.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <dbghelp.h>
+#else
 #include <unwind.h>
 #include <dlfcn.h>
+#endif
 #include <android/log.h>
 
 extern refexport_t re;        // the HM renderer (set up by the HM CL_InitRef)
@@ -26,6 +34,7 @@ void SP_AbortToMenu(void);     // recover a failed/stuck SP load back to the mai
 
 // ---- crash backtrace logger: the engine never installs a SIGSEGV handler, so native crashes die
 // with no info. This logs a symbolized backtrace to logcat (tag crash) then re-raises. ----
+#ifndef _WIN32
 struct sp_bt { void **cur; void **end; };
 static _Unwind_Reason_Code sp_bt_cb(struct _Unwind_Context *ctx, void *arg){
     struct sp_bt *s = (struct sp_bt *)arg;
@@ -33,12 +42,57 @@ static _Unwind_Reason_Code sp_bt_cb(struct _Unwind_Context *ctx, void *arg){
     if(pc){ if(s->cur == s->end) return _URC_END_OF_STACK; *s->cur++ = pc; }
     return _URC_NO_REASON;
 }
+#endif
 // Desktop: write straight to stderr (signal context -- never through Com_Printf / the console).
 #ifdef __ANDROID__
 #define SP_CRASHLOG(...) __android_log_print(ANDROID_LOG_ERROR, "crash", __VA_ARGS__)
 #else
 #define SP_CRASHLOG(...) do { fputs("[crash] ", stderr); fprintf(stderr, __VA_ARGS__); fputc('\n', stderr); } while(0)
 #endif
+#ifdef _WIN32
+// Windows: symbolized backtrace through dbghelp (CaptureStackBackTrace + SymFromAddr; mingw binaries
+// without PDBs still resolve exported/COFF symbols, else falls back to module + offset).
+static void sp_win_dump(const char *what, CONTEXT *ctx){
+    void *buf[40]; int n;
+    HANDLE proc = GetCurrentProcess();
+    static int symInit = 0;
+    if(!symInit){ SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES); SymInitialize(proc, NULL, TRUE); symInit = 1; }
+    (void)ctx;
+    n = (int)CaptureStackBackTrace(0, 40, buf, NULL);
+    SP_CRASHLOG("*** %s  (%d frames) ***", what, n);
+    for(int i=0;i<n;i++){
+        DWORD64 addr = (DWORD64)(ULONG_PTR)buf[i], disp = 0;
+        char symbuf[sizeof(SYMBOL_INFO) + 256];
+        SYMBOL_INFO *sym = (SYMBOL_INFO *)symbuf;
+        HMODULE mod = NULL; char modname[MAX_PATH] = "?";
+        memset(symbuf, 0, sizeof(symbuf));
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO); sym->MaxNameLen = 255;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)buf[i], &mod);
+        if(mod) GetModuleFileNameA(mod, modname, sizeof(modname));
+        if(SymFromAddr(proc, addr, &disp, sym))
+            SP_CRASHLOG("  #%02d  %s + 0x%llx  [%s]", i, sym->Name, (unsigned long long)disp, modname);
+        else if(mod)
+            SP_CRASHLOG("  #%02d  %p  [%s + 0x%llx]", i, buf[i], modname, (unsigned long long)(addr - (DWORD64)(ULONG_PTR)mod));
+        else
+            SP_CRASHLOG("  #%02d  %p  ?", i, buf[i]);
+    }
+}
+// Called from the engine's Sys_SigHandler (CRT signals: SIGABRT/SIGFPE/SIGILL...).
+void SP_LogBacktrace(int sig){
+    char what[32];
+    if(sig == SIGINT || sig == SIGTERM) return;   // normal quit, not a crash
+    snprintf(what, sizeof(what), "SIGNAL %d", sig);
+    sp_win_dump(what, NULL);
+}
+// Access violations etc. never reach CRT signal(); catch them with an unhandled-exception filter.
+static LONG WINAPI sp_win_filter(EXCEPTION_POINTERS *ep){
+    char what[64];
+    snprintf(what, sizeof(what), "EXCEPTION 0x%08lx at %p", (unsigned long)ep->ExceptionRecord->ExceptionCode, ep->ExceptionRecord->ExceptionAddress);
+    sp_win_dump(what, ep->ContextRecord);
+    return EXCEPTION_CONTINUE_SEARCH;   // let the OS / engine handle termination as before
+}
+void SP_InstallCrashHandler(void){ SetUnhandledExceptionFilter(sp_win_filter); }
+#else
 // Called from the engine's Sys_SigHandler (sys_main.c) — the handler that actually catches SIGSEGV.
 void SP_LogBacktrace(int sig){
 #ifndef __ANDROID__
@@ -64,6 +118,7 @@ void SP_LogBacktrace(int sig){
     }
 }
 void SP_InstallCrashHandler(void){ /* engine's Sys_SigHandler calls SP_LogBacktrace directly */ }
+#endif
 
 // SP cgame reType (0..7) -> HM ELITEFORCE reType. RT_MODEL(0) maps straight through.
 static const int spReTypeToHM[8] = { 0/*MODEL*/, 0/*POLY->MODEL*/, 1/*SPRITE*/, 4/*BEAM*/,

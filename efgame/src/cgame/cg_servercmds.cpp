@@ -2,6 +2,7 @@
 
 #include "cg_local.h"
 #include "cg_media.h"
+#include "../game/coop_public.h"
 
 
 /*
@@ -76,6 +77,10 @@ static void CG_ServerCommand( void ) {
 	const char	*cmd;
 
 	cmd = CG_Argv(0);
+
+	if ( COOP_ServerCommand( cmd ) ) {
+		return;
+	}
 
 	if ( !strcmp( cmd, "cp" ) ) {
 		CG_CenterPrint( CG_Argv(1), SCREEN_HEIGHT * 0.25, BIGCHAR_WIDTH );

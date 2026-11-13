@@ -767,3 +767,616 @@ Our own fixes (not from cMod), from the SP player report.
   frame in borg2 and 0.6 ms in hm_voy1 at 1080p (uncapped, `com_speeds`; noisy).
 - **Not tested**: the in-game options menus showing Light Flares On (they read `r_flares`, so
   by reading the code), Holomatch's own UI, other SP camera scenes, 21:9 screens, and feel.
+
+## Regression harness: `macos/regress.sh` (2026-11-07)
+
+Our own tool (not from cMod). It checks that a change leaves single player and Holomatch game logic
+exactly as they were. It runs fixed scenarios and logs the game state every frame. Then it compares that
+log with a baseline recorded from another build.
+
+**Usage** (also at the top of the script):
+
+    macos/regress.sh record [NAME]   # run all scenarios with the current build -> baseline NAME
+    macos/regress.sh check [NAME]    # run them again and compare (default: the newest baseline)
+    macos/regress.sh list
+
+`NAME` defaults to `git describe --always --dirty`, so each commit or build gets its own baseline.
+Baselines live in `~/Library/Caches/VoyagerSP-regress/` (`REGRESS_DIR`), never in the repo. The usual
+workflow: build the base commit and `record`, then build your change and `check`. The script assembles its
+own "EF Test Regression" app (`org.voyagersp.testregress`) from `build-macos` and `efgame/buildmac`
+and deletes it afterwards. To use your own test app, pass `APP=<path.app>`. `SCENARIOS="sp-save hm-listen"`
+runs a subset. Each run gets a fresh scratch HOME with symlinks to pak0-pak3. Nothing touches the real
+game folder, its configs or its saves. `check` prints `identical` per scenario, or the first
+frame that differs with each changed entity and field (`health: 60 -> 55`). It exits 1 if anything
+differed or a run didn't finish.
+
+**Scenarios.** `sp-borg1`: new game on borg1, 2000 frames (the intro cutscene, ICARUS, NPCs).
+`sp-save`: a voy1 save, 600 frames of scripted play. By default it uses your newest voy1 save. `record`
+copies it into the baseline, and `check` loads that copy. `sp-transition`: borg1, `maptransition borg2`
+at frame 40, to frame 400. `hm-listen`: a Holomatch listen server on hm_voy1 with 3 bots and the
+local client connecting and playing, 1200 frames. `hm-dedicated`: a dedicated server, 3 bots, port
+27980, 1200 frames.
+
+**Engine hooks** (`qcommon/regress.c`). They are off unless the command line sets `+set regress_log <file>`
+(CVAR_INIT). When it's off, every hook returns at once. When it's on:
+- **Time step.** Each engine frame is exactly one 50 ms game frame (`Com_ModifyMsec`;
+  `SP_DrawFrame`'s delta). `Com_Frame` doesn't wait for the clock, and the server doesn't pace a
+  client's packets on the wall clock (`SV_RateMsec`).
+- **Seeds.** InitGame's seed is `regress_seed` (`sv_game.c`, `SP_SpawnServer`, `SP_FinishTransition`).
+  libc `rand()` is reseeded from the seed plus the game time before every game frame and ClientThink.
+  That covers the SP game, the botlib and engine draws in between.
+- **Input.** `CL_CreateCmd` replaces the local player's usercmd with a pattern based on the frame
+  number: walk, strafe, turn, jump, crouch, fire.
+- **Fingerprint.** Single player: the bridge's `SP_GameRunFrame` (it now wraps every `ge->RunFrame`)
+  calls the game's `G_RegressDump` (`efgame/src/game/g_regress.cpp`, found with dlsym). For each
+  in-use entity it records the class, origin, angles, health, flags, think, mover, animation, event,
+  enemy, the ICARUS task IDs and the NPC behaviour state. For each client it records the player state.
+  Holomatch: `SV_RegressFrame` logs every linked entity's `entityState_t` and every client's
+  `playerState_t`, with all networked fields from msg.c's tables (`MSG_RegressFields`) except ping.
+  A line is written only when an entity changed. Times that just follow the clock are logged
+  relative to it.
+- **No dialogs.** The runner starts the game with `VOYAGERSP_TEST_NODIALOG=1`. With it, `Sys_Dialog`
+  (`sys_osx.m`) prints to stderr instead of showing an alert, as a dedicated server already did. A fatal
+  error ends the run with exit code 3, and `check` reports it as FAILED. The runner checks every
+  scratch HOME's pak symlinks before it launches. On exit or interrupt, it waits for its game process to
+  quit before it deletes the scratch folder.
+- `regress_frames` sets the number of frames before it quits. `regress_cmdframe`/`regress_cmd` run a
+  command at a given frame (the transition).
+
+**Runtime**: about 55 s for all five scenarios (borg1 21 s, save 8 s, transition 8 s, listen 13 s,
+dedicated 2 s), plus about 5 s to assemble the app. Baselines are about 1.6 MB gzipped.
+
+**Limits.** It doesn't check rendering, sound, music, the UI and menus, real input handling, network
+timing or the cgame. It also misses game state the fingerprint leaves out: QVM-private Holomatch
+data, and SP fields that aren't listed. It covers only what the scenarios reach. The SP and listen
+runs open a window: don't touch it, since Esc or the console would pause SP. A game change that adds
+rand() calls or moves them shifts everything after that point. That is a real difference, but a large
+one. The sp-save baseline needs a voy1 save (`REGRESS_SAVE=<file.sav>` picks one).
+
+Tested: `record` and then `check` on the same build gave identical results in all five scenarios,
+with the same hashes on three separate builds. A 1% gravity tweak in `PM_SlideMove` (efgame) was
+caught in all three SP scenarios, for example in sp-save at frame 10, player `org` z
+572.375 -> 572.36499 and `vel` 185 -> 184. Both Holomatch runs stayed identical, which is correct:
+Holomatch runs the retail QVM. Changing `SURFACE_CLIP_EPSILON` from 0.125 to 0.126 (engine) was caught
+in all five, at frame 0 or 2. Before `SV_RateMsec` stopped pacing in harness mode, hm-listen varied by
+one frame in when the client spawned. A missing pak0 now exits with code 3 and no alert. Not verified:
+runs on another Mac or another macOS version.
+
+## SP follow-ups: door state in saves, area sound culling, lip sync, voice lines (2026-11-07)
+
+1.4.0 branch `1_4_0/sp-followups`. Longer notes: `sp-followups.md` in the shared notes folder.
+
+- **Door (areaportal) state in saves.** The save's `PRTS` chunk holds
+  the areaportal reference counts, numAreas^2 ints (PC saves confirm it: 6 areas -> 144
+  bytes, nonzero symmetric pairs for open doors). The port wrote 1296 zero bytes and skipped it on
+  load, so every door read as closed after a load. Now `SP_SaveGameInternal` writes
+  `CM_PortalState()` and an eFULL load applies it after the spawn (`CM_SetPortalState`);
+  eAUTO loads respawn fresh and ignore it. The save doesn't say which entity
+  holds a portal, so `g_entPortalOpen` becomes -1 (unknown) and a close from unknown only releases
+  a portal that is held open (never a negative count, which CM ERR_DROPs on). A size that doesn't
+  match the map (old port saves on maps that don't have 18 areas) is ignored, as before.
+  New CM functions in `cm_test.c`: `CM_PortalStateSize`, `CM_PortalState`, `CM_SetPortalState`.
+- **Looping sounds behind closed doors.** `SP_EntInView` (`BuildSnapshot`'s loop culling) adds
+  an area test: a loop whose areas are all cut off from the view's area is silent. Any
+  connected area keeps it, so nothing that should be heard is dropped. Entities are still all sent (whole
+  entity culling was not done: the cgame's events, prediction and the 256 cap would change).
+- **Lip sync.** The head skins are -1 blink, -2 frown, -3 both, -4
+  neutral, -5..-8 mouth shapes, and `S_Override` is -1 (talking, quiet) or 5..8 from the voice's
+  own volume: the mean square of 10 samples 100 apart (22 kHz) at the play position against
+  `s_threshold1..4` (0.5, 4, 7, 8) times the sound's loudest sample, redone every 800 samples.
+  The port cycled random 1..8 (so talkers blinked and frowned). Now `S_VoiceLipSync`
+  (`snd_dma.c`, base mixer; the loader keeps every 100th sample as 8 bit in the sfx) feeds
+  `SP_UpdateVisemes` every sim tick and render frame. OpenAL: a 5..8 cycle.
+- **Voice lines.** A line the script started right after a cutscene skip ended (same render frame)
+  was dropped by the skip's sound block; the block is re-checked per tick now. In single player
+  the mixer no longer steals CHAN_VOICE / CHAN_VOICE_ATTEN channels when all are busy.
+- **First voice line after quitting from the pause menu (2026-11-08).** The bridge's pause/skip
+  gates (`s_spSoundsBlocked`, the skip draw gate, the paused/skipping edge flags) are set per drawn
+  frame, so quitting from the in-game menu left sounds blocked into the next game. A New Game's
+  level-start frames run before its first drawn frame, and borg1 starts Janeway's first captain's
+  log there: it was dropped, its dialog wait ended at once, and the intro began at the second log
+  ("Ensign Munro is second in command..."). Seen after skipping the intro, because Esc only opens
+  the pause menu once the camera scene is over. `SP_UnloadGame` (new game, load, abort) now resets
+  the gates. 1.3.0 had the same bug.
+
+## Holomatch: cMod's game modules, widescreen HUD and lag compensation (2026-11-07)
+
+All of this is from cMod by Noah Metzger (Chomenor). He gave permission to ship his released
+game modules (`pakcmod-release-*.pk3`, built under the STEF Game Source License). The app bundles
+one in `Resources/cmod/` with its license and a README (`macos/make-app.sh`, `CMOD_PAK`). The pk3
+is not in git (`*.pk3` is ignored); put the release in `macos/cmod/` before building the app.
+
+- **VM order.** In Holomatch the game's own paks (pak0-pak3, by checksum) are searched first for
+  cgame/ui/qagame, so add-ons like tfgpak or `vm.pk3` no longer replace the stock modules by name
+  order. A mod folder's own modules still win, and pure servers still pick the server's paks.
+- **Recognition by hash.** cMod's releases are known by checksum (the list cMod's engine uses,
+  2021-09-18 to 2025-12-16). The bundled pk3 is loaded privately: it is never in the search path,
+  never referenced, offered for download or listed in `sv_paks`, so stock clients are not pushed it.
+- **Servers** (`sv_cmodGame`, default 1): dedicated servers and Host a Server run cMod's qagame.
+  Config... > cMod sets Run cMod's game code, Lag compensation (`g_unlagged`: Off, Instant-hit
+  weapons (default), All weapons), Smooth other players' movement (`g_smoothClients` 1) and Let
+  cMod players see their own shots at once (`g_unlaggedPredict` 1). Test hook tab name: `cmod`.
+- **Clients** (`cl_cmodModules`, default 1; launcher "Use cMod's game modules, by Noah Metzger"):
+  on non-pure servers the client runs cMod's cgame and ui. On pure servers the server's modules
+  run, as before. A mod's own cgame/ui is replaced only when the server's `!modcfg` configstring
+  asks for cMod's (`nativeCgame`/`nativeUI` 2).
+- **Widescreen.** Our 640x480 flexible-display layer is off for cMod's modules only; they draw
+  with the real screen size. `cg_aspectCorrect` defaults to 1 in Holomatch (as in cMod's engine).
+  The Holomatch video-mode list (HMVideo) is off for cMod's ui. Launcher HUD... sheet: Widescreen
+  (`cg_aspectCorrect`), HUD position Edges to Middle (`cg_aspectCorrectCenterHud`, written only
+  when moved) and weapon prediction (`cg_predictWeapons`). Stock modules look exactly as before.
+- **GetValue.** cMod's modules ask the engine which options it has through a call whose number
+  is in the cvar `//trap_GetValue` (700). `CL_CmodGetValue` answers only cMod's modules and only
+  for what this engine has: our version string, the brightness settings the renderer already
+  ported from cMod, `r_swapInterval`, anisotropy, multisample (`r_ext_multisample`), JPEG
+  screenshots, OpenAL, and "skip" keys for settings this engine lacks (`r_glDriver`, color/depth/
+  stencil bits, `r_lowEndVideo`, `s_khz`, `k_language`, A3D). Renderer choice, framebuffer, raw
+  mouse and windowed-only `r_mode` stay unanswered.
+
+Regression harness: Holomatch scenarios set `sv_cmodGame 0` and `cl_cmodModules 0`, so the
+stock path stays recorded and comparable; `REGRESS_CMOD=1` keeps cMod's modules on. With cMod's
+qagame the listen and dedicated scenarios differ from frame 0, as expected (different game code).
+
+Known, unchanged: a pure server references tfgpak for cgame/ui by name order, so a client can
+download tfgpak and run its cgame. Pure servers stay as they were.
+
+### Fixes after the first 1.4 test build (2026-11-08)
+
+- **Listen servers (Solo Match, Create Server, the game's own map menus).** On a listen server the
+  client's `//trap_GetValue` cvar is visible to the server's qagame too, so cMod's qagame made the
+  call and the server stopped with "Bad game system trap: 700". `SV_GameSystemCalls` now answers it
+  with "unknown key" (cMod's game code then does without those extras). Dedicated servers never had
+  the cvar.
+- **Holomatch text tables.** `ext_data/` files (the numbered menu/HUD texts, `mp_*text.dat`) are
+  now looked up in the same order as the game modules: the game's own paks before other baseEF
+  pk3s. Before, a stock ui from pak2 read tfgpak.pk3's tables, whose extra lines overflow the
+  stock ui's text arrays: the main menu showed a stray "...WINNER OF A ROUND IN WEAPONRY..." line.
+  Pure servers keep the server's order (and give tfgpak's ui its own tables, as before).
+- **Widescreen HUD default.** cMod's modules register `cg_aspectCorrect` with 0 (his engine sets 1
+  first), so a cMod cgame that ran on an older build or a mod server saved 0 in that folder's
+  `hmconfig.cfg` (seen in the mod folders of a real install). The launcher no longer reads the HUD
+  choice from `hmconfig.cfg`: it keeps its own (`HudWidescreen` in its defaults, widescreen until
+  chosen otherwise in the HUD... sheet) and passes it on the command line, and the engine re-applies
+  that command-line value when a cgame or ui starts, so a mod folder's config can't undo it.
+
+### cMod column in the Holomatch server browser (2026-11-08)
+
+Browse... has a **cMod** column: servers running cMod's engine (by Noah Metzger) show its version
+("2.0", "1.29", or a check mark when it doesn't say), with the full version string as the cell's
+tooltip; the column sorts like the others. `getinfo` answers carry nothing that tells cMod apart,
+so the browser now sends each server that answered its `getinfo` one `getstatus` as well (same
+socket, up to a second more for the answers). cMod's engine puts `version_cmod` there and calls
+itself "cMod HM v1.20 compatible" (or "ioEF:cMod HM ...") in `version`. `g_unlagged` isn't used:
+UAM and Razor servers on other engines set it too. The status answers also fill the players list,
+so selecting a server shows its players without asking again (the refresh button still asks).
+
+A server hosted with this app shows no cMod mark even when it runs cMod's qagame: `version_cmod`
+comes from cMod's engine, not its game module, and the game module adds no key of its own. Ours
+reports `version` "Elite Force for Mac ... HM v1.20 compatible" and `version_engine`.
+
+## SP: ambient and mover sound sets load again (2026-11-10)
+
+`sound/sound.txt` (pak0) defines 103 sound sets: 48 `generalSet` (a map area's background loop and
+random one-shots, chosen by worldspawn's and triggers' `soundSet`), 36 `localSet` (an entity's own hum
+and one-shots: target_speakers, consoles, force fields) and 19 `bmodelSet` (start, moving and stop
+sounds of doors, plats and lifts). The SP bridge's reader expected each set's keywords in a `{ }`
+block, but the file is line based: a set line, then its keyword lines up to the next set, with `;`
+comment lines and a short tool header. So no set loaded, and every door, lift and room ambience that
+uses one was silent (borg1's lifts, the scav maps' trek doors, the Dreadnought's engine hum and hull
+creaks, Voyager's bridge, the Borg regeneration alcoves).
+
+`SP_AS_ParseSets` (sp/sp_bridge.cpp) now reads the line form (a `{ }` block is still accepted).
+Other changes there:
+- The kinds are looked up separately: `dntractor` is both a localSet and a bmodelSet (dn5), and maps
+  put bmodel set names on target_speakers (borg1's `largeelevator`) that must not start playing
+  the lift's sounds at random.
+- Up to 16 one-shots per set (`messhall` has 13).
+- Sounds are registered for the sets the map names (the cgame's precache list, which the trap used
+  to ignore) and on first use for the rest, instead of every sound of every set.
+- A local set's loop and one-shots follow the same out-of-view test as entity loops
+  (`SP_EntInView`): silent behind a closed door.
+- A local set's first one-shot waits a random interval instead of all consoles beeping at once
+  when they come into view, and a time left from another run (a loaded save) is rescheduled.
+
+Regression harness: Holomatch and sp-borg1, sp-transition identical. sp-save differs only in
+`event` of voy1's func_door 127 (voyagerdoors) from frame 361: the door now sends its
+EV_BMODEL_SOUND start and stop events. No other field changes.
+
+## Cmd+W and the close button ask before quitting (2026-11-11)
+
+Closing the game window (its close button, or Cmd+W, the Window menu's Close) used to quit at
+once: SDL turns the last window's close request into SDL_QUIT, which runs `quit Closed window`.
+`IN_Init` now sets `SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE` to 0, so a close comes only as
+SDL_WINDOWEVENT_CLOSE, and `Sys_MacConfirmQuit` (sys_osx_data.m) shows a "Quit Elite Force?"
+sheet on the window (the app's display name; Quit on Return, Cancel on Escape). Cmd+Q and the
+app menu's Quit still send SDL_QUIT and quit at once, as before.
+
+- Single player waits for the answer (game stopped, sound paused); Holomatch keeps running.
+- The pointer is released while the sheet is up and captured again after Cancel; the sheet has
+  the keyboard, and the game window is made key again after Cancel.
+- Works in fullscreen (the sheet sits on the fullscreen window). Dedicated servers (no window)
+  and the launcher window are unchanged. With `VOYAGERSP_TEST_NODIALOG` a close quits at once.
+- Test hooks: `VOYAGERSP_TEST_QUIT_ANSWER=quit|cancel`, `VOYAGERSP_TEST_QUIT_PRESS=<s>:<what>,...`
+  (front, close, cmdw, cmdq, key), see the top of sys_osx_data.m.
+
+Regression harness: all five scenarios identical.
+
+## Quiet background mode for automated test runs (2026-11-11)
+
+`VOYAGERSP_TEST_BACKGROUND=1` (any value but empty or `0`) keeps a test run from taking the user's
+focus, keyboard or mouse, so tests can run while someone works. It covers the launcher and the game
+(single player and Holomatch); a dedicated server has no window anyway. Without it nothing changes:
+every new branch is behind the variable. Details at the top of `sys/sys_osx.m`.
+
+- **No activation.** The app becomes an accessory app (`NSApplicationActivationPolicyAccessory`: no
+  Dock icon, so no Dock bounce or attention request). SDL's `SDL_MAC_BACKGROUND_APP` and
+  `SDL_WINDOW_ACTIVATE_WHEN_SHOWN` / `_RAISED` hints are set in `main()` (in the environment and as
+  overrides). Every `activateIgnoringOtherApps` in the launcher, data and server code goes through
+  `VSP_ActivateApp`, which does nothing in this mode.
+- **Windows behind.** `VSP_ShowWindow` / `Sys_MacTestBackgroundWindow` put a window one level below
+  normal windows (`NSNormalWindowLevel - 1`), behind every other app's windows, without making it
+  key. Plain `orderBack:` wasn't enough: the window server kept a just-shown or modal window of the
+  inactive app in front, and `runModalForWindow` lifts the launcher to the modal panel level, so
+  `VSP_KeepBehindWhenModal` puts it back once the modal loop runs. The game window is placed the same
+  way when it's created (`VKimp_Init`, and `VKimp_ReplaceWindow` instead of `SDL_RaiseWindow`). The
+  windows are still drawn: `screencapture -l <window id>` captures them.
+- **No pointer capture.** The game is always windowed (`VKimp_DesiredWindow` ignores `r_fullscreen`,
+  without changing the cvar), and `IN_Frame` never captures the mouse or hides the cursor.
+- **No stray input.** Keyboard, text, mouse, wheel, joystick/controller and touch events from the
+  system are dropped in `IN_ProcessEvents`, and the controller isn't polled. Console commands on
+  stdin, `+exec` and the other `VOYAGERSP_TEST_*` hooks still work (`VOYAGERSP_TEST_QUIT_PRESS`'s
+  `key` step is a synthetic key event, so it is dropped too).
+- **Full rate.** Focus loss and minimizing don't set `com_unfocused` / `com_minimized` (the game
+  runs as if focused, including `com_maxfpsUnfocused` and `s_muteWhenUnfocused`), and App Nap is held
+  off with an `NSProcessInfo` activity.
+- **No alerts.** `Sys_Dialog` prints and takes the default, as with `VOYAGERSP_TEST_NODIALOG`.
+- `macos/regress.sh` sets it by default; `VOYAGERSP_TEST_BACKGROUND=0` shows the window the usual way.
+
+Checked with a test bundle and a scratch HOME while another app was frontmost: the frontmost app
+stayed frontmost through the launcher (autoplay), single player and Holomatch; the windows sat behind
+all other windows (layer -1); `in_mousestate` showed no grab or relative mode; about 91 frames per
+5 s at `com_maxfps 85` while unfocused; SP level time grew in step with the clock (saves 5 s apart:
+t=107000, then 112000), and the Holomatch timer went 0:19 to 0:29 in 10 s; `screencapture -l`
+captured the launcher and the game window.
+
+Regression harness (in background mode): all five scenarios identical to a baseline recorded at
+2e80964 before the change.
+## Co-op M0: scaffolding and the player 2 puppet (2026-11-07, branch `1_4_0/coop` only)
+
+Experimental, never merged without the user's approval. Plan: `docs/coop-proposal.md`, `docs/coop-audit.md`.
+
+- **Build switch.** CMake option `EF_COOP` (default OFF) in `efgame/CMakeLists.txt` and in the engine's
+  CMakeLists (the engine side adds nothing yet). With it ON, `efgame/src/coop/*.cpp` is compiled and
+  `EF_COOP` is defined for libefgame. `EF_COOP=1 macos/make-app.sh` builds it in `efgame/buildmac-coop`.
+- **Run switch.** Latched cvar `sp_coop` (registered only in `EF_COOP` builds, read at InitGame).
+- **Helpers** (`efgame/src/game/coop_public.h`): without `EF_COOP` each one is the exact expression it
+  replaced (`COOP_IsPlayer(e)` is `((e)->s.number == 0)`), and each hook is nothing.
+- **Gate.** `macos/regress.sh check coop-base` (baseline recorded at dbfb6a3 with `EF_COOP` OFF) after
+  every batch, both for an OFF build and for `EF_COOP=1 REGRESS_ARGS="+set sp_coop 0"`.
+  `REGRESS_ARGS` (new, default empty) adds arguments to every harness run.
+- **Player 2 puppet (B1).** `efgame/src/coop/coop_player.cpp`. With `sp_coop 1`, P2 spawns a few frames
+  after every level start (new game, load, map change) at a clear spot next to P1 (traces from P1, with
+  floor under it). It is a client entity with its own client struct (a static in the co-op module, never
+  in `level.clients`), no NPC struct, no ICARUS and no script name, so scripts keep finding only P1
+  ("Munro"). It looks like P1 (copied model info) and shares P1's weapons. Input: follow P1 (run toward
+  P1, hop when stuck, jump to P1 when stuck 3 s or more than 1024 units away), or the console commands
+  `coop_p2`, `coop_p2_follow`, `coop_p2_move`, `coop_p2_turn`, `coop_p2_fire`, `coop_p2_use`,
+  `coop_p2_weapon`, `coop_p2_tele`, `coop_p2_damage`. They are registered by the cgame (only with co-op
+  on) and reach the game through `ClientCommand`, because in SP the game's `ConsoleCommand` is only
+  reached while the HM server runs.
+- **Death.** `player_die` hands P2 to `COOP_P2Die` (no game over, no targets); a dead P2 never takes the
+  player respawn path (`load *respawn`), and comes back next to P1 after 4 s.
+- **Cameras.** `CGCam_Enable`/`CGCam_Disable` hide P2 (`SVF_NOCLIENT`, not solid, no damage, no target)
+  and show it again, back next to P1 if a script moved P1 away. P2 does not move while a camera runs and
+  obeys `player_locked`.
+- **Saves.** `WriteGEntities` skips P2; `COOP_PreSave` first clears every saved entity pointer to P2
+  (all `F_GENTITY` fields of the entity, NPC and client save tables; `activator` becomes P1), look
+  targets, alert-event owners and P2's timers. Tested: a save written in co-op loads in an `EF_COOP` OFF
+  build with no warnings and without the P2 entity.
+- **Weapons (B2).** Weapon and missile code that tested `s.number == 0` for "the player" uses
+  `COOP_IsPlayer`, so P2's shots get the player muzzle, spread, damage and impact rules. P2 is always
+  first person (`COOP_ThirdPerson`), and the co-op module keeps P2's eye point and view angles current
+  (only the cgame updates P1's). Tested: P2 fires on borg2, ammo drops 2 per shot, no warnings.
+- **Combat (B3).** `G_Damage`, friendly fire and the mission status text treat P2 as the player (no
+  half damage from crew, crew shots by accident do not hurt it, pain scripts). The pointer compare in
+  `G_FriendlyFireReaction` uses `COOP_IsPlayerPtr` (a freed entity also has number 0). The skill
+  scaling of player damage is commented out in this code, so there is nothing to scale for P2. The
+  falling clamp only covers client attackers; world falling damage (attacker NULL) can kill P1 too, and
+  does the same to P2. `coop_p2_damage <n> fall` tests it.
+- **Movement (B4).** `bg_pmove.cpp` and `bg_panimate.cpp` (also built into the cgame prediction) use
+  `COOP_IsPlayer` / `COOP_IsPlayerNum` for footstep alerts, landing, use and crouch rules, and
+  `COOP_ViewClientNum()` (0 on the host) where the code means "the client whose view is drawn".
+- **Triggers and items (B5).** PLAYERONLY `trigger_multiple`/`trigger_once`/`trigger_push`, item and
+  ammo-crystal pickups, assimilation triggers and the stasis shooter accept either player.
+  `trigger_entdist` "player within N" measures to the nearest player. `trigger_visible` loops over the
+  players (the first one to look fires it, with P1 as activator) and stops after it frees itself.
+  Helpers `COOP_NearestPlayer`, `COOP_NumPlayers`, `COOP_PlayerByIndex` count P2 only when it is alive
+  and not hidden by a camera. Tested on dn1: P2 placed on a compression rifle with `coop_p2_tele x y z`
+  (new) picks it up (ammo back to 300, the item goes to its respawn state).
+- **Enemy choice (B6).** Where the AI took "the player" as its enemy (alert events, stealth checks,
+  `NPC_PickEnemy` players-first, `NPC_FindPlayer`, `NPC_CheckPlayerDistance`, `AI_DistributeAttack`,
+  the Vohrsoth boss, stasis fliers) it now takes the nearest player. Pointer compares use
+  `COOP_IsPlayerPtr`. Tested on borg2 (1500 frames): NPCs 88, 197 and 203 switch to P2, P2 dies and
+  comes back next to P1; voy3 runs clean.
+- **Perception and navigation (B7).** Dead-body removal and shy spawns wait until no player is close or
+  sees the spot (a loop over the players, same checks in the same order). PVS tests for the "remove when
+  unseen" behavior state and the nav debug drawing accept either player (`COOP_AnyPlayerInPVS`, and a
+  `Rev` form where the old call had the points the other way round). Blocking, stacked-canyon and
+  goal-is-the-player checks in `g_nav.cpp` include P2, and `NAV_FindPlayerWaypoint` also keeps P2's
+  waypoint current, so NPCs chasing P2 can path to it. Tested on borg2 and voy3 (1500 frames).
+- **NPC reactions (B8).** Use, greet and "hit by the player" reactions in `NPC_reactions.cpp` accept
+  P2 (greetings play Munro's lines, which P2 shares). Tested on the voy1 save: P2 placed next to a crew
+  member, facing it, presses use, and the NPC answers (a sound event that a run without the use does
+  not have).
+- **Shared inventory and carry-over (B9).** `efgame/src/coop/coop_inventory.cpp`. After a pickup in
+  `Touch_Item`, weapons and holdables go to the other player too; ammo, health and armor stay with
+  whoever touched them first. Item targets and `trigger_multiple` targets fire with P1 as activator
+  (`COOP_StoryActivator`), so scripts still see "the player". A script `set weapon` on P1 gives P2 the
+  weapon with full ammo and switches it. `G_ChangeMap` stores P2's health, armor, weapon and ammo in
+  the cvar `coop_p2save` (like P1's `playersave`: the game library is reloaded for each map); the
+  next level's InitGame reads and clears it, and P2's first spawn applies it. Borg adaptation stays the
+  single counter on P1 (P2's hits already count there), and `player_locked` already freezes P2 (B1),
+  so neither needed a hook. Tested on dn1: P2 picks up the tricorder and both players get it; a
+  `coop_p2save` value carries into borg2 (health 55, armor 20, ammo 150).
+- **Launcher: Co-op… (2026-11-08).** `sys/sys_osx_coop.m` (new, compiled only with `EF_COOP`, which the
+  engine CMakeLists now also defines for `efsp`). The Single Player card gets a "Co-op…" button (non-co-op
+  builds have no button and the same launcher code). Its sheet has **Host**, which plays single player
+  exactly as the card's Play does, plus `+set sp_coop 1`, and lists this Mac's IPv4 addresses (en0 first)
+  for the friend; and **Join**: an address field (`host` or `host:port`) and **Check**, which shows what a
+  host answers (mission and map, difficulty, minutes on the level, players, the host's app and co-op
+  versions), "No co-op game found" after 2 s without an answer, or a version mismatch (another co-op
+  protocol or app version). **Connect** is shown but disabled until M1 ("Joining a co-op game comes with
+  the next co-op update (M1)").
+  - **Port and protocol.** UDP **29760** (`VSP_COOP_PORT`): clear of Holomatch's 27960, the test ports
+    27980-27983 and Jedi Academy's 29070. In SP the engine's networking is off (`net_enabled` 0), so a host
+    with `sp_coop 1` opens its own small socket there, polled once a frame from `Com_Frame` (an `EF_COOP`
+    line), and closes it when `sp_coop` is 0. Query `\xff\xff\xff\xffgetcoopinfo [challenge]`, answer
+    `\xff\xff\xff\xffcoopInfoResponse\n` and an infostring: `coopProtocol` (`VSP_COOP_PROTOCOL`, 1),
+    `version`, `hostname` (the Mac's name), `state` (playing or menu), `map` (`SP_CurMap`), `mission`,
+    `skill` (`g_spskill`), `players`, `maxPlayers`, `time` and the challenge (at most 32 letters, digits,
+    `-` or `_`; nothing else of a query is sent back). Rate limited like the server's getinfo (10 a second
+    per address, 10 per 100 ms in all); anything else on the port is ignored. The game side publishes
+    `coop_mission` (the level title, as the loading screen shows it), `coop_players` and `coop_time` about
+    once a second (`efgame/src/coop/coop_info.cpp`). `sp_bridge.cpp` is not touched.
+  - **Permissions.** The first Check of a LAN address (and a host's first answer) may bring up macOS's
+    "find devices on your local network" prompt. If sending fails (as it can when that was denied), Check
+    says so and points to System Settings > Privacy & Security > Local Network. With the macOS firewall on, the host may also be asked
+    to accept incoming connections. (Neither prompt came up in testing: host and checker ran on the same Mac.)
+  - **Test hooks** (top of `sys_osx_coop.m`): `VOYAGERSP_TEST_COOP_SHEET=<png>`, `..._QUERY=<address>`,
+    `..._HOLD=<s>`, `..._HOST=1`.
+  - **Tested.** Regression harness against `coop-launcher-base` (8443f66, `EF_COOP` OFF): OFF build and
+    `EF_COOP` ON with `+set sp_coop 0` ALL IDENTICAL; the OFF build's launcher object code is the same as
+    before. Host pressed through the test hook on voy1: answers on 127.0.0.1 and the LAN address (players 2
+    once P2 spawned), ignores other packets, never echoes junk after the query, answers 10 of 30 queries sent at once. Join's check (run in
+    a second instance): found, no answer, version mismatch (a scripted fake host), and bad addresses.
+  - **For M1.** The query is a status probe only. The co-op protocol replaces the stand-in P2 count, adds
+    the `.pk3` checksum check to the version check, and probably moves the answer onto the co-op netchan
+    socket on the same port. Connect, Copy Invite and router port opening come then.
+## Co-op M1: the connection and the guest steering player 2 (2026-11-09, branch `1_4_0/coop-m1` only)
+- `efcode/sys/sys_coop_net.c` (EF_COOP only): a small UDP protocol on the co-op port 29760, sharing
+  the host's check socket. Handshake (`coopConnect` / `coopAccept` / `coopReject`): app version, co-op
+  protocol (now 2), a signature of the loaded `.pk3` files, optional password (`coop_password`, or the
+  launcher's field, never on the command line), one guest, 10 s timeouts, disconnect messages both ways.
+  In-session: the guest's newest commands (4 per packet), keepalives, the host's status once a second.
+  Console: `coop_connect <address[:port]>` (cvar), `coop_disconnect`, `coop_kick`, `coop_status`.
+- The check's answer adds `needPassword` and `guest`. The launcher's Join enables Connect after a Check
+  finds a game.
+- The guest's input reaches the game through `COOP_SetBridge` (`game/coop_bridge.h`, exported from
+  EF_COOP game modules only, set by `sp_bridge.cpp` after each module load) and steers P2 in place of the
+  follow-P1 input; with no guest, or input older than 0.5 s, P2 follows P1 as before.
+- Until the replica guest (`docs/coop-m1-design.md`), a guest loads the host's map on its own
+  (`coop_guestLoadMap 1`): it sees its own copy of the level.
+- Tested with two copies on one Mac (127.0.0.1, regress-mode scripted input on both): join, P2 steered
+  (drifts away from P1 instead of following), leave, wrong password, version and file mismatch refusals,
+  host kick, host level reloads with the guest connected. Gates vs a fresh baseline `coop-m1-base`
+  (672ed3c): EF_COOP OFF ALL IDENTICAL (and `efsp` byte-identical to 672ed3c's), EF_COOP ON +
+  `sp_coop 0` ALL IDENTICAL.
+
+## Co-op M1: P2 holds still, the pack match, the replica guest (2026-11-10, branch `1_4_0/coop-m1` only)
+- While a guest is connected, missing or stale guest input makes P2 hold still; P2 follows P1 only with
+  no guest (`COOP_BRIDGE_VERSION` 2 adds `GuestConnected`).
+- The pack signature covers only the `.pk3` files single player reads (`FS_CoopPakChecksums`): the core
+  packs, packs with `ext_data/` or `.ibi` files, and packs with an SP map a core pack also has. Holomatch
+  map packs no longer refuse a guest.
+- The replica guest (protocol 3): the host sends its world every game frame as slots (entities as the
+  save's chunk images, configstrings, globals, recent server commands), only those changed since the
+  guest's ack, compressed with the system's Compression library (linked only with EF_COOP) and cut into
+  1200-byte fragments. The guest loads the host's map with `sp_coop 2` and its level shows the host's
+  world: no game frames, one snapshot per host frame, P2's player state. `coop_netstats 1` prints bytes/s
+  and per-frame times every 5 s; `coop_status` prints them once. `coop_guestLoadMap` is gone. Details and
+  where it differs from the plan: `docs/coop-m1-design.md`.
+- `macos/make-app.sh` takes the engine build folder from `ENGINE_BUILD` (default `build-macos`), so a
+  co-op test app can be bundled from a separate build.
+- Prediction (protocol 4): the guest makes one command per host frame it takes in, the host applies one a
+  frame in order and names the last in each frame; the guest's cgame predicts from there (it does even at
+  timescale 1 in a replica). The view client in a replica is P2 (`COOP_ViewClientNum`).
+- Direct sounds (script voice lines, `G_SoundOnEnt`) go with the replica's globals; server commands and
+  configstrings already did.
+- Measured with two copies on one Mac: 7 to 27 KB/s from host to guest (quiet map to borg2), about 1 ms per
+  frame on the host; a Holomatch client with 9 bots gets 1.6 to 2.8 KB/s. Table in `docs/coop-m1-design.md`.
+
+### Co-op M1: door sounds, prints, host pause (2026-11-10)
+- Door and lift sound events name their sound set's stage for the guest (`RBMS` chunk), which plays
+  its own handle for it; the two copies' handles differ.
+- Server commands carry their target: story text goes to every client (`COOP_EVERYONE`), P1's own
+  messages stay on the host, P2's go to the guest only.
+- The host's status says when its game is paused; the guest shows "Host paused" (or "Waiting for the
+  host" when frames stop otherwise), holds P2's input and the game's sounds, and goes on with the
+  next frame.
+
+## Co-op M2: cutscenes, level starts, saves (2026-11-10, branch `1_4_0/coop-m1` only)
+- The host's cutscene camera reaches the guest as state with the replica's globals (`RCAM`): the
+  guest's cgame draws the same shot; bars are scaled to its view; script text colours go along. The
+  host's skip is mirrored (skip screen on the guest). A camera track's end fires its targets on the host
+  only. Player 2 rejoins player 1 again half a second after a camera ends.
+- In-game movies play on the guest too and stop when the host's game goes on.
+- A level that starts with a guest connected waits (up to 30 s, "Waiting for player 2") until the guest
+  has loaded it; the guest then shows that level's story text from its start (co-op protocol 5).
+- Every co-op save writes player 2's state to `<save>.coop` next to the `.sav` (still a plain SP save);
+  a load reads it back.
+- The guest's view weapon no longer reads past `cgs.clientinfo` ("Bad animFileIndex").
+- Details: `docs/coop-m2-design.md`.
+
+### Co-op M2: shots over the internet, router port, invite, bandwidth (2026-11-10)
+- Lag compensation (host, `coop/coop_lagcomp.cpp`): player 2's instant-hit shots are traced against the
+  clients and moving brush models where the guest saw them (the frame it aimed in, sent with each
+  command; co-op protocol 6), at most 400 ms back, everything restored after the trace. The idea is
+  cMod's ping compensation by Noah Metzger (Chomenor), used with his permission; the code is ours.
+- Shot prediction (guest, `coop/coop_predict.cpp`): the compression rifle's and I-MOD's beam and
+  impact show at once; the host's effects of those shots are left out. Player 2's movement events now
+  run once on the guest (they ran up to three times). After cMod's weapon prediction, same credit.
+- Co-op… sheet: "Open the port on my router" (NAT-PMP / UPnP, as the server window), the public
+  address or why not, and Copy Invite (`stvef://coop/<address>:<port>`), which the launcher's link
+  handler opens as the Co-op… sheet with the address checked.
+- Bandwidth host to guest: borg2 23.8 to 4.3 KB/s, borg1 15.3 to 3.9, voy1 12.5 to 3.0 (host-only
+  fields masked from entity images, far entities sent every 10th frame).
+- Test cvars: `coop_simlatency` / `coop_simloss` (simulated link), `coop_netstats 2` (which fields
+  change), `coop_p2_target` (a swaying target in front of player 2).
+
+## Co-op: enemies and both players, downed and revive (2026-11-11, branch `1_4_0/coop-m1` only)
+- Enemies take player 2 as well: a script naming the player as an NPC's enemy gets the player that
+  provoked it (or the nearer one), and an NPC fighting one player turns on the other when that one is
+  clearly the better target.
+- A player whose health runs out goes down; the partner revives them by holding Use (`coop_revivetime`,
+  3 s); game over for both when both are down, on bleed-out (`coop_bleedout`, 30 s) or when player 1
+  dies for real. No saving while someone is down.
+- Details: `docs/coop-m2-design.md`.
+
+## Co-op: guest closed on ladders (2026-11-12, branch `1_4_0/coop-m1` only)
+- The guest's game quit (crash, no report) as soon as player 2 was on a ladder or waist-deep in water:
+  its cgame predicts player 2's moves with no game entity, and the water/ladder depth check read that
+  entity's NPC type (null). The check now treats "no entity" as not a biohulk, as the host does for
+  player 2. Since the merge of the single-player fix below, this is one unconditional guard (no
+  `EF_COOP` switch).
+
+## Co-op: the guest sees breakables explode (2026-11-12, branch `1_4_0/coop-m1` only)
+- Some game code draws its effect by calling the cgame directly (one module in single player), with
+  no entity event: a breakable's fireball and debris (plasma filters, conduits, grates, func_breakable),
+  turrets' debris and lasers, the Borg head bot's explosion, stasis flier children, the psycho bolt, the
+  spawn shimmer. The guest's replica never saw them. In co-op builds `game/coop_fx.h` routes those calls
+  through `coop/coop_fx.cpp`: drawn as before, and on a host kept in a short ring that goes with the
+  level's globals (like the direct sounds); the guest draws the new ones. Sounds already came through
+  entity events.
+- Not forwarded: the stasis fliers' and fixits' client think functions (cgame per-frame thinks on
+  entities), debug drawing (CG_Cube/CG_Line).
+- Test hook: `coop_p2_damage <n> near` (player 2 damages the nearest breakable).
+
+## Co-op: nobody stuck at the start of voy4 (2026-11-12, branch `1_4_0/coop-fx` only)
+- voy4 starts with the players held (`player_locked`) in the turbolift while an NPC walks up and
+  talks; the script lets go when the scene is done. There is no room behind or beside player 1 there,
+  so player 2 stands in the doorway in front of them, held too: the NPC never arrived, the scene never
+  ended and neither player could move again. It happened on every death (the level-entry autosave
+  starts the scene over); loading a save later in the level skipped it.
+- While a script holds the players, player 2 now lets people through and walks through them (corpse
+  contents: shots still hit it). When the hold ends it is solid again once nobody is inside it.
+
+## Co-op: the guest sees player 1's phaser (2026-11-12, branch `1_4_0/coop-fx` only)
+- The cgame left out entity 0's third-person beam whenever it drew a first-person view, because in
+  single player entity 0 is the view player and its view weapon draws the beam. A guest views player
+  2, so player 1's phaser beam was never drawn there. Those checks now use the view player (still
+  entity 0 without co-op).
+- A held beam (phaser, the dreadnought's main fire) of the other player was drawn only in the instant
+  after each fire event, so player 2's beam flickered on the host and left fewer burn marks than a
+  view weapon's. In co-op the players' held beams are drawn every frame, like the view weapon's.
+
+## SP: no crash on a ladder or in water while the player is predicted (2026-11-12)
+
+With `timescale` below 1 the SP cgame predicts the player itself (`CG_PredictPlayerState`) with no
+game entity (`cg_pmove.gent = NULL`). `PM_SetWaterLevel` then read `pm->gent->NPC_type` (the biohulk
+check) as soon as the player was waist-deep on a ladder or in water, and the game closed. A missing
+entity (or NPC type) now counts as "not a biohulk", so the result is the same wherever it didn't
+crash before. Reproduced on borg1 (`timescale 0.5`, `setviewpos 371 571 100 0` into the ladder):
+SIGNAL 11 in `PM_SetWaterLevel` before, climbs normally after. Regression harness: all five
+scenarios identical to a baseline recorded at 4dd6eac.
+
+## Release configuration: co-op on the Mac only (2026-11-12)
+1.4.0 ships an experimental co-op mode on macOS and experimental Windows/Linux builds without it.
+- `macos/make-app.sh` (and so `macos/make-release.sh`) builds with `EF_COOP` on by default, in
+  `build-macos-coop` + `efgame/buildmac-coop`, so `build-macos` / `efgame/buildmac` stay the builds
+  without co-op. `EF_COOP=0` builds the app without it. The script stops if the engine and the game
+  modules it would bundle disagree about co-op (e.g. `NO_BUILD=1` with the wrong folders).
+- `macos/regress.sh` assembles its app without co-op unless `EF_COOP=1` (unchanged gates).
+- The CMake option `EF_COOP` now defaults to OFF everywhere (it was ON for Windows/Linux). The
+  launcher core only shows the Co-op button when the engine has co-op (`LC_COOP_BUILT`, set by
+  CMake with `EF_COOP`); `EF_SHOW_COOP=1` still shows it for testing in an `EF_COOP=ON` build.
+- The Mac Co-op sheet already says EXPERIMENTAL and the button's tooltip says "(experimental)".
+- Also: the Mac, Windows and Linux packaging read the FFmpeg version from `deps/versions.sh`
+  (where the pins moved); the Mac app build stopped at FFmpeg's license without it.
+- Gates: `regress.sh check base-1_4_0` ALL IDENTICAL; `EF_COOP=1 REGRESS_ARGS="+set sp_coop 0"
+  regress.sh check coop-m2-base` ALL IDENTICAL. Windows cross-build (mingw) with the new default
+  (EF_COOP OFF) and with `-DEF_COOP=ON` both compile.
+
+## Renderer: one-shot animations hold their last frame (`RF_CAP_FRAMES`, 2026-11-12)
+Elite Force's game code marks one-shot model animations with renderfx `RF_CAP_FRAMES` (0x0400):
+explosions (`CG_AddExplosion` in `cg_localents.cpp`) and `EF_ANIM_ONCE` entities (`cg_ents.cpp`);
+the Holomatch game code (cMod and stock) sets it too. The engine renderer never knew the flag. An
+explosion asks for frame `f + 1`, which reaches `numFrames` in the last part of its life, and
+`R_AddMD3Surfaces` turns any frame out of range into frame 0, so the model jumped back to its first
+frame just before it disappeared. `R_AddMD3Surfaces`
+now clamps `frame` / `oldframe` to the model's last frame when the flag is set, before that range
+check. The flag is defined in `renderercommon/tr_types.h` (ELITEFORCE only); nothing else changes.
+- Seen on borg2 with the compression rifle in regress mode (fixed 50 ms frames, a `screenshot`
+  per few frames): the frame where the white shell is in its last frames shows it fading on the
+  wall after the fix, and gone (back to its first frame) before.
+- Gates: `regress.sh check base-1_4_0` ALL IDENTICAL; `EF_COOP=1 REGRESS_ARGS="+set sp_coop 0"
+  regress.sh check coop-m2-base` ALL IDENTICAL (the harness hashes game state, not pixels).
+- The issue had been filed as a shader `animMap` problem; the shader animations were fine, it was
+  the model frames.
+
+## Co-op: pak check by name, Expansion Pack only warns (2026-11-12, branch `1_4_0/coop-m1`)
+The first test between two Macs was refused ("host: 3 single-player .pk3 files, you: 5"): the guest
+had pak3 (Expansion Pack) and `tfgpak.pk3`, which only holds Holomatch text tables and QVMs but has
+`ext_data/` files, so it counted as a pack that changes single player (the earlier pack signature rule, above).
+- Only the game's own paks count now, by checksum (`FS_CoopCorePakIndex`, the `pak_checksums`
+  table): `FS_CoopPaks()` lists them as `pak0.pk3:<checksum> ...`. Community packs, Holomatch maps
+  and mods never block co-op.
+- `CoopNet_ComparePaks` (sys_coop_net.c): pak0-pak2 must be the same (else the host refuses);
+  pak3 may differ (a note on both consoles: it replaces the NPC/weapon/item tables, some texts,
+  the tricorder model and two scripts, but the host runs the game, so on the guest it is mostly
+  cosmetic). Its sentences name each pack ("You're missing pak2.pk3 (the host has it).") for the
+  guest's or the host's console; the host's notify line shows them in game.
+- Co-op protocol 7: the check's answer (`getcoopinfo`), `coopConnect` and `coopAccept` carry
+  `paks`. The Join sheet's Check compares the host's list with this Mac's before connecting: the
+  launcher computes the pack checksums itself from each pk3's central directory
+  (`VSP_PakChecksum`, the CRCs of the non-empty files through `Com_BlockChecksum`, as
+  `FS_LoadZipFile`), over the homepath's baseEF and the game's BaseEF. pak0-pak2 differ: a red
+  refusal naming the packs, no Connect. Only pak3: a yellow warning and the button reads
+  **Join Anyway** (the engine never refuses for pak3).
+- Test hook `VOYAGERSP_TEST_COOP_JOIN=1` (with `..._COOP_QUERY`): after the Check, press
+  Connect/Join Anyway when enabled.
+- Tested with two copies on one Mac (scratch homes, symlinks to the real paks): pak0-2 vs pak0-2 +
+  tfgpak: joins; pak0-3 + tfgpak guest vs pak0-2 host: Check warns, Join Anyway joins, notes on
+  both; guest without pak2 (Check) and with a non-original pak2 (engine): refused naming pak2;
+  host with a non-original pak2: "The host is missing pak2.pk3".
+
+## Launcher fits a 13" MacBook Air (2026-11-12)
+The launcher was 964 points tall and not resizable, so on a 1280x800 / 1440x900 screen Quit and
+Play were below the Dock. Now the header and mode cards stay at the top and the footer (Quit/Play)
+at the bottom; Graphics/Server, Holomatch and Game Files sit in a scroll view between them. The
+window is resizable in height (from about 520 points up to all of its content; the width stays
+620), opens as tall as its content or the screen's visible part, whichever is smaller, and is kept
+inside the visible part (`fitToScreen`). The Co-op sheet does the same: its name/Host/Join part
+scrolls, the sheet is at most the screen's visible height, and a Check's answer is scrolled into
+view with Connect. Test hook `VOYAGERSP_TEST_LAUNCHER_HEIGHT=<points>` sizes both as if the
+visible screen were that tall (checked at 500, 600 and 700 with `screencapture -l`).
+
+## Windows / Linux release readiness (2026-11-13)
+- Windows launcher (`sys/win32/wl_ui.cpp`, map glyph): the outline was passed to `DrawPolygon` as a
+  `(PointF[]){...}` compound literal, which g++ 13 (CI's mingw-w64) rejects ("taking address of
+  temporary array"); now a named `PointF outline[8]`. No other compound literals in the win32 or
+  launcher-core C++ sources (checked with `-Wpedantic`).
+- Client smoke test (`tests/smoke/run-smoke.sh client`): single player is the default mode, so the
+  client always loads efui and runs its UI_Init, which stops at the fixture's missing
+  `ext_data/sp_buttontext.dat`. That was intended; the test failed because it also expected the text
+  "efui" in the output, which only the bridge's developer-level log prints. It now checks that R_Init
+  finished, the exit status is 3 (Sys_Error after the controlled error, not a crash signal or a
+  timeout) and the error text that comes from inside efui.
+- Licenses in the Windows zip/installer and the AppImage: liblzma (0BSD, copied from the xz tarball by
+  `{windows,linux}/build-deps.sh`), FFmpeg's LGPL text (now copied into the install prefix by
+  `{windows,linux}/build-ffmpeg.sh`, whose source tree is deleted after the build), SDL3 / sdl2-compat
+  (from `install/share/licenses`), winpthreads (`windows/licenses/`), the AppImage type 2 runtime and
+  what it links statically (`linux/licenses/appimage-runtime/`), and the Debian copyright file of each
+  xcb / xkbcommon / brotli library copied from the Steam Runtime container. `make-release.sh` and
+  `make-appimage.sh` fail when any of these is missing. THIRD_PARTY_LICENSES.md lists them.
+- `windows/ReadMe.txt` and `linux/ReadMe.txt` describe the launcher and its data setup (and get the
+  version filled in); the installer's first Start menu entry is now "Elite Force" (the launcher).

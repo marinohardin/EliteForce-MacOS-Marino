@@ -31,12 +31,12 @@ reason, never a guess: the launcher then asks for a BaseEF folder instead.
 
 Decompression uses the system's liblzma (no header in the SDK, so the few
 declarations are below) for the setup data, and the engine's own zlib.
+
+Portable: macOS uses CommonCrypto for SHA-1/MD5; Windows and Linux use the
+bundled public-domain sys_digest.h and link liblzma (static on Windows).
+Paths are UTF-8 everywhere (wide-character file APIs on Windows).
 ===========================================================================
 */
-
-#ifndef __APPLE__
-#error This file is for macOS only.
-#endif
 
 #include "sys_osx_gog.h"
 
@@ -46,10 +46,111 @@ declarations are below) for the setup data, and the engine's own zlib.
 #include <stdarg.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
+#include <sys/types.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <io.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <strings.h>
+#endif
+#ifdef __APPLE__
 #include <CommonCrypto/CommonDigest.h>
+#else
+// the CommonCrypto names used below, on the bundled implementation
+#include "sys_digest.h"
+#define CC_SHA1_DIGEST_LENGTH	DG_SHA1_DIGEST_LENGTH
+typedef dg_sha1_t CC_SHA1_CTX;
+typedef dg_md5_t CC_MD5_CTX;
+typedef uint32_t CC_LONG;
+#define CC_SHA1_Init	dg_sha1_init
+#define CC_SHA1_Update	dg_sha1_update
+#define CC_SHA1_Final	dg_sha1_final
+#define CC_MD5_Init		dg_md5_init
+#define CC_MD5_Update	dg_md5_update
+#define CC_MD5_Final	dg_md5_final
+
+static void *GOG_memmem( const void *hay, size_t hayLen, const void *needle, size_t needleLen )
+{
+	const uint8_t *h = (const uint8_t *)hay, *end;
+
+	if( !needleLen )
+		return (void *)hay;
+	if( hayLen < needleLen )
+		return NULL;
+	for( end = h + hayLen - needleLen; h <= end; h++ )
+		if( *h == *(const uint8_t *)needle && !memcmp( h, needle, needleLen ) )
+			return (void *)h;
+	return NULL;
+}
+#define memmem GOG_memmem
+#endif
 #include "../zlib/zlib.h"
+
+#ifdef _WIN32
+// POSIX file calls on UTF-8 paths, 64-bit offsets and binary mode
+static int GOG_Wide( const char *path, WCHAR *w, int count )
+{
+	return MultiByteToWideChar( CP_UTF8, 0, path, -1, w, count ) > 0;
+}
+
+static int GOG_Open( const char *path, int flags, ... )
+{
+	WCHAR w[1024];
+	int mode = 0;
+
+	if( flags & O_CREAT )
+	{
+		va_list ap;
+		va_start( ap, flags );
+		mode = va_arg( ap, int );
+		va_end( ap );
+	}
+	if( !GOG_Wide( path, w, 1024 ) )
+	{
+		errno = ENOENT;
+		return -1;
+	}
+	return _wopen( w, flags | _O_BINARY, mode & ( _S_IREAD | _S_IWRITE ) ? _S_IREAD | _S_IWRITE : 0 );
+}
+
+static ssize_t GOG_pread( int fd, void *buf, size_t n, int64_t at )
+{
+	if( _lseeki64( fd, at, SEEK_SET ) < 0 )
+		return -1;
+	return _read( fd, buf, n > 0x40000000 ? 0x40000000 : (unsigned)n );
+}
+
+static int GOG_Unlink( const char *path )
+{
+	WCHAR w[1024];
+	return GOG_Wide( path, w, 1024 ) ? _wunlink( w ) : -1;
+}
+
+static int GOG_Rename( const char *from, const char *to )
+{
+	WCHAR wf[1024], wt[1024];
+
+	if( !GOG_Wide( from, wf, 1024 ) || !GOG_Wide( to, wt, 1024 ) )
+		return -1;
+	if( MoveFileExW( wf, wt, MOVEFILE_REPLACE_EXISTING ) )
+		return 0;
+	errno = EACCES;
+	return -1;
+}
+
+#define open		GOG_Open
+#define pread		GOG_pread
+#define off_t		int64_t
+#define stat		_stati64
+#define fstat		_fstati64
+#define write		_write
+#define close		_close
+#define unlink		GOG_Unlink
+#define rename		GOG_Rename
+#define strcasecmp	_stricmp
+#endif
 
 // liblzma 5 (/usr/lib/liblzma.5.dylib), the parts used here
 typedef uint64_t lzma_vli;

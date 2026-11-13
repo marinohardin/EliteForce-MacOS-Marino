@@ -1,5 +1,6 @@
 //NPC_utils.cpp
 #include "b_local.h"
+#include "coop_public.h"
 
 int	teamNumbers[TEAM_NUM_TEAMS];
 int	teamStrength[TEAM_NUM_TEAMS];
@@ -1027,7 +1028,7 @@ gentity_t *NPC_PickEnemyExt( void )
 		if ( event->level == AEL_DISCOVERED )
 		{
 			//If it's the player, attack him
-			if ( event->owner == &g_entities[0] )
+			if ( COOP_IsPlayerPtr( event->owner ) )
 				return event->owner;
 
 			//If it's on our team, then take its enemy as well
@@ -1047,7 +1048,7 @@ NPC_FindPlayer
 
 qboolean NPC_FindPlayer( void )
 {
-	return NPC_TargetVisible( &g_entities[0] );
+	return NPC_TargetVisible( COOP_NearestPlayer( NPC->currentOrigin ) );
 }
 
 /*
@@ -1063,18 +1064,20 @@ static qboolean NPC_CheckPlayerDistance( void )
 		return qfalse;
 
 	//Only do this for non-players
-	if ( NPC->enemy->s.number == 0 )
+	if ( COOP_IsPlayer( NPC->enemy ) )
 		return qfalse;
 
+	gentity_t	*coopPlayer = COOP_NearestPlayer( NPC->currentOrigin );
+
 	//Must be within our FOV
-	if ( InFOV( &g_entities[0], NPC, NPCInfo->stats.hfov, NPCInfo->stats.vfov ) == qfalse )
+	if ( InFOV( coopPlayer, NPC, NPCInfo->stats.hfov, NPCInfo->stats.vfov ) == qfalse )
 		return qfalse;
 
 	float	distance = DistanceSquared( NPC->currentOrigin, NPC->enemy->currentOrigin );
 
-	if ( distance > DistanceSquared( NPC->currentOrigin, g_entities[0].currentOrigin ) )
+	if ( distance > DistanceSquared( NPC->currentOrigin, coopPlayer->currentOrigin ) )
 	{
-		G_SetEnemy( NPC, &g_entities[0] );
+		G_SetEnemy( NPC, coopPlayer );
 		return qtrue;
 	}
 
@@ -1099,6 +1102,9 @@ qboolean NPC_FindEnemy( void )
 	//Don't want a new enemy
 	if ( ( ValidEnemy( NPC->enemy ) ) && ( NPC->svFlags & SVF_LOCKEDENEMY ) )
 		return qtrue;
+
+	//co-op: fighting one player while the other is the better target
+	COOP_RethinkPlayerEnemy();
 
 	//See if the player is closer than our current enemy
 	if ( NPC_CheckPlayerDistance() )

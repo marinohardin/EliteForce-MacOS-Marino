@@ -1526,6 +1526,7 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	// Remove pure paks
 	FS_PureServerSetLoadedPaks("", "");
 	FS_PureServerSetReferencedPaks( "", "" );
+	FS_SetCmodModcfg( 0, 0 );	// no server, no !modcfg wishes
 	
 	CL_ClearState ();
 
@@ -2770,11 +2771,12 @@ void CL_ServersResponsePacket( const netadr_t* from, msg_t *msg, qboolean extend
 			break;
 	}
 
-#ifdef __APPLE__
-	// The macOS launcher's Loopback Host Fix: a server hosted on this network is
+#ifdef EF_DESKTOP
+	// The launcher's Loopback Host Fix: a server hosted on this network is
 	// listed under the network's public address, which most routers don't route
-	// back in from inside. List it as this Mac (127.0.0.1) instead, so the host
-	// sees their own server, with a ping, and can join it.
+	// back in from inside. List it as this computer (127.0.0.1) instead, so the
+	// host sees their own server, with a ping, and can join it. The launcher sets
+	// cl_loopbackHostIP to the public address (any platform, or by hand).
 	{
 		const char *own = Cvar_VariableString( "cl_loopbackHostIP" );
 		netadr_t ownAdr;
@@ -4508,8 +4510,8 @@ void CL_Init( void ) {
 #endif
 
 	cl_conXOffset = Cvar_Get ("cl_conXOffset", "0", 0);
-#ifdef __APPLE__
-	// In game video is REALLY slow in Mac OS X right now due to driver slowness
+#ifdef EF_DESKTOP
+	// off on the desktop builds, as it always was on macOS (same look everywhere)
 	cl_inGameVideo = Cvar_Get ("r_inGameVideo", "0", CVAR_ARCHIVE);
 #else
 	cl_inGameVideo = Cvar_Get ("r_inGameVideo", "1", CVAR_ARCHIVE);
@@ -4525,8 +4527,8 @@ void CL_Init( void ) {
 	m_yaw = Cvar_Get ("m_yaw", "0.022", CVAR_ARCHIVE);
 	m_forward = Cvar_Get ("m_forward", "0.25", CVAR_ARCHIVE);
 	m_side = Cvar_Get ("m_side", "0.25", CVAR_ARCHIVE);
-#ifdef __APPLE__
-	// Input is jittery on OS X w/o this
+#ifdef EF_DESKTOP
+	// Input is jittery on OS X w/o this; the same default on every desktop build
 	m_filter = Cvar_Get ("m_filter", "1", CVAR_ARCHIVE);
 #else
 	m_filter = Cvar_Get ("m_filter", "0", CVAR_ARCHIVE);
@@ -4652,6 +4654,15 @@ void CL_Init( void ) {
 	cl_viewmode = cl_flexibleDisplay;
 	Cvar_CheckRange( cl_flexibleDisplay, 0, 6, qtrue );
 #endif
+
+	// From cMod by Noah Metzger (Chomenor): the widescreen HUD and menus of his cgame and ui
+	// on by default, as his engine has them (the modules alone default to 0). Only cMod's
+	// modules read it.
+	if ( Com_Holomatch() ) {
+		Cvar_Get( "cg_aspectCorrect", "1", CVAR_ARCHIVE );
+		// Where his modules find the GetValue call (see CL_CmodGetValue)
+		Cvar_Get( "//trap_GetValue", va( "%i", CL_CMOD_TRAP_GETVALUE ), CVAR_ROM );
+	}
 
 	//
 	// register our commands

@@ -110,6 +110,7 @@ void MSG_ReadDeltaEntity( msg_t *msg, entityState_t *from, entityState_t *to,
 						 int number );
 
 void MSG_WriteDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct playerState_s *to );
+void MSG_RegressFields( const entityState_t *es, const playerState_t *ps, char *buf, int size );	// regress.c
 void MSG_ReadDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct playerState_s *to );
 
 
@@ -401,6 +402,8 @@ typedef enum {
 typedef intptr_t (QDECL *vmMainProc)(int callNum, int arg0, int arg1, int arg2, int arg3, int arg4, int arg5, int arg6, int arg7, int arg8, int arg9, int arg10, int arg11);
 
 void	VM_Init( void );
+qboolean VM_FromCmodPak( vm_t *vm );	// loaded from a cMod pak (cMod by Noah Metzger)
+#define VM_CMOD_TRAP_GETVALUE 700	// the GetValue call of cMod's modules (its number is in the cvar "//trap_GetValue")
 vm_t	*VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *), 
 				   vmInterpret_t interpret );
 // module should be bare: "cgame", not "cgame.dll" or "vm/cgame.qvm"
@@ -692,6 +695,8 @@ qboolean FS_FileExists( const char *file );
 qboolean FS_CreatePath (char *OSPath);
 
 int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, int enableDll);
+qboolean FS_IsCmodVM( void *searchPath );	// the VM came from a cMod pak (by Noah Metzger)
+void FS_SetCmodModcfg( int nativeCgame, int nativeUI );	// the server's !modcfg wishes
 
 char   *FS_BuildOSPath( const char *base, const char *game, const char *qpath );
 qboolean FS_CompareZipChecksum(const char *zipfile);
@@ -770,6 +775,12 @@ qboolean FS_FilenameCompare( const char *s1, const char *s2 );
 
 const char *FS_LoadedPakNames( void );
 const char *FS_LoadedPakChecksums( void );
+#ifdef EF_COOP
+int FS_CoopCorePakIndex( unsigned int checksum );
+// co-op: which of the game's own paks a checksum is (0-3), or -1
+const char *FS_CoopPaks( void );
+// co-op: the game's own paks that are loaded, "pak0.pk3:<checksum> ..." (host and guest compare them)
+#endif
 const char *FS_LoadedPakPureChecksums( void );
 // Returns a space separated string containing the checksums of all loaded pk3 files.
 // Servers with sv_pure set will get this string and pass it to clients.
@@ -939,6 +950,17 @@ extern	cvar_t	*com_holomatch;
 // Holomatch (multiplayer) mode instead of single player; set once at launch
 // (+set com_holomatch 1, the macOS launcher) and fixed for the whole run.
 qboolean Com_Holomatch( void );
+
+// regress.c: the regression harness (macos/regress.sh); everything is a no-op unless +set regress_log
+void		Regress_Init( void );
+qboolean	Regress_Active( void );
+int			Regress_Seed( void );
+void		Regress_SeedRand( int gameTime );
+int			Regress_FrameNum( void );
+void		Regress_BeginFrame( const char *map, int gameTime );
+void		Regress_State( int kind, int num, const char *fields );	// 0 entity, 1 player state, 2 level
+void		Regress_EndFrame( void );
+void		Regress_Usercmd( int angles[3], signed char *forward, signed char *right, signed char *up, int *buttons );
 qboolean Com_DedicatedServer( void );
 // Holomatch's default UDP download rate (sv_dlRate, KB/s per client): LAN speed
 #define HM_DEFAULT_DLRATE	"4000"

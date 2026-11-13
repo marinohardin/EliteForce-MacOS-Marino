@@ -2,9 +2,11 @@
 //added by MCG
 
 #include "b_local.h"
+#include "coop_public.h"
 #include "anims.h"
 #include "g_functions.h"
 #include "boltons.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern cvar_t *g_sex;
 
@@ -1010,12 +1012,17 @@ void NPC_ShySpawn( gentity_t *ent )
 	ent->nextthink = level.time + SHY_THINK_TIME;
 	ent->e_ThinkFunc = thinkF_NPC_ShySpawn;
 
-	if ( DistanceSquared( g_entities[0].currentOrigin, ent->currentOrigin ) <= SHY_SPAWN_DISTANCE_SQR )
-		return;
+	for ( int coopIdx = 0; coopIdx < COOP_NumPlayers(); coopIdx++ )
+	{//co-op: only when no player sees it
+		gentity_t	*coopPlayer = COOP_PlayerByIndex( coopIdx );
 
-	if ( (InFOV( ent, &g_entities[0], 80, 64 )) ) // FIXME: hardcoded fov
-		if ( (NPC_ClearLOS( &g_entities[0], ent->currentOrigin )) )
+		if ( DistanceSquared( coopPlayer->currentOrigin, ent->currentOrigin ) <= SHY_SPAWN_DISTANCE_SQR )
 			return;
+
+		if ( (InFOV( ent, coopPlayer, 80, 64 )) ) // FIXME: hardcoded fov
+			if ( (NPC_ClearLOS( coopPlayer, ent->currentOrigin )) )
+				return;
+	}
 
 	ent->e_ThinkFunc = thinkF_NULL;
 	ent->nextthink = 0;

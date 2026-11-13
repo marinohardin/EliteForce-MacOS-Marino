@@ -411,12 +411,13 @@ do the appropriate things.
 void Com_Quit_f( void ) {
 	// don't try to shutdown if we are in a recursive error
 	char *p = Cmd_Args( );
-#if defined( __APPLE__ ) && !defined( DEDICATED )
+#if defined( EF_DESKTOP ) && !defined( DEDICATED )
 	// the game's own Quit (a plain "quit") goes back to the launcher; Cmd+Q and
 	// closing the window come here as "quit Closed window" and quit for good
+	// (sys_platform.h; a no-op where there is no launcher)
 	if ( !Q_stricmp( Cmd_Argv( 0 ), "quit" ) && Cmd_Argc( ) == 1 ) {
-		extern void Sys_MacQuitToLauncher( void );
-		Sys_MacQuitToLauncher( );
+		extern void Sys_PlatformQuitToLauncher( void );
+		Sys_PlatformQuitToLauncher( );
 	}
 #endif
 	if ( !com_errorEntered ) {
@@ -2961,6 +2962,15 @@ void Com_Init( char *commandLine ) {
 	}
 	com_holomatch = Cvar_Get("com_holomatch", "0", CVAR_INIT|CVAR_PROTECTED);
 	Cvar_SetDescription( com_holomatch, "Run Holomatch (multiplayer) instead of single player. Command line only." );
+#ifdef EF_COOP
+	// single-player co-op: the game registers sp_coop only when a level starts, so register it
+	// here as well (before the configs run), with the game's flags (latched, not archived), so
+	// `sp_coop 1` works at the main menu. A latched value takes effect at the next level start
+	// (new game, load, map change). Holomatch has no co-op.
+	if ( !com_holomatch->integer ) {
+		Cvar_Get( "sp_coop", "0", CVAR_LATCH );
+	}
+#endif
 
 	FS_InitFilesystem ();
 
@@ -3038,6 +3048,7 @@ void Com_Init( char *commandLine ) {
 	com_showtrace = Cvar_Get ("com_showtrace", "0", CVAR_CHEAT);
 	com_speeds = Cvar_Get ("com_speeds", "0", 0);
 	com_timedemo = Cvar_Get ("timedemo", "0", CVAR_CHEAT);
+	Regress_Init();	// the regression harness (regress.c): off unless +set regress_log
 	com_cameraMode = Cvar_Get ("com_cameraMode", "0", CVAR_CHEAT);
 
 	cl_paused = Cvar_Get ("cl_paused", "0", CVAR_ROM);
@@ -3299,7 +3310,11 @@ int Com_ModifyMsec( int msec ) {
 	//
 	// modify time for debugging values
 	//
-	if ( com_fixedtime->integer ) {
+	if ( Regress_Active() ) {
+		// regression harness: one game frame per engine frame (sv_fps 20: 50 ms)
+		int fps = Cvar_VariableIntegerValue( "sv_fps" );
+		msec = 1000 / ( fps > 0 ? fps : 20 );
+	} else if ( com_fixedtime->integer ) {
 		msec = com_fixedtime->integer;
 	} else if ( com_timescale->value ) {
 		// Single player: the SP bridge applies timescale to its own sim (the game's cutscene skip
@@ -3402,15 +3417,22 @@ void Com_Frame( void ) {
 	}
 
 	// Figure out how much time we have
-	if(!com_timedemo->integer)
+	if(!com_timedemo->integer && !Regress_Active())	// the harness doesn't wait for the clock
 	{
 		if(com_dedicated->integer)
 			minMsec = SV_FrameMsec();
 		else
 		{
-			if(com_minimized->integer && com_maxfpsMinimized->integer > 0)
+#ifdef EF_COOP
+			// a co-op host or guest keeps its full rate in the background (coop_backgroundPlay)
+			extern int Sys_CoopBackgroundPlay( void );
+			qboolean throttle = Sys_CoopBackgroundPlay() ? qfalse : qtrue;
+#else
+			const qboolean throttle = qtrue;
+#endif
+			if(throttle && com_minimized->integer && com_maxfpsMinimized->integer > 0)
 				minMsec = 1000 / com_maxfpsMinimized->integer;
-			else if(com_unfocused->integer && com_maxfpsUnfocused->integer > 0)
+			else if(throttle && com_unfocused->integer && com_maxfpsUnfocused->integer > 0)
 				minMsec = 1000 / com_maxfpsUnfocused->integer;
 			else if(com_maxfps->integer > 0)
 				minMsec = 1000 / com_maxfps->integer;
@@ -3530,6 +3552,13 @@ void Com_Frame( void ) {
 	}
 #endif
 
+#ifdef EF_COOP
+	{
+		// single-player co-op: a host answers co-op checks (sys/sys_osx_coop.m)
+		extern void Sys_CoopFrame( void );
+		Sys_CoopFrame();
+	}
+#endif
 
 	NET_FlushPacketQueue();
 

@@ -12,10 +12,9 @@
 set -eu
 
 MIN_MACOS="${MIN_MACOS:-12.0}"		# deployment target, as build-deps.sh
-FFMPEG_VERSION="9.0.2"
-FFMPEG_SHA256="8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/deps/versions.sh"	# shared pins (FFmpeg)
 OUT="$ROOT/build-ffmpeg"
 TARBALL="$OUT/ffmpeg-$FFMPEG_VERSION.tar.xz"
 SRC="$OUT/ffmpeg-$FFMPEG_VERSION"
