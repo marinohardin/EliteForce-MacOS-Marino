@@ -37,6 +37,9 @@ static gclient_t	coop_p2Client;
 #define COOP_STUCK_FRAMES		60		// follow: 3 s without progress, jump to P1
 #define COOP_CROWDED_TIME		3000	// no free spot next to P1 for this long: spawn P2 on P1's spot
 #define COOP_STUCK_CROUCH		30		// follow: 1.5 s without progress, crouch instead of hopping
+#define COOP_VOID_TIME			1000	// ms with P2's middle inside solid: it is out of the world
+#define COOP_FALL_TIME			4000	// ms of falling faster than COOP_FALL_SPEED: it fell out of the world
+#define COOP_FALL_SPEED			600
 
 gentity_t *COOP_P2( void )
 {
@@ -132,6 +135,34 @@ static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out )
 	return qfalse;
 }
 
+/*
+COOP_TakeP1Gravity
+
+Gravity zones (dn6's zero-gravity section) are triggers that set the gravity of whoever walks
+through them (target_gravity_change on the activator). P2 placed next to P1 (a catch-up, a held Use,
+a camera's end) may have skipped the trigger P1 went through, and would keep the gravity of where it
+was: it is in P1's zone now, so it gets P1's gravity.
+*/
+static void COOP_TakeP1Gravity( gentity_t *ent )
+{
+	gentity_t *p1 = &g_entities[0];
+
+	if ( !p1->client )
+	{
+		return;
+	}
+	if ( p1->svFlags & SVF_CUSTOM_GRAVITY )
+	{
+		ent->svFlags |= SVF_CUSTOM_GRAVITY;
+		ent->client->ps.gravity = p1->client->ps.gravity;
+	}
+	else
+	{
+		ent->svFlags &= ~SVF_CUSTOM_GRAVITY;
+		ent->client->ps.gravity = g_gravity->value;
+	}
+}
+
 void COOP_PlaceP2( gentity_t *ent, const vec3_t org )
 {
 	vec3_t	o;
@@ -151,6 +182,8 @@ void COOP_PlaceP2( gentity_t *ent, const vec3_t org )
 	ent->client->ps.eFlags ^= EF_TELEPORT_BIT;	// no lerp from the old spot
 	VectorCopy( o, coop_p2.lastOrigin );
 	coop_p2.stuckFrames = 0;
+	coop_p2.voidSince = coop_p2.fallSince = 0;
+	COOP_TakeP1Gravity( ent );
 	gi.linkentity( ent );
 }
 
@@ -373,6 +406,12 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 
 	if ( !respawn )
 	{
+		// a fresh P2 starts with the armor P1 started this level with (P1's spawn gives it armor
+		// up to its max health); what P2 carried over from the last level replaces it
+		if ( coop_p2.haveP1StartArmor )
+		{
+			cl->ps.stats[STAT_ARMOR] = coop_p2.p1StartArmor < maxHealth ? coop_p2.p1StartArmor : maxHealth;
+		}
 		COOP_ApplyCarry( ent );
 		COOP_ApplyScriptTopUp( ent );
 	}
@@ -660,6 +699,62 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 	}
 }
 
+/*
+COOP_CatchOutOfWorld
+
+P2 got out of the level: its middle has been inside solid for a second (the void outside the
+map: through a gap, a bad placement), or it has been falling fast for seconds (below the map, where
+no floor or hurt trigger will ever stop it). Nobody can reach it there and a guest can't steer out:
+put it back next to player 1 (a clear spot; if there is none yet, the next frame tries again).
+*/
+static void COOP_CatchOutOfWorld( gentity_t *ent )
+{
+	gentity_t	*p1 = &g_entities[0];
+	gclient_t	*cl = ent->client;
+	vec3_t		org;
+
+	if ( coop_p2.hidden || in_camera || ent->health <= 0 || cl->ps.pm_type != PM_NORMAL || COOP_IsDowned( ent )
+		|| !p1->inuse || !p1->client || p1->health <= 0 || COOP_IsDowned( p1 ) )
+	{
+		coop_p2.voidSince = coop_p2.fallSince = 0;
+		return;
+	}
+	// (a trace, not gi.pointcontents: that one counts trigger brushes as solid)
+	trace_t tr;
+	gi.trace( &tr, cl->ps.origin, vec3_origin, vec3_origin, cl->ps.origin, ent->s.number, CONTENTS_SOLID );
+	if ( tr.startsolid || tr.allsolid )
+	{
+		if ( !coop_p2.voidSince )
+		{
+			coop_p2.voidSince = level.time;
+		}
+	}
+	else
+	{
+		coop_p2.voidSince = 0;
+	}
+	if ( cl->ps.groundEntityNum == ENTITYNUM_NONE && cl->ps.velocity[2] < -COOP_FALL_SPEED )
+	{
+		if ( !coop_p2.fallSince )
+		{
+			coop_p2.fallSince = level.time;
+		}
+	}
+	else
+	{
+		coop_p2.fallSince = 0;
+	}
+	qboolean inVoid = (qboolean)( coop_p2.voidSince && level.time - coop_p2.voidSince >= COOP_VOID_TIME );
+	qboolean falling = (qboolean)( coop_p2.fallSince && level.time - coop_p2.fallSince >= COOP_FALL_TIME );
+	if ( ( inVoid || falling ) && COOP_FindSpotNear( p1, org ) )
+	{
+		gi.Printf( "co-op: player 2 %s at %s: back next to player 1\n",
+			inVoid ? "is outside the level" : "fell out of the level", vtos( ent->currentOrigin ) );
+		COOP_PlaceP2( ent, org );
+		G_AddEvent( ent, EV_GENERAL_SOUND, G_SoundIndex( "sound/world/transporter.wav" ) );
+	}
+}
+
 void COOP_RunFrame( void )
 {
 	gentity_t	*ent;
@@ -671,6 +766,11 @@ void COOP_RunFrame( void )
 	}
 	coop_p2.levelFrames++;
 	COOP_PublishInfo();
+	if ( !coop_p2.haveP1StartArmor && g_entities[0].inuse && g_entities[0].client && g_entities[0].health > 0 )
+	{
+		coop_p2.haveP1StartArmor = qtrue;
+		coop_p2.p1StartArmor = g_entities[0].client->ps.stats[STAT_ARMOR];
+	}
 
 	ent = COOP_P2();
 	if ( !ent )
@@ -696,6 +796,7 @@ void COOP_RunFrame( void )
 		COOP_CameraRejoin( ent );
 	}
 	COOP_FixesFrame();
+	COOP_CatchOutOfWorld( ent );
 	COOP_UpdatePassable( ent );
 	COOP_BuildCmd( ent, &cmd );
 	ClientThink( ent->s.number, &cmd );
