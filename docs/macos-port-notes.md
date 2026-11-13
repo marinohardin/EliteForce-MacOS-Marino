@@ -1378,5 +1378,10 @@ visible screen were that tall (checked at 500, 600 and 700 with `screencapture -
   what it links statically (`linux/licenses/appimage-runtime/`), and the Debian copyright file of each
   xcb / xkbcommon / brotli library copied from the Steam Runtime container. `make-release.sh` and
   `make-appimage.sh` fail when any of these is missing. THIRD_PARTY_LICENSES.md lists them.
+- AppImage tools are pinned: `linux/make-appimage.sh` downloads appimagetool 1.9.1 and the type 2
+  runtime release 20251108 (`runtime-x86_64`, handed over with `--runtime-file` instead of letting
+  appimagetool fetch the moving "continuous" runtime), checks both against the SHA-256 in the script and
+  fails on a mismatch. To bump: change `APPIMAGETOOL_*` / `APPIMAGE_RUNTIME_*` there (the comment
+  above them says how) and the runtime row in THIRD_PARTY_LICENSES.md.
 - `windows/ReadMe.txt` and `linux/ReadMe.txt` describe the launcher and its data setup (and get the
   version filled in); the installer's first Start menu entry is now "Elite Force" (the launcher).
