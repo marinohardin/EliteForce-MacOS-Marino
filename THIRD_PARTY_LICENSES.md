@@ -51,6 +51,23 @@ and loaded at runtime from the system `OpenAL.framework`; it is not bundled.
 | libcurl (**Windows build only**, `libcurl-4.dll`; HTTP/HTTPS only, Windows Schannel TLS, for `sv_dlURL` map downloads; built by `windows/build-deps.sh`, not in the macOS app) | 8.23.0 | curl license (MIT-like) | <https://curl.se/docs/copyright.html>; source: <https://curl.se/download/curl-8.23.0.tar.xz>; text: `licenses/curl-LICENSE.txt` in the Windows zip |
 | Qt 6 (`QtCore`, `QtGui`, `QtWidgets`, `QtNetwork`, `QtDBus`, `QtWaylandClient` and the xcb / Wayland platform plugins; **Linux AppImage only**, for the launcher `ef-launcher`; not in `efsp`, not in the macOS or Windows builds) | 6.8.3 | LGPL-3.0-only (see below) | <https://www.qt.io/licensing/>; source: <https://download.qt.io/archive/qt/6.8/6.8.3/submodules/> (`qtbase`, `qtwayland`); text: `usr/share/licenses/eliteforce-marino/Qt-LGPL-3.0.txt` in the AppImage |
 
+### Windows and Linux packages: additional components
+
+The Windows zip / installer carry their license texts in `licenses\` next to `EliteForce.exe`, the Linux
+AppImage in `usr/share/licenses/eliteforce-marino/`. Besides the SDL, FFmpeg, libcurl (Windows) and Qt (Linux)
+texts above, they include:
+
+| Component | Version | Where | License | Text in the package |
+|---|---|---|---|---|
+| liblzma (XZ Utils), static, for extracting GOG installers in the launcher | 5.8.4 (`deps/versions.sh`) | Windows `EliteForce.exe`; Linux `efsp`, `ef-launcher` | 0BSD | `liblzma-0BSD.txt`, `XZ-Utils-COPYING.txt` (copied from the release tarball by `{windows,linux}/build-deps.sh`); source: <https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.xz> |
+| winpthreads (mingw-w64), static | from the cross toolchain (CI: Ubuntu's mingw-w64 13.0.0) | Windows `.exe` and `.dll` files | MIT, and BSD-3-Clause for the parts from Lockless Inc. | `winpthreads-LICENSE.txt` (from `mingw-w64-libraries/winpthreads/COPYING`, kept in `windows/licenses/`) |
+| libgcc, libstdc++ (GCC), static | from the cross toolchain | Windows `.exe` and `.dll` files | GPL-3.0 with the GCC Runtime Library Exception | no notice required for programs compiled with GCC |
+| xcb helper libraries (`libxcb-cursor`, `-icccm`, `-image`, `-keysyms`, `-randr`, `-render`, `-render-util`, `-shape`, `-shm`, `-sync`, `-xfixes`, `-xkb`, `-util`, `-xinerama`), `libX11-xcb`, `libxkbcommon`, `libxkbcommon-x11`, `libbrotlidec`, `libbrotlicommon`: for Qt's xcb platform plugin | the Steam Runtime 3 "sniper" SDK's packages | Linux `usr/lib` | MIT / X11-style (xcb, libX11, xkbcommon), MIT (brotli) | `steam-runtime/<package>-copyright.txt` (each package's Debian copyright file, copied from the build container by `linux/make-appimage.sh`; `steam-runtime/libraries.txt` maps each library to its package) |
+| AppImage type 2 runtime (the start-up stub in front of the AppImage's squashfs image, added by `appimagetool`; <https://github.com/AppImage/type2-runtime>) | as `appimagetool` 1.9.1 embeds it | Linux AppImage | MIT; statically linked with musl (MIT), libfuse (LGPL-2.1), squashfuse (BSD-2-Clause), zstd (BSD-3-Clause) and zlib | `AppImage-runtime/` (texts kept in `linux/licenses/appimage-runtime/`) |
+
+The packaging scripts (`windows/make-release.sh`, `linux/make-appimage.sh`) fail when any of these texts, or
+the SDL, FFmpeg, libcurl or Qt ones, is missing.
+
 The Apache-2.0 text is at <https://www.apache.org/licenses/LICENSE-2.0.txt>. Apache-2.0 also requires
 redistributing any `NOTICE` files these projects ship.
 

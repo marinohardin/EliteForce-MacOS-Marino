@@ -201,11 +201,23 @@ else
 	echo "Note: no cMod pk3 (macos/cmod/pakcmod-release-*.pk3 or CMOD_PAK): building without cMod's game modules"
 fi
 
+# Every notice the AppImage must carry. A missing one fails the build (no release without
+# its license texts).
 LIC="$APPDIR/usr/share/licenses/eliteforce-marino"
+# lic_copy DEST SRC...: copy the first SRC that exists to $LIC/DEST, or fail
+lic_copy() {
+	dest="$1"; shift
+	for src in "$@"; do
+		[ -f "$src" ] && { mkdir -p "$(dirname "$LIC/$dest")"; cp "$src" "$LIC/$dest"; return 0; }
+	done
+	echo "error: license text for $dest not found (looked for: $*)" >&2
+	exit 1
+}
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES.md" "$ROOT/efgame/STEF Game Source License.doc" "$LIC/"
 FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/deps/versions.sh" 2>/dev/null | head -1)"	# shared pins
-FF_SRC="$(ls -d "$ROOT"/build-ffmpeg/linux/ffmpeg-*/ "$ROOT"/build-ffmpeg/ffmpeg-*/ 2>/dev/null | head -1)"
-[ -n "$FF_SRC" ] && [ -f "${FF_SRC}COPYING.LGPLv2.1" ] && cp "${FF_SRC}COPYING.LGPLv2.1" "$LIC/FFmpeg-LGPL-2.1.txt"
+# FFmpeg: installed by linux/build-ffmpeg.sh (older FFmpeg builds kept their source tree instead)
+lic_copy FFmpeg-LGPL-2.1.txt "$FFMPEG/licenses/FFmpeg-COPYING.LGPLv2.1.txt" \
+	"$ROOT/build-ffmpeg/linux/ffmpeg-$FF_VERSION/COPYING.LGPLv2.1" "$ROOT/build-ffmpeg/ffmpeg-$FF_VERSION/COPYING.LGPLv2.1"
 cat > "$LIC/FFmpeg-README.txt" <<EOF_FF
 The libav*/libsw* libraries in usr/lib are FFmpeg ${FF_VERSION:-(see THIRD_PARTY_LICENSES.md)}
 (https://ffmpeg.org), licensed under the GNU LGPL 2.1 or later (FFmpeg-LGPL-2.1.txt).
@@ -213,14 +225,19 @@ They are unmodified and built from https://ffmpeg.org/releases/ffmpeg-${FF_VERSI
 by linux/build-ffmpeg.sh in the project's source repository, which holds the exact
 configure options. You may replace them with your own build of the same version.
 EOF_FF
-# SDL (zlib license)
-for f in "$ROOT/build-deps/linux"/SDL3-*/LICENSE.txt "$ROOT/build-deps/SDL3-"*/LICENSE.txt "$DEPS/share/licenses/SDL3/LICENSE.txt"; do
-	[ -f "$f" ] && { cp "$f" "$LIC/SDL3-zlib-LICENSE.txt"; break; }
+# SDL3 and sdl2-compat (zlib license), installed by their CMake builds
+lic_copy SDL3-zlib-LICENSE.txt "$DEPS/share/licenses/SDL3/LICENSE.txt"
+lic_copy sdl2-compat-zlib-LICENSE.txt "$DEPS/share/licenses/sdl2-compat/LICENSE.txt"
+# liblzma (static, in efsp / ef-launcher: GOG installer extraction): 0BSD, plus XZ Utils' licensing summary
+lic_copy liblzma-0BSD.txt "$DEPS/licenses/xz-COPYING.0BSD.txt"
+lic_copy XZ-Utils-COPYING.txt "$DEPS/licenses/xz-COPYING.txt"
+# The AppImage runtime (the ELF stub appimagetool puts in front of the squashfs image, from
+# github.com/AppImage/type2-runtime): MIT, statically linked with musl, libfuse (LGPL-2.1),
+# squashfuse, zstd and zlib; their texts are kept in linux/licenses/appimage-runtime.
+for f in "$ROOT"/linux/licenses/appimage-runtime/*.txt; do
+	lic_copy "AppImage-runtime/$(basename "$f")" "$f"
 done
-for f in "$ROOT/build-deps/linux"/sdl2-compat-*/LICENSE.txt "$ROOT/build-deps/sdl2-compat-"*/LICENSE.txt; do
-	[ -f "$f" ] && { cp "$f" "$LIC/sdl2-compat-zlib-LICENSE.txt"; break; }
-done
-[ -f "$LIC/SDL3-zlib-LICENSE.txt" ] || echo "Note: SDL's LICENSE.txt not found under build-deps; the zlib license text is not in the AppImage" >&2
+[ -f "$LIC/AppImage-runtime/type2-runtime-LICENSE.txt" ] || { echo "error: linux/licenses/appimage-runtime is incomplete" >&2; exit 1; }
 
 if [ "$HAVE_QT" = 1 ]; then
 	# Qt is LGPL-3.0: the license texts and the note on where the source is (THIRD_PARTY_LICENSES.md)
@@ -236,6 +253,22 @@ configure options. The libraries are shared (usr/lib/libQt6*.so*, usr/plugins): 
 build of the same Qt version.
 EOF_QT
 fi
+# The xcb / xkbcommon / brotli helper libraries copied from the build container ($SYS_BUNDLE, Steam
+# Runtime packages): each package's Debian copyright file, which holds its license text.
+for lib in $SYS_BUNDLE; do
+	[ -e "$APPDIR/usr/lib/$lib" ] || continue
+	[ -e "$SYS_LIBDIR/$lib" ] || continue	# bundled from one of our own prefixes, not the container
+	command -v dpkg >/dev/null 2>&1 || { echo "error: dpkg is needed to find the license of $lib" >&2; exit 1; }
+	pkg="$(dpkg -S "$SYS_LIBDIR/$lib" 2>/dev/null | head -1 | cut -d: -f1)"
+	[ -n "$pkg" ] || pkg="$(dpkg -S "$(readlink -f "$SYS_LIBDIR/$lib")" 2>/dev/null | head -1 | cut -d: -f1)"
+	[ -n "$pkg" ] || { echo "error: no package owns $SYS_LIBDIR/$lib (its license can't be found)" >&2; exit 1; }
+	mkdir -p "$LIC/steam-runtime"
+	[ -f "$LIC/steam-runtime/libraries.txt" ] ||
+		echo "usr/lib library: Steam Runtime (Debian) package whose <package>-copyright.txt applies" > "$LIC/steam-runtime/libraries.txt"
+	echo "$lib: $pkg" >> "$LIC/steam-runtime/libraries.txt"
+	[ -f "$LIC/steam-runtime/$pkg-copyright.txt" ] && continue
+	lic_copy "steam-runtime/$pkg-copyright.txt" "/usr/share/doc/$pkg/copyright"
+done
 cp "$ROOT/linux/deck.cfg" "$APPDIR/usr/share/eliteforce-marino/deck.cfg"
 cp "$ROOT/linux/AppRun" "$APPDIR/AppRun"
 chmod 755 "$APPDIR/AppRun"
@@ -247,7 +280,7 @@ ICON="$ROOT/linux/eliteforce-marino.png"	# 256px, made by icon/make-icons.sh
 cp "$ICON" "$APPDIR/eliteforce-marino.png"
 cp "$ICON" "$APPDIR/.DirIcon"
 cp "$ICON" "$APPDIR/usr/share/icons/hicolor/256x256/apps/eliteforce-marino.png"
-cp "$ROOT/linux/ReadMe.txt" "$APPDIR/usr/share/eliteforce-marino/ReadMe.txt"
+sed "s/@VERSION@/$VERSION/g" "$ROOT/linux/ReadMe.txt" > "$APPDIR/usr/share/eliteforce-marino/ReadMe.txt"
 command -v desktop-file-validate >/dev/null 2>&1 && desktop-file-validate "$APPDIR/eliteforce-marino.desktop"
 
 # ---- 4. audit: nothing links outside the bundle except allowed host libraries -----

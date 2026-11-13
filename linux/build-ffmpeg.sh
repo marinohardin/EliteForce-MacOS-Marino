@@ -47,6 +47,9 @@ cd "$SRC"
 	--enable-decoder=bink,binkaudio_rdft,binkaudio_dct
 make -j"$JOBS"
 make install
+# the LGPL text from this exact source, for the release packages (the source tree is removed below)
+mkdir -p "$PREFIX/licenses"
+cp "$SRC/COPYING.LGPLv2.1" "$PREFIX/licenses/FFmpeg-COPYING.LGPLv2.1.txt"
 
 # refuse a GPL build (configure prints the license; config.h records it)
 grep -q 'FFMPEG_LICENSE "LGPL version 2.1 or later"' "$SRC/config.h" ||

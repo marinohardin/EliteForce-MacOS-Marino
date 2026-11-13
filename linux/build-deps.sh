@@ -55,6 +55,10 @@ rm -rf "$PREFIX"
 t="$(fetch "xz-$XZ_VERSION.tar.xz" \
 	"https://github.com/tukaani-project/xz/releases/download/v$XZ_VERSION/xz-$XZ_VERSION.tar.xz" "$XZ_SHA256")"
 rm -rf "$WORK/xz-$XZ_VERSION" && tar -xJf "$t" -C "$WORK"
+# liblzma's license (0BSD) and the package's licensing summary, for the release packages
+mkdir -p "$PREFIX/licenses"
+cp "$WORK/xz-$XZ_VERSION/COPYING" "$PREFIX/licenses/xz-COPYING.txt"
+cp "$WORK/xz-$XZ_VERSION/COPYING.0BSD" "$PREFIX/licenses/xz-COPYING.0BSD.txt"
 cmake_build "$WORK/xz-$XZ_VERSION" -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF \
 	-DXZ_NLS=OFF -DXZ_DOC=OFF -DXZ_TOOL_XZ=OFF -DXZ_TOOL_XZDEC=OFF -DXZ_TOOL_LZMADEC=OFF \
 	-DXZ_TOOL_LZMAINFO=OFF -DXZ_TOOL_SYMLINKS=OFF -DXZ_TOOL_SCRIPTS=OFF

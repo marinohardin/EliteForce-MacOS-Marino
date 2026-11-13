@@ -75,15 +75,23 @@ else
 	echo "Note: no cMod pk3 (macos/cmod/pakcmod-release-*.pk3 or CMOD_PAK): building without cMod's game modules"
 fi
 
-# licenses
+# licenses: every notice the zip and the installer must carry. A missing one fails the
+# build (no release without its license texts).
 LIC="$STAGE/licenses"
+# lic_copy DEST SRC...: copy the first SRC that exists to $LIC/DEST, or fail
+lic_copy() {
+	dest="$1"; shift
+	for src in "$@"; do
+		[ -f "$src" ] && { cp "$src" "$LIC/$dest"; return 0; }
+	done
+	echo "error: license text for $dest not found (looked for: $*)" >&2
+	exit 1
+}
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES.md" "$ROOT/efgame/STEF Game Source License.doc" "$LIC/"
 FF_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"/\1/p' "$ROOT/deps/versions.sh" 2>/dev/null | head -1)"	# shared pins
-for d in "$ROOT"/build-ffmpeg/windows/ffmpeg-*/ "$ROOT"/build-ffmpeg/ffmpeg-*/; do
-	[ -f "${d}COPYING.LGPLv2.1" ] && { cp "${d}COPYING.LGPLv2.1" "$LIC/FFmpeg-LGPL-2.1.txt"; break; }
-done
-[ -f "$DEPS/licenses/curl-COPYING.txt" ] || { echo "$DEPS/licenses/curl-COPYING.txt is missing (windows/build-deps.sh)" >&2; exit 1; }
-cp "$DEPS/licenses/curl-COPYING.txt" "$LIC/curl-LICENSE.txt"
+# FFmpeg: installed by windows/build-ffmpeg.sh (older FFmpeg builds kept their source tree instead)
+lic_copy FFmpeg-LGPL-2.1.txt "$FFMPEG/licenses/FFmpeg-COPYING.LGPLv2.1.txt" \
+	"$ROOT/build-ffmpeg/windows/ffmpeg-$FF_VERSION/COPYING.LGPLv2.1" "$ROOT/build-ffmpeg/ffmpeg-$FF_VERSION/COPYING.LGPLv2.1"
 cat > "$LIC/FFmpeg-README.txt" <<EOF_FF
 The av*.dll / sw*.dll files next to EliteForce.exe are FFmpeg ${FF_VERSION:-(see THIRD_PARTY_LICENSES.md)}
 (https://ffmpeg.org), licensed under the GNU LGPL 2.1 or later (FFmpeg-LGPL-2.1.txt).
@@ -91,16 +99,19 @@ They are unmodified and built from https://ffmpeg.org/releases/ffmpeg-${FF_VERSI
 by windows/build-ffmpeg.sh in the project's source repository, which holds the exact
 configure options. You may replace them with your own build of the same version.
 EOF_FF
-for d in "$ROOT"/build-deps/windows/SDL3-*/ "$ROOT"/build-deps/SDL3-*/; do
-	[ -f "${d}LICENSE.txt" ] && { cp "${d}LICENSE.txt" "$LIC/SDL3-zlib-LICENSE.txt"; break; }
-done
-for d in "$ROOT"/build-deps/windows/sdl2-compat-*/ "$ROOT"/build-deps/sdl2-compat-*/; do
-	[ -f "${d}LICENSE.txt" ] && { cp "${d}LICENSE.txt" "$LIC/sdl2-compat-zlib-LICENSE.txt"; break; }
-done
-[ -f "$LIC/SDL3-zlib-LICENSE.txt" ] || echo "Note: SDL's LICENSE.txt not found under build-deps; the zlib license text is not packaged" >&2
+# SDL3.dll and SDL2.dll (sdl2-compat): zlib license, installed by their CMake builds
+lic_copy SDL3-zlib-LICENSE.txt "$DEPS/share/licenses/SDL3/LICENSE.txt"
+lic_copy sdl2-compat-zlib-LICENSE.txt "$DEPS/share/licenses/sdl2-compat/LICENSE.txt"
+# libcurl-4.dll
+lic_copy curl-LICENSE.txt "$DEPS/licenses/curl-COPYING.txt"
+# liblzma (static, in EliteForce.exe: GOG installer extraction): 0BSD, plus XZ Utils' licensing summary
+lic_copy liblzma-0BSD.txt "$DEPS/licenses/xz-COPYING.0BSD.txt"
+lic_copy XZ-Utils-COPYING.txt "$DEPS/licenses/xz-COPYING.txt"
+# mingw-w64's winpthreads (static, in the .exe and the DLLs): MIT and BSD-3-Clause notices
+lic_copy winpthreads-LICENSE.txt "$ROOT/windows/licenses/winpthreads-COPYING.txt"
 
-# Read Me.txt with CRLF line endings for Notepad
-sed 's/$/\r/' "$ROOT/windows/ReadMe.txt" > "$STAGE/Read Me.txt"
+# Read Me.txt with the version filled in and CRLF line endings for Notepad
+sed -e "s/@VERSION@/$VERSION/g" -e 's/$/\r/' "$ROOT/windows/ReadMe.txt" > "$STAGE/Read Me.txt"
 
 # ---- 3. audit: imports are bundled or Windows system DLLs -----------------------------
 echo "Auditing DLL imports"
