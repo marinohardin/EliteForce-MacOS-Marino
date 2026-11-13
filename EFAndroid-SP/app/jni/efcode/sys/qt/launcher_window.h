@@ -96,6 +96,7 @@ private:
 	void openMasters();
 	void openCoop( const QString &address = QString() );
 	void openHud();
+	void askDeckControls();
 	template <class D> int runSheet( D *d );
 
 	/* state */
@@ -143,6 +144,7 @@ private:
 	QString m_playerName;
 	bool m_hostOnly = false;
 	QCheckBox *m_autoBox = nullptr;
+	QPushButton *m_deckButton = nullptr;
 };
 
 #endif

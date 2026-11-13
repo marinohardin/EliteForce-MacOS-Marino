@@ -523,6 +523,62 @@ QWidget *LauncherWindow::buildGameFiles()
 	return g;
 }
 
+/* ---- Steam Deck controls (Linux addition) -------------------------------------------------------------
+   The bundled deck.cfg binds the controller (PAD0_*) to the Deck layout. It is applied once on a Deck's
+   first run of each mode; the "Steam Deck Controls…" button asks for it again: the next Play of each mode
+   execs a fresh copy, and the game then keeps the bindings in its own config. */
+static const char *const kDeckPendingSp = "deckcontrols.sp";
+static const char *const kDeckPendingHm = "deckcontrols.hm";
+
+static bool deckCfgBundled( char *cfg, size_t size )
+{
+	lc_path_join( cfg, size, lc_exe_dir(), "../share/eliteforce-marino/deck.cfg" );
+	return lc_is_file( cfg ) != 0;
+}
+
+/* copies the bundled deck.cfg into baseEF (always when `replace`, else only if missing) */
+static bool installDeckCfg( bool replace )
+{
+	char cfg[LC_MAX_PATH], dst[LC_MAX_PATH];
+	if ( !deckCfgBundled( cfg, sizeof cfg ) )
+		return false;
+	lc_path_join( dst, sizeof dst, lc_homebase(), "deck.cfg" );
+	if ( !replace && lc_is_file( dst ) )
+		return true;
+	lc_mkdir_p( lc_homebase() );
+	size_t n = 0;
+	char *data = lc_read_file( cfg, &n );
+	if ( !data )
+		return false;
+	const bool ok = lc_write_file_atomic( dst, data, n ) == 0 || lc_is_file( dst );
+	free( data );
+	return ok;
+}
+
+void LauncherWindow::askDeckControls()
+{
+	const int a = alert( this, Info, "Use the Steam Deck controls?",
+		"The next time you play Single Player and Holomatch, the controller is set up like this: the left stick moves, "
+		"the right stick looks, the right trigger fires and the left trigger alt-fires; A jumps, B crouches, X uses, "
+		"the bumpers change weapons and Start opens the menu.\n\n"
+		"Your keyboard and mouse keys stay as they are, and changes you make later in the game's Controls menu are kept.",
+		QStringList{ "Use Deck Controls", "Cancel" }, 0, 1 );
+	if ( a != 0 )
+		return;
+	if ( !installDeckCfg( true ) ) {
+		alert( this, Warning, "The Steam Deck controls couldn't be set up.",
+			"The file with the Deck's controller layout (deck.cfg) is missing from this copy of the game, or couldn't be copied." );
+		return;
+	}
+	lc_store *st = lc_store_shared();
+	lc_store_set( st, kDeckPendingSp, "1" );
+	lc_store_set( st, kDeckPendingHm, "1" );
+	lc_store_save( st );
+	log( "Launcher: Steam Deck controls requested for the next game" );
+	if ( m_deckButton )
+		m_deckButton->setToolTip( "The Deck's controller layout is applied the next time you play each mode." );
+}
+
 QWidget *LauncherWindow::buildFooter()
 {
 	QWidget *w = new QWidget;
@@ -532,10 +588,11 @@ QWidget *LauncherWindow::buildFooter()
 	const QString ver = U( EF_APP_VERSION );
 	QLabel *v = label( ( ver.isEmpty() ? QString() : "Version " + ver + QString::fromUtf8( " \xc2\xb7 " ) ) + kMadeBy, 11,
 		QFont::Normal, tertiary() );
+	/* left column: the version, then (Deck) the auto-start box and (when bundled) Deck Controls… */
+	QVBoxLayout *left = new QVBoxLayout;
+	left->setSpacing( px( 4 ) );
+	left->addWidget( v );
 	if ( deck() ) {
-		QVBoxLayout *left = new QVBoxLayout;
-		left->setSpacing( px( 4 ) );
-		left->addWidget( v );
 		m_autoBox = new QCheckBox( "Start the last mode automatically" );
 		m_autoBox->setToolTip( "Skip this window and start the mode you played last. Run the app with --launcher to see it again." );
 		m_autoBox->setChecked( lc_store_get_bool( lc_store_shared(), LC_KEY_AUTOLAUNCH, 0 ) != 0 );
@@ -545,9 +602,21 @@ QWidget *LauncherWindow::buildFooter()
 			lc_store_save( st );
 		} );
 		left->addWidget( m_autoBox );
+	}
+	char deckCfg[LC_MAX_PATH];
+	if ( deckCfgBundled( deckCfg, sizeof deckCfg ) ) {
+		m_deckButton = button( QString::fromUtf8( "Steam Deck Controls\xe2\x80\xa6" ),
+			"Set the controller's buttons to the Steam Deck layout" );
+		connect( m_deckButton, &QPushButton::clicked, this, [this]() { askDeckControls(); } );
+		left->addWidget( m_deckButton, 0, Qt::AlignLeft );
+	}
+	if ( left->count() > 1 )
 		h->addLayout( left );
-	} else
+	else {
+		left->removeWidget( v );
+		delete left;
 		h->addWidget( v );
+	}
 	h->addStretch( 1 );
 	m_quitButton = button( "Quit" );
 	m_quitButton->setMinimumHeight( px( 30 ) );
@@ -1072,25 +1141,20 @@ void LauncherWindow::doPlay()
 	/* Steam Deck / EF_JOYSTICK (what AppRun does for the game): enable the pad, and on the first run
 	   of each mode apply deck.cfg's controller bindings once */
 	QList<QByteArray> extra;
-	if ( deck() || lc_env( "EF_JOYSTICK" ) ) {
+	/* ... and when "Steam Deck Controls…" asked for it, apply it on the next run of each mode */
+	const char *pendingKey = m_mode == 0 ? kDeckPendingSp : kDeckPendingHm;
+	const bool deckPending = lc_store_get_bool( lc_store_shared(), pendingKey, 0 ) != 0;
+	if ( deck() || lc_env( "EF_JOYSTICK" ) || deckPending ) {
 		extra << "+set" << "in_joystick" << "1";
 		const QString marker = U( lc_homepath() ) + ( m_mode == 0 ? "/.deck-applied-sp" : "/.deck-applied-hm" );
-		char cfg[LC_MAX_PATH] = "";
-		lc_path_join( cfg, sizeof cfg, lc_exe_dir(), "../share/eliteforce-marino/deck.cfg" );
-		if ( deck() && !lc_is_file( B( marker ).constData() ) && lc_is_file( cfg ) ) {
-			char dst[LC_MAX_PATH];
-			lc_path_join( dst, sizeof dst, lc_homebase(), "deck.cfg" );
-			lc_mkdir_p( lc_homebase() );
-			if ( !lc_is_file( dst ) ) {
-				size_t n = 0;
-				char *data = lc_read_file( cfg, &n );
-				if ( data ) {
-					lc_write_file_atomic( dst, data, n );
-					free( data );
-				}
-			}
+		const bool firstDeckRun = deck() && !lc_is_file( B( marker ).constData() );
+		if ( ( firstDeckRun || deckPending ) && installDeckCfg( deckPending ) ) {
 			lc_write_file_atomic( B( marker ).constData(), "", 0 );
 			extra << "+exec" << "deck.cfg";
+		}
+		if ( deckPending ) {
+			lc_store_set( lc_store_shared(), pendingKey, "0" );
+			lc_store_save( lc_store_shared() );
 		}
 	}
 	if ( !extra.isEmpty() ) {
