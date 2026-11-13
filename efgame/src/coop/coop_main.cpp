@@ -118,18 +118,25 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 		extern qboolean player_locked;
 		extern bool in_camera;
 		gentity_t *p1 = &g_entities[0];
-		gi.Printf( "co-op: player 2 = entity %d, health %d, armor %d, weapon %d (has 0x%x), origin %s, %s%s%s%s\n",
-			ent->s.number, ent->health, ent->client->ps.stats[STAT_ARMOR], ent->client->ps.weapon,
+		gi.Printf( "co-op: player 2 = entity %d, health %d/%d, armor %d, weapon %d (has 0x%x), origin %s, %s%s%s%s%s\n",
+			ent->s.number, ent->health, ent->client->ps.stats[STAT_MAX_HEALTH], ent->client->ps.stats[STAT_ARMOR], ent->client->ps.weapon,
 			ent->client->ps.stats[STAT_WEAPONS], vtos( ent->currentOrigin ),
 			coop_p2.guestSteering ? "guest" : ( coop_p2.follow ? "following" : "idle" ),
 			coop_p2.hidden ? ", hidden (camera)" : "", ent->client->ps.pm_type == PM_DEAD ? ", dead" : "",
-			COOP_IsDowned( ent ) ? ", down" : "" );
+			COOP_IsDowned( ent ) ? ", down" : "", ( ent->client->ps.pm_flags & PMF_DUCKED ) ? ", crouched" : "" );
 		if ( p1->client )
 		{
-			gi.Printf( "co-op: player 1 health %d, weapon %d (has 0x%x), origin %s, distance %.0f%s%s%s\n",
-				p1->health, p1->client->ps.weapon, p1->client->ps.stats[STAT_WEAPONS], vtos( p1->currentOrigin ),
+			gi.Printf( "co-op: player 1 health %d/%d, armor %d, weapon %d (has 0x%x), origin %s, distance %.0f%s%s%s%s\n",
+				p1->health, p1->client->ps.stats[STAT_MAX_HEALTH], p1->client->ps.stats[STAT_ARMOR], p1->client->ps.weapon, p1->client->ps.stats[STAT_WEAPONS], vtos( p1->currentOrigin ),
 				Distance( p1->currentOrigin, ent->currentOrigin ), player_locked ? ", locked" : "",
-				in_camera ? ", camera" : "", COOP_IsDowned( p1 ) ? ", down" : "" );
+				in_camera ? ", camera" : "", COOP_IsDowned( p1 ) ? ", down" : "", ( p1->client->ps.pm_flags & PMF_DUCKED ) ? ", crouched" : "" );
+			char bolts[64] = "";
+			for ( int i = 0; i < MAX_BOLT_ONS; i++ )
+			{
+				Q_strcat( bolts, sizeof( bolts ), va( " %d/%d", p1->client->renderInfo.boltOns[i].index,
+					ent->client->renderInfo.boltOns[i].index ) );
+			}
+			gi.Printf( "co-op: bolt-ons (player 1/player 2):%s\n", bolts );
 		}
 	}
 	else if ( !Q_stricmp( cmd, "coop_p2_move" ) )

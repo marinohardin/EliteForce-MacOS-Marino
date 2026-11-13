@@ -30,7 +30,7 @@ coopP2State_t	coop_p2;
 // P2's client. Not in level.clients and never written to a save.
 static gclient_t	coop_p2Client;
 
-#define COOP_P2_HEALTH			100
+#define COOP_P2_HEALTH			100		// max health when player 1 has none yet
 #define COOP_RESPAWN_DELAY		4000	// ms from death to respawn next to P1
 #define COOP_FOLLOW_NEAR		112		// follow: stop this close to P1 (2D)
 #define COOP_FOLLOW_TELEPORT	1024	// follow: further than this, jump to P1
@@ -211,6 +211,60 @@ static void COOP_UpdatePassable( gentity_t *ent )
 }
 
 /*
+COOP_P2MaxHealth
+
+Player 2's max health is player 1's: the skill level sets it (200 on Easy, 100 otherwise; it also
+caps armor, health pickups and revives). Player 1's comes from its userinfo at every level start and
+from the save on a load.
+*/
+static int COOP_P2MaxHealth( void )
+{
+	gentity_t *p1 = &g_entities[0];
+
+	if ( p1->client && p1->client->ps.stats[STAT_MAX_HEALTH] > 0 )
+	{
+		return p1->client->ps.stats[STAT_MAX_HEALTH];
+	}
+	return COOP_P2_HEALTH;
+}
+
+// keep P2's max health on player 1's (it is set again if player 1's changes after P2 spawned)
+static void COOP_SyncMaxHealth( gentity_t *ent )
+{
+	int maxHealth = COOP_P2MaxHealth();
+
+	if ( ent->client->ps.stats[STAT_MAX_HEALTH] != maxHealth )
+	{
+		ent->client->ps.stats[STAT_MAX_HEALTH] = maxHealth;
+		ent->client->pers.maxHealth = maxHealth;
+		ent->max_health = maxHealth;
+	}
+}
+
+/*
+COOP_SyncBoltOns
+
+Things a script straps onto player 1 (the Hazard Team helmet before an away mission: voy15, dn1,
+dn2) are put on player 2 too, and come off when player 1's do. A slot that differs is copied whole.
+*/
+static void COOP_SyncBoltOns( gentity_t *ent )
+{
+	gentity_t *p1 = &g_entities[0];
+
+	if ( !p1->client )
+	{
+		return;
+	}
+	for ( int i = 0; i < MAX_BOLT_ONS; i++ )
+	{
+		if ( ent->client->renderInfo.boltOns[i].index != p1->client->renderInfo.boltOns[i].index )
+		{
+			ent->client->renderInfo.boltOns[i] = p1->client->renderInfo.boltOns[i];
+		}
+	}
+}
+
+/*
 COOP_SetupP2
 
 Fresh client state for P2 at org, facing yaw. Looks like P1 (same models), or the guest's
@@ -225,6 +279,7 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	int			weapon = p1->client->ps.weapon;
 	int			ammo[MAX_AMMO];
 	int			teleportBit = ( cl->ps.eFlags & EF_TELEPORT_BIT ) ^ EF_TELEPORT_BIT;
+	int			maxHealth = COOP_P2MaxHealth();
 	vec3_t		angles;
 
 	if ( respawn )
@@ -244,15 +299,15 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	cl->renderInfo.lookTarget = ENTITYNUM_NONE;
 	cl->pers.connected = CON_CONNECTED;
 	cl->pers.localClient = qtrue;			// never dropped for inactivity
-	cl->pers.maxHealth = COOP_P2_HEALTH;
+	cl->pers.maxHealth = maxHealth;
 	cl->pers.enterTime = level.time;
 	cl->playerTeam = TEAM_STARFLEET;
 	cl->crouchheight = CROUCH_MAXS_2;
 	cl->standheight = DEFAULT_MAXS_2;
 
 	cl->ps.clientNum = ent->s.number;
-	cl->ps.stats[STAT_MAX_HEALTH] = COOP_P2_HEALTH;
-	cl->ps.stats[STAT_HEALTH] = COOP_P2_HEALTH;
+	cl->ps.stats[STAT_MAX_HEALTH] = maxHealth;
+	cl->ps.stats[STAT_HEALTH] = maxHealth;
 	cl->ps.stats[STAT_WEAPONS] = weapons;
 	memcpy( cl->ps.ammo, ammo, sizeof( cl->ps.ammo ) );
 	cl->ps.weapon = ( weapons & ( 1 << weapon ) ) ? weapon : WP_NONE;
@@ -274,7 +329,7 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	ent->NPC_type = "munro";		// never NULL: some checks compare it by string
 	ent->s.eType = ET_PLAYER;
 	ent->s.groundEntityNum = ENTITYNUM_NONE;
-	ent->health = ent->max_health = COOP_P2_HEALTH;
+	ent->health = ent->max_health = maxHealth;
 	ent->takedamage = qtrue;
 	ent->contents = CONTENTS_BODY;
 	ent->clipmask = MASK_PLAYERSOLID;
@@ -613,6 +668,8 @@ void COOP_RunFrame( void )
 		return;
 	}
 	COOP_UpdateP2Look( ent );		// a guest came or went, or P1 changed clothes
+	COOP_SyncMaxHealth( ent );
+	COOP_SyncBoltOns( ent );
 	// the cgame sets the eye point only while it draws P2; weapons fire from it
 	VectorCopy( ent->client->ps.origin, ent->client->renderInfo.eyePoint );
 	ent->client->renderInfo.eyePoint[2] += ent->client->ps.viewheight;
