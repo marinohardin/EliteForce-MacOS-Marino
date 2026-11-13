@@ -31,6 +31,7 @@ extern void		PM_SetTorsoAnimTimer( gentity_t *ent, int *torsoAnimTimer, int time
 #define COOP_REVIVE_RANGE_BOT	128		// the puppet stops further away when it follows
 #define COOP_REVIVE_HEALTH		25		// percent of max health after a revive
 #define COOP_DOWN_MSG_TIME		250		// ms between the on-screen updates
+#define COOP_CUTOFF_TIME		2000	// ms a level barrier must stand between the bodies before the body is moved
 
 // what a body lies on and what a revive can't reach through: walls, closed doors, forcefields and
 // other movers, player clips; not people (an NPC standing over a downed player isn't a floor or a wall)
@@ -43,6 +44,7 @@ typedef struct
 	int			reviveStart;	// level.time the partner started holding Use, 0: not reviving
 	int			nextMsg;
 	int			oldFlags;		// FL_NOTARGET as it was before going down (the death set FL_NO_KNOCKBACK)
+	int			cutOffSince;	// level.time a level barrier first stood between the bodies (0: it doesn't)
 	gentity_t	*attacker;		// for the mission status text if this ends the game
 } coopDown_t;
 
@@ -200,6 +202,63 @@ static void COOP_DropToFloor( gentity_t *ent )
 static void COOP_GameOver( gentity_t *attacker );
 
 /*
+COOP_IsBarrier
+
+A brush the level itself opens and closes (a script or a trigger), which a player can't open by
+walking up to it, using it or shooting it: forcefields and walls that switch on and off, and doors
+that only the level opens.
+*/
+static qboolean COOP_IsBarrier( gentity_t *e )
+{
+	if ( !e->inuse || e->client || !e->classname )
+	{
+		return qfalse;
+	}
+	if ( !Q_stricmp( e->classname, "func_usable" ) || !Q_stricmp( e->classname, "func_wall" )
+		|| !Q_stricmp( e->classname, "func_static" ) || !Q_stricmp( e->classname, "func_stasis_door" ) )
+	{
+		return qtrue;
+	}
+	if ( !Q_stricmp( e->classname, "func_door" ) )
+	{
+		gentity_t *master = ( ( e->flags & FL_TEAMSLAVE ) && e->teammaster ) ? e->teammaster : e;
+		// a door with a name opens only when the level uses it; not one a player can use or shoot open
+		return (qboolean)( master->targetname && !( master->spawnflags & 128 ) && !master->takedamage );
+	}
+	return qfalse;
+}
+
+/*
+COOP_CutOff
+
+A barrier of the level (COOP_IsBarrier) stands between the downed player and the partner: on both
+lines between the bodies (as for a revive) the first thing hit is such a barrier. A player an enemy
+downed stays where they fell, but when the story then closes a forcefield or door between the two,
+nobody can get to them any more and they would bleed out (game over).
+*/
+static qboolean COOP_CutOff( gentity_t *partner, gentity_t *downed )
+{
+	trace_t	tr;
+	vec3_t	from, to;
+
+	for ( int i = 0; i < 2; i++ )
+	{
+		float up = i ? 20.0f : 0.0f;
+		VectorCopy( partner->currentOrigin, from );
+		VectorCopy( downed->currentOrigin, to );
+		from[2] += up;
+		to[2] += up;
+		gi.trace( &tr, from, NULL, NULL, to, partner->s.number, COOP_WORLD_MASK );
+		if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f || tr.entityNum == downed->s.number
+			|| tr.entityNum >= ENTITYNUM_WORLD || !COOP_IsBarrier( &g_entities[tr.entityNum] ) )
+		{
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+/*
 COOP_CanReach
 
 The reviver must be next to the downed player with nothing solid between them: no wall, closed door,
@@ -298,6 +357,7 @@ qboolean COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod )
 	}
 	coop_down[idx].reviveStart = 0;
 	coop_down[idx].nextMsg = 0;
+	coop_down[idx].cutOffSince = 0;
 	coop_down[idx].oldFlags = ent->flags & FL_NOTARGET;
 	coop_down[idx].attacker = attacker;
 
@@ -563,6 +623,33 @@ void COOP_DownFrame( void )
 					}
 				}
 			}
+		}
+		// a barrier of the level closed between them: put the body next to the partner
+		if ( progress < 0 && reviver < 0 && COOP_PlayerUp( partner ) && pent && COOP_CutOff( pent, ent ) )
+		{
+			if ( !d->cutOffSince )
+			{
+				d->cutOffSince = level.time;
+			}
+			else if ( level.time - d->cutOffSince >= COOP_CUTOFF_TIME )
+			{
+				vec3_t	org;
+				int		contents = ent->contents;
+				ent->contents = 0;
+				qboolean found = COOP_FindSpotNear( pent, org );
+				ent->contents = contents;
+				if ( found )
+				{
+					COOP_MovePlayer( ent, org );
+					COOP_DropToFloor( ent );
+					gi.Printf( "co-op: player %d was cut off behind a barrier: moved next to player %d\n", idx + 1, partner + 1 );
+				}
+				d->cutOffSince = 0;
+			}
+		}
+		else
+		{
+			d->cutOffSince = 0;
 		}
 		if ( progress < 0 && d->reviveStart )
 		{
