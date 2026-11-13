@@ -118,8 +118,13 @@ trace only, put them back.
   weapons whose shots are traces (phaser, compression rifle, I-MOD, proton gun, the tetrion's primary,
   the dreadnought's primary, the stasis alt), `gi.trace` is swapped for one that moves the recorded
   entities to their interpolated place at `viewTime`, traces and restores them. At most `coop_lagcomp_max`
-  (400 ms) back. Player 2 itself isn't moved; projectiles aren't shifted (they fly in the host's present).
-  Player 1's shots never go through it.
+  (400 ms) back. Player 2 itself isn't moved. Player 1's shots never go through it.
+- Player 2's projectiles (1.5.0): a missile `FireWeapon` makes for player 2 starts its flight at
+  `viewTime` (its trajectory time is moved back, by at most `coop_lagcomp_max`), so it is where the
+  guest's own copy of it is; `G_RunMissile` traces from where it was to where it is now, so the first
+  host frame covers the skipped part. The random spread of player 2's shots (scavenger, tetrion) comes
+  from a sequence seeded with `viewTime` (`COOP_SeedShot`), which the guest seeds the same way, so both
+  copies fire the same spread.
 - Cvars (host): `coop_lagcomp` (1), `coop_lagcomp_max` (400), `coop_lagcomp_debug` (prints each shifted
   trace with the result without shifting).
 
@@ -142,15 +147,35 @@ own shot's effects and leaves out the server's.
   flash on a client, the wall impact otherwise) at once. The host's temp entities of a shot fired while
   player 2 fires carry player 2's number (`entityState_t.otherEntityNum2`, unused before), and the guest
   leaves out those of the predicted weapon for a second.
-- Already at once without this: the muzzle flash and fire sound of every weapon, and the phaser's and
-  arc welder's continuous beams. Not predicted (they show a round trip later): the tetrion's spread
-  (random on the host), the stasis beam, and every projectile (scavenger, stasis, grenade launcher,
-  tetrion alt, quantum burst, arc welder alt).
+- 1.5.0, more of player 2's weapons (after cMod's `cg_predict_weapons.c`): the tetrion's primary (three
+  traces with the seeded spread, its tracers and wall impacts) and the stasis alt beam are traced and drawn
+  at once like the rifle; the host's events of those weapons are left out the same way. Projectiles
+  (scavenger both modes, the stasis main's three, grenade launcher both modes, tetrion alt, quantum burst
+  both modes) are launched on the guest as local missiles from the view weapon's muzzle with the host's
+  speeds, gravity, bounce flags and sizes, drawn by `CG_Missile` with their trails. When the host's missile
+  of the same weapon and mode, owned by player 2, flying the same way, first shows, the local one is
+  dropped and the host's is drawn with the difference eased out over 150 ms; a local missile that hits
+  something before the host's shows, or is a second old, goes away (the explosion is the host's).
+- The view weapon's firing animation runs from the guest's predicted shots (the host's torso attack
+  animation, a round trip late, is ignored for the view weapon); the phaser holds its firing frame while
+  predicted firing.
+- Already at once without this: the muzzle flash and fire sound of every weapon (from the predicted fire
+  event), ammo use and refire time (`PM_Weapon` runs the same on both sides), and the phaser's and arc
+  welder's continuous beams. Not predicted: the dreadnought's alt (a stationary burst), melee and the
+  tricorder/hypos (no shot).
 - Cvars (guest): `coop_predictshots` (1), `coop_predict_debug`.
 
 Check: in-engine screenshots every 70 ms over a 100 ms link: the first shot's impact shows in the frame
 the guest fired; with `coop_predictshots 0` the beam shows about 280 ms later. No second beam or impact
 from the host.
+
+Check (1.5.0): borg2, two copies, `coop_simlatency 100` on both, player 2 given the weapons with `give`
+on the host (the pickup gives them to player 2 too). Every shot's ammo on the guest matched the host's
+when the host's state came; the tetrion's and stasis alt's host events were left out, none drawn twice.
+Quantum burst torpedoes were handed to the host's 350 ms after launch, 12.6 units apart (eased out).
+Scavenger, stasis, tetrion alt and grenade shots down a ~380 unit corridor hit the far wall locally in
+about 250 ms, before the host's missile arrived; the explosion then comes from the host about a round
+trip after the guest's missile vanished. The host moved each of player 2's missiles 355-390 ms back.
 
 ## Internet (step 10)
 - The Co-op… sheet's Host group has "Open the port on my router": it asks the router to forward UDP

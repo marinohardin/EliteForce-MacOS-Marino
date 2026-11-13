@@ -4,6 +4,9 @@
 #include "FX_Public.h"
 #include "../game/g_functions.h"
 #include "../game/boltons.h"
+#ifdef EF_COOP
+#include "../game/coop_public.h"
+#endif
 
 extern qboolean CG_ApplyBoltOnToRefEnt (refEntity_t *newBoltOn, boltOn_t *boltOn, boltOnInfo_t *bOInfo, const vec3_t org, refEntity_t *targModel);
 extern void CG_AssimilationTubules( vec3_t start, vec3_t end, vec3_t up, float scale );
@@ -509,6 +512,9 @@ static void CG_Missile( centity_t *cent ) {
 
 	if ( !cent->gent->inuse )
 		return;
+#ifdef EF_COOP
+	COOP_MissileLerp( cent );	// a co-op guest's own projectile: eased onto the path it drew
+#endif
 
 	s1 = &cent->currentState;
 	if ( s1->weapon >= WP_NUM_WEAPONS ) {
@@ -597,6 +603,14 @@ static void CG_Missile( centity_t *cent ) {
 	// add to refresh list, possibly with quad glow
 	CG_AddRefEntityWithPowerups( &ent, s1->powerups, NULL );
 }
+
+#ifdef EF_COOP
+// a co-op guest's projectile of its own, drawn until the host's arrives (coop_predict.cpp)
+void CG_CoopMissile( centity_t *cent )
+{
+	CG_Missile( cent );
+}
+#endif
 
 /*
 ===============
@@ -1394,6 +1408,9 @@ void CG_AddPacketEntities( void ) {
 	// generate and add the entity from the playerstate
 	ps = &cg.predicted_player_state;
 	PlayerStateToEntityState( ps, &cg_entities[ ps->clientNum ].currentState );
+#ifdef EF_COOP
+	COOP_AddPredictedMissiles();
+#endif
 //	cent = &cg_entities[ ps->clientNum ];	// not needed now that player is in the snap packet
 //	CG_AddCEntity( cent );					//
 

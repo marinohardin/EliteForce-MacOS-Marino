@@ -586,6 +586,9 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 		hand.frame = CG_MapTorsoToWeaponFrame( ci, cent->pe.torso.frame, cent->pe.torso.animationNumber&~ANIM_TOGGLEBIT, cent->currentState.weapon, ( cent->currentState.eFlags & EF_FIRING ) );
 		hand.oldframe = CG_MapTorsoToWeaponFrame( ci, cent->pe.torso.oldFrame, cent->pe.torso.animationNumber&~ANIM_TOGGLEBIT, cent->currentState.weapon, ( cent->currentState.eFlags & EF_FIRING ) );
 		hand.backlerp = cent->pe.torso.backlerp;
+#ifdef EF_COOP
+		COOP_ViewWeaponFrames( ci, cent, &hand.frame, &hand.oldframe, &hand.backlerp );
+#endif
 	}
 
 	// add the weapon
