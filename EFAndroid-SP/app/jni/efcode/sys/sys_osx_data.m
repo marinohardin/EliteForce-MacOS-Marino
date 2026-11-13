@@ -1039,33 +1039,22 @@ int VSP_AddGameFiles( void )
 	return (int)[src count];
 }
 
-/*
-=================
-VSP_HasExpansion
-
-qtrue when the Expansion Pack's data is there: Virtual Voyager's first map
-(the same test as the single-player main menu), in a .pk3 or loose, in the
-homepath's baseEF or the game folder base.
-=================
-*/
-// qtrue if the zip (pk3) at path has an entry named name (any case). Reads
-// only the central directory, without the engine's unzip code, which
-// allocates from the zone (not there yet while the launcher runs).
-static BOOL ZipHasEntry( NSString *path, const char *name )
+// The central directory of the zip (pk3) at path, or nil. Read without the engine's unzip
+// code, which allocates from the zone (not there yet while the launcher runs).
+static NSData *ZipCentralDirectory( NSString *path )
 {
 	NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath: path];
 	unsigned long long size, tailStart;
 	NSData *tail, *cd;
-	const unsigned char *t, *p, *end;
+	const unsigned char *t;
 	unsigned int cdSize, cdOffset;
-	size_t nameLen = strlen( name );
 	long i;
 
 	if( !fh )
-		return NO;
+		return nil;
 	size = [fh seekToEndOfFile];
 	if( size < 22 )
-		return NO;
+		return nil;
 	tailStart = size > 65536 + 22 ? size - ( 65536 + 22 ) : 0;
 	[fh seekToFileOffset: tailStart];
 	tail = [fh readDataOfLength: (NSUInteger)( size - tailStart )];
@@ -1075,17 +1064,25 @@ static BOOL ZipHasEntry( NSString *path, const char *name )
 		if( t[i] == 'P' && t[i+1] == 'K' && t[i+2] == 5 && t[i+3] == 6 )
 			break;
 	if( i < 0 )
-		return NO;
+		return nil;
 	cdSize = t[i+12] | t[i+13] << 8 | t[i+14] << 16 | (unsigned)t[i+15] << 24;
 	cdOffset = t[i+16] | t[i+17] << 8 | t[i+18] << 16 | (unsigned)t[i+19] << 24;
 	if( (unsigned long long)cdOffset + cdSize > size )
-		return NO;
+		return nil;
 	[fh seekToFileOffset: cdOffset];
 	cd = [fh readDataOfLength: cdSize];
 	[fh closeFile];
-	p = [cd bytes];
-	end = p + [cd length];
-	while( p + 46 <= end && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 )
+	return cd;
+}
+
+// qtrue if the zip (pk3) at path has an entry named name (any case)
+static BOOL ZipHasEntry( NSString *path, const char *name )
+{
+	NSData *cd = ZipCentralDirectory( path );
+	const unsigned char *p = [cd bytes], *end = p + [cd length];
+	size_t nameLen = strlen( name );
+
+	while( cd && p + 46 <= end && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 )
 	{
 		unsigned n = p[28] | p[29] << 8, x = p[30] | p[31] << 8, c = p[32] | p[33] << 8;
 		if( p + 46 + n > end )
@@ -1097,6 +1094,44 @@ static BOOL ZipHasEntry( NSString *path, const char *name )
 	return NO;
 }
 
+/*
+=================
+VSP_PakChecksum
+
+A pk3's checksum as the engine computes it when it loads the pack (the block
+checksum of the CRCs of its non-empty files, in order), from the central
+directory alone. NO when it isn't a readable zip.
+=================
+*/
+BOOL VSP_PakChecksum( NSString *path, unsigned int *checksum )
+{
+	NSData *cd = ZipCentralDirectory( path );
+	const unsigned char *p = [cd bytes], *end = p + [cd length];
+	NSMutableData *crcs = [NSMutableData data];
+
+	if( !cd )
+		return NO;
+	while( p + 46 <= end && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 )
+	{
+		unsigned n = p[28] | p[29] << 8, x = p[30] | p[31] << 8, c = p[32] | p[33] << 8;
+		unsigned uncompressed = p[24] | p[25] << 8 | p[26] << 16 | (unsigned)p[27] << 24;
+		if( uncompressed > 0 )
+			[crcs appendBytes: p + 16 length: 4];		// the CRC-32, little-endian as the engine keeps it
+		p += 46 + n + x + c;
+	}
+	*checksum = Com_BlockChecksum( [crcs bytes], (int)[crcs length] );
+	return YES;
+}
+
+/*
+=================
+VSP_HasExpansion
+
+qtrue when the Expansion Pack's data is there: Virtual Voyager's first map
+(the same test as the single-player main menu), in a .pk3 or loose, in the
+homepath's baseEF or the game folder base.
+=================
+*/
 BOOL VSP_HasExpansion( NSString *base )
 {
 	static const char *probe = "maps/tour/deck02.bsp";

@@ -15,7 +15,7 @@ VSP_COOP_PORT (29760) while sp_coop is 1 and answers one connectionless query,
 polled once a frame from Com_Frame:
   -> "\xff\xff\xff\xffgetcoopinfo [challenge]"
   <- "\xff\xff\xff\xffcoopInfoResponse\n" and an infostring with coopProtocol,
-     version, hostname (the computer's name), state (playing / menu), map,
+     version, hostname (the computer's name), paks (FS_CoopPaks), state (playing / menu), map,
      mission, skill, players, maxPlayers, time, player, needPassword, guest and
      the challenge (up to 32 letters, digits, - or _ of the query).
 Every other packet on the port goes to the co-op connection (sys_coop_net.c).
@@ -307,6 +307,7 @@ static qboolean CoopAnswer( const char *packet, int len, const struct sockaddr_i
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
 	CoopSetInfo( info, "version", EF_APP_VERSION );
 	CoopSetInfo( info, "hostname", coopHostName );
+	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	if ( Cvar_VariableString( "coop_name" )[0] )
 		CoopSetInfo( info, "player", Cvar_VariableString( "coop_name" ) );
 	CoopSetInfo( info, "state", playing ? "playing" : "menu" );

@@ -4550,62 +4550,55 @@ const char *FS_LoadedPakChecksums( void ) {
 #ifdef EF_COOP
 /*
 =====================
-FS_CoopPakChecksums
+FS_CoopCorePakIndex
 
-Single-player co-op (EF_COOP builds): the checksums of the loaded pk3 files that
-single player's game logic reads, as for FS_LoadedPakChecksums. A host and its
-guest must have the same ones; other packs (Holomatch maps, bots, cMod) don't
-matter to co-op. A pack counts when it is one of the game's own (pak0-pak3), or
-when it has a file that steers single player: an NPC/weapon/item definition
-(ext_data/), an ICARUS script (*.ibi), or a single-player map that one of the
-game's own paks has too (a replacement).
+Single-player co-op (EF_COOP builds): which of the game's own paks a pk3 with
+this checksum is (0-3 for pak0.pk3-pak3.pk3, pak3 being the Expansion Pack's),
+or -1 for any other pack. The launcher asks too, before the engine runs.
 =====================
 */
-static qboolean FS_CoopPakHasFile( const pack_t *pak, const char *name ) {
-	fileInPack_t *f;
-
-	for ( f = pak->hashTable[FS_HashFileName( name, pak->hashSize )]; f; f = f->next ) {
-		if ( !FS_FilenameCompare( f->name, name ) ) {
-			return qtrue;
-		}
-	}
-	return qfalse;
-}
-
-static qboolean FS_CoopPakCounts( const pack_t *pak ) {
-	searchpath_t *core;
+int FS_CoopCorePakIndex( unsigned int checksum ) {
+#if !defined( STANDALONE ) && defined( ELITEFORCE )
 	int i;
 
-	if ( FS_IsCorePak( pak ) ) {
-		return qtrue;
+	for ( i = 0; i < ARRAY_LEN( pak_checksums ); i++ ) {
+		if ( checksum == pak_checksums[i] ) {
+			return i;
+		}
 	}
-	for ( i = 0; i < pak->numfiles; i++ ) {
-		const char *name = pak->buildBuffer[i].name;
+#endif
+	return -1;
+}
 
-		if ( !Q_stricmpn( name, "ext_data/", 9 ) || COM_CompareExtension( name, ".ibi" ) ) {
-			return qtrue;
-		}
-		if ( Q_stricmpn( name, "maps/", 5 ) || !COM_CompareExtension( name, ".bsp" ) ||
-			!Q_stricmpn( name + 5, "hm_", 3 ) || !Q_stricmpn( name + 5, "ctf_", 4 ) ) {
-			continue;
-		}
-		for ( core = fs_searchpaths; core; core = core->next ) {
-			if ( core->pack && core->pack != pak && FS_IsCorePak( core->pack ) && FS_CoopPakHasFile( core->pack, name ) ) {
-				return qtrue;
+/*
+=====================
+FS_CoopPaks
+
+The game's own paks that are loaded, as "pak0.pk3:<checksum> pak1.pk3:<checksum>
+..." in order (each once). A co-op host and its guest compare these
+(CoopNet_ComparePaks): pak0-pak2 must match, the Expansion Pack's pak3 may
+differ. Other packs (Holomatch maps and mods, community packs) don't count.
+=====================
+*/
+const char *FS_CoopPaks( void ) {
+	static char	info[256];
+	searchpath_t	*search;
+	unsigned int	found[NUM_ID_PAKS];	// the checksum, 0 when not loaded
+	int		i;
+
+	memset( found, 0, sizeof( found ) );
+	for ( search = fs_searchpaths ; search ; search = search->next ) {
+		if ( search->pack ) {
+			i = FS_CoopCorePakIndex( (unsigned int)search->pack->checksum );
+			if ( i >= 0 && i < NUM_ID_PAKS ) {
+				found[i] = (unsigned int)search->pack->checksum;
 			}
 		}
 	}
-	return qfalse;
-}
-
-const char *FS_CoopPakChecksums( void ) {
-	static char	info[BIG_INFO_STRING];
-	searchpath_t	*search;
-
 	info[0] = 0;
-	for ( search = fs_searchpaths ; search ; search = search->next ) {
-		if ( search->pack && FS_CoopPakCounts( search->pack ) ) {
-			Q_strcat( info, sizeof( info ), va( "%i ", search->pack->checksum ) );
+	for ( i = 0; i < NUM_ID_PAKS; i++ ) {
+		if ( found[i] ) {
+			Q_strcat( info, sizeof( info ), va( "%spak%d.pk3:%u", info[0] ? " " : "", i, found[i] ) );
 		}
 	}
 	return info;

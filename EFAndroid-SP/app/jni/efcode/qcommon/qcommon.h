@@ -776,8 +776,10 @@ qboolean FS_FilenameCompare( const char *s1, const char *s2 );
 const char *FS_LoadedPakNames( void );
 const char *FS_LoadedPakChecksums( void );
 #ifdef EF_COOP
-const char *FS_CoopPakChecksums( void );
-// the checksums of the loaded pk3 files single player's game logic reads (co-op's match)
+int FS_CoopCorePakIndex( unsigned int checksum );
+// co-op: which of the game's own paks a checksum is (0-3), or -1
+const char *FS_CoopPaks( void );
+// co-op: the game's own paks that are loaded, "pak0.pk3:<checksum> ..." (host and guest compare them)
 #endif
 const char *FS_LoadedPakPureChecksums( void );
 // Returns a space separated string containing the checksums of all loaded pk3 files.

@@ -13,16 +13,17 @@ co-op check (getcoopinfo, sys_osx_coop.m), which shares the host's socket.
 
 Connecting (out-of-band text packets, "\xff\xff\xff\xff" then a word, a
 newline and an infostring or a sentence):
-  guest -> host  coopConnect   coopProtocol, version, paks (the loaded .pk3
-                               files single player reads, as count-hash), name, password,
+  guest -> host  coopConnect   coopProtocol, version, paks (the game's own .pk3
+                               files loaded: FS_CoopPaks), name, password,
                                nonce (the guest's, echoed back), and optionally sex
                                (male / female: how player 2 looks; without it, like
                                player 1)
-  host -> guest  coopAccept    session, nonce, hostName (the host player's name), map, state
+  host -> guest  coopAccept    session, nonce, paks (the host's), hostName (the host player's name), map, state
                  coopReject    a sentence for the guest's console
-The host takes one guest. The app version, co-op protocol and .pk3 files must
-match, and the password too when the host set one (coop_password, or the
-launcher's field). A guest asks up to COOP_CONNECT_TRIES times, a second apart.
+The host takes one guest. The app version, co-op protocol and the game's own
+pak0-pak2 must match (CoopNet_ComparePaks: the Expansion Pack's pak3 may
+differ, with a note on both sides; other packs don't count), and the password
+too when the host set one (coop_password, or the launcher's field). A guest asks up to COOP_CONNECT_TRIES times, a second apart.
 
 After that every packet starts with the session number (a long that is never
 -1, so never out-of-band) and a message type byte:
@@ -173,33 +174,87 @@ const char *Sys_CoopPassword( void )
 	return cvar[0] ? cvar : coopLaunchPassword;
 }
 
-static int CoopIntCompare( const void *a, const void *b )
+// A FS_CoopPaks list ("pak0.pk3:<checksum> ...") as the checksum of each of the game's own paks
+// (pak0-pak3), 0 for one that isn't there
+static void CoopParsePaks( const char *list, unsigned int sums[4] )
 {
-	int x = *(const int *)a, y = *(const int *)b;
-	return x < y ? -1 : x > y;
+	memset( sums, 0, 4 * sizeof( sums[0] ) );
+	while ( list && *list )
+	{
+		while ( *list == ' ' )
+			list++;
+		if ( !Q_stricmpn( list, "pak", 3 ) && list[3] >= '0' && list[3] <= '3' && !Q_stricmpn( list + 4, ".pk3:", 5 ) )
+			sums[list[3] - '0'] = (unsigned int)strtoul( list + 9, NULL, 10 );
+		while ( *list && *list != ' ' )
+			list++;
+	}
 }
 
-// The .pk3 files single player's game logic reads (the game's own paks, and any that change
-// single player: FS_CoopPakChecksums) as "count-hash" (the hash of their sorted checksums): two
-// copies with the same files have the same signature, whatever order their search paths are in.
-// Holomatch-only packs (maps, bots, cMod) don't count.
-static void CoopPakSignature( char *out, int size )
+static void CoopPakListAdd( char *list, int size, int pak )
 {
-	static int	sums[1024];
-	const char	*s = FS_CoopPakChecksums();
-	int			n = 0;
+	Q_strcat( list, size, va( "%spak%d.pk3", list[0] ? ", " : "", pak ) );
+}
 
-	while ( *s && n < (int)ARRAY_LEN( sums ) )
+/*
+CoopNet_ComparePaks: do a host's and a guest's game files allow co-op? Only the game's own paks
+count, so community packs, Holomatch maps and mods never stop a co-op game:
+  - pak0.pk3-pak2.pk3 (the game and its patches) must be the same on both: COOP_PAKS_DIFFER,
+    the host refuses the guest;
+  - pak3.pk3 (the Expansion Pack's) may differ: COOP_PAKS_EXPANSION, a warning. It replaces a
+    few single-player files (NPC, weapon and item tables, some texts, the tricorder, two
+    scripts), but the host runs the game, so on the guest's screen the difference is mostly
+    cosmetic.
+text gets sentences naming each pack that differs, for the host to read (forHost) or the guest.
+*/
+int CoopNet_ComparePaks( const char *hostPaks, const char *guestPaks, qboolean forHost, char *text, int size )
+{
+	unsigned int	host[4], guest[4];
+	char			hostOnly[64] = "", guestOnly[64] = "", differ[64] = "";
+
+	CoopParsePaks( hostPaks, host );
+	CoopParsePaks( guestPaks, guest );
+	text[0] = 0;
+	for ( int i = 0; i < 3; i++ )
 	{
-		char *end;
-		long v = strtol( s, &end, 10 );
-		if ( end == s )
-			break;
-		sums[n++] = (int)v;
-		s = end;
+		if ( host[i] == guest[i] )
+			continue;
+		if ( !guest[i] )
+			CoopPakListAdd( hostOnly, sizeof( hostOnly ), i );
+		else if ( !host[i] )
+			CoopPakListAdd( guestOnly, sizeof( guestOnly ), i );
+		else
+			CoopPakListAdd( differ, sizeof( differ ), i );
 	}
-	qsort( sums, n, sizeof( sums[0] ), CoopIntCompare );
-	Com_sprintf( out, size, "%d-%08x", n, n ? Com_BlockChecksum( sums, n * (int)sizeof( sums[0] ) ) : 0u );
+	if ( hostOnly[0] || guestOnly[0] || differ[0] )
+	{
+		if ( hostOnly[0] )
+			Q_strcat( text, size, va( forHost ? "Player 2 is missing %s (you have it). " :
+				"You're missing %s (the host has it). ", hostOnly ) );
+		if ( guestOnly[0] )
+			Q_strcat( text, size, va( forHost ? "You're missing %s (player 2 has it). " :
+				"The host is missing %s (you have it). ", guestOnly ) );
+		if ( differ[0] )
+			Q_strcat( text, size, va( forHost ? "Player 2's %s differs from yours. " :
+				"Your %s differs from the host's. ", differ ) );
+		Q_strcat( text, size, "Both need the game's original pak0.pk3, pak1.pk3 and pak2.pk3 (other packs don't matter)." );
+		return COOP_PAKS_DIFFER;
+	}
+	if ( host[3] != guest[3] )
+	{
+		if ( !guest[3] )
+			Q_strcat( text, size, forHost ? "Player 2 doesn't have the Expansion Pack (pak3.pk3); you do." :
+				"You don't have the Expansion Pack (pak3.pk3); the host does." );
+		else if ( !host[3] )
+			Q_strcat( text, size, forHost ? "Player 2 has the Expansion Pack (pak3.pk3); you don't." :
+				"The host doesn't have the Expansion Pack (pak3.pk3); you do." );
+		else
+			Q_strcat( text, size, forHost ? "Player 2's Expansion Pack (pak3.pk3) differs from yours." :
+				"Your Expansion Pack (pak3.pk3) differs from the host's." );
+		Q_strcat( text, size, " You can still play together: the host runs the game, so the difference is mostly "
+			"cosmetic on player 2's screen (some texts, the tricorder, a few weapon and NPC details)." );
+		return COOP_PAKS_EXPANSION;
+	}
+	return COOP_PAKS_SAME;
 }
 
 // An infostring value: no \ ; " or control characters, at most size - 1 bytes
@@ -968,8 +1023,9 @@ static void CoopHostReject( int sock, const struct sockaddr_in *from, const char
 
 static void CoopHostConnect( int sock, const char *request, const struct sockaddr_in *from )
 {
-	char	protocol[16], version[64], paks[64], ourPaks[64], rawName[128], name[32], password[128], ourPassword[128], nonce[24];
-	char	sex[16];
+	char	protocol[16], version[64], paks[256], rawName[128], name[32], password[128], ourPassword[128], nonce[24];
+	char	sex[16], why[512], hostWhy[512];
+	int		pakMatch;
 	char	info[MAX_INFO_STRING];
 	int		now = Sys_Milliseconds();
 
@@ -999,6 +1055,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 		info[0] = 0;
 		CoopSetInfo( info, "session", va( "%u", coopHost.session ) );
 		CoopSetInfo( info, "nonce", coopHost.nonce );
+		CoopSetInfo( info, "paks", FS_CoopPaks() );
 		CoopHostStateInfo( info );
 		CoopSendOOB( sock, from, COOP_ACCEPT, info );
 		return;
@@ -1016,12 +1073,13 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 		CoopHostReject( sock, from, va( "The game already has a player 2 (%s).", coopHost.name ) );
 		return;
 	}
-	CoopPakSignature( ourPaks, sizeof( ourPaks ) );
-	if ( strcmp( paks, ourPaks ) )
+	// only the game's own paks count: pak0-pak2 must match, the Expansion Pack's pak3 only warns
+	pakMatch = CoopNet_ComparePaks( FS_CoopPaks(), paks, qfalse, why, sizeof( why ) );
+	CoopNet_ComparePaks( FS_CoopPaks(), paks, qtrue, hostWhy, sizeof( hostWhy ) );
+	if ( pakMatch == COOP_PAKS_DIFFER )
 	{
-		CoopHostReject( sock, from, va( "Your game files differ from the host's (host: %d single-player .pk3 files, "
-			"you: %d). Both need the same pak0-pak3, and the same packs that change single player "
-			"(Holomatch map packs don't matter).", atoi( ourPaks ), atoi( paks ) ) );
+		Com_Printf( "co-op: refused %s from %s: %s\n", name, CoopAddressString( from ), hostWhy );
+		CoopSendOOB( sock, from, COOP_REJECT, va( "Your game files differ from the host's. %s", why ) );
 		return;
 	}
 	// compared as it crossed the network (CoopSetInfo cleans the guest's)
@@ -1064,10 +1122,13 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	info[0] = 0;
 	CoopSetInfo( info, "session", va( "%u", coopHost.session ) );
 	CoopSetInfo( info, "nonce", nonce );
+	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	CoopHostStateInfo( info );
 	CoopSendOOB( sock, from, COOP_ACCEPT, info );
 	Com_Printf( "co-op: %s joined from %s as player 2%s\n", coopHost.name, CoopAddressString( from ),
 		coopHost.sex[0] ? va( " (%s)", coopHost.sex ) : "" );
+	if ( pakMatch == COOP_PAKS_EXPANSION )
+		Com_Printf( "co-op: note: %s\n", hostWhy );
 }
 
 static void CoopHostInput( msg_t *msg )
@@ -1560,15 +1621,14 @@ static void CoopGuestStop( const char *why, qboolean tell )
 
 static void CoopGuestSendConnect( void )
 {
-	char	info[MAX_INFO_STRING], paks[64], name[COOP_NAME_MAX + 1];
+	char	info[MAX_INFO_STRING], name[COOP_NAME_MAX + 1];
 	const char *sex = CoopSexValue( Cvar_VariableString( "coop_sex" ) );
 
-	CoopPakSignature( paks, sizeof( paks ) );
 	CoopOwnName( name, sizeof( name ) );
 	info[0] = 0;
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
 	CoopSetInfo( info, "version", EF_APP_VERSION );
-	CoopSetInfo( info, "paks", paks );
+	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	CoopSetInfo( info, "name", name[0] ? name : "Player 2" );
 	if ( sex[0] )
 		CoopSetInfo( info, "sex", sex );
@@ -1782,12 +1842,18 @@ static void CoopGuestReceive( void )
 			CoopCleanName( rawName, hostName, sizeof( hostName ) );
 			Com_Printf( "co-op: joined %s%s%s as player 2\n", hostName[0] ? hostName : "", hostName[0] ? " at " : "",
 				CoopAddressString( &coopGuest.host ) );
+			{
+				char hostPaks[256], note[512];
+				CoopGetInfo( rest, "paks", hostPaks, sizeof( hostPaks ) );
+				if ( CoopNet_ComparePaks( hostPaks, FS_CoopPaks(), qfalse, note, sizeof( note ) ) != COOP_PAKS_SAME )
+					Com_Printf( "co-op: note: %s\n", note );
+			}
 			CoopGuestHostState( rest );
 			continue;
 		}
 		if ( ( rest = CoopOOBText( data, (int)n, COOP_REJECT, text, sizeof( text ) ) ) != NULL )
 		{
-			char reason[256];
+			char reason[768];
 
 			if ( coopGuest.state != COOP_GUEST_CONNECTING )
 				continue;

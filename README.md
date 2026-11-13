@@ -164,7 +164,10 @@ Play the single-player campaign with a friend. One Mac **hosts**: it plays the s
 as player 1. The other Mac **joins** as player 2, a second Hazard Team member in the host's
 game. Co-op is new and experimental, and only in the Mac app (not on Windows or Linux).
 
-Both players need the same version of the app and the same single-player game files.
+Both players need the same version of the app and the game's own `pak0.pk3`, `pak1.pk3` and
+`pak2.pk3`. Other packs (Holomatch maps, mods, community packs) don't matter. If only one of you
+has the Expansion Pack (`pak3.pk3`), Check shows a warning and you can still join with
+**Join Anyway**: the host runs the game, so the difference is mostly cosmetic for player 2.
 
 ### Host and Join
 

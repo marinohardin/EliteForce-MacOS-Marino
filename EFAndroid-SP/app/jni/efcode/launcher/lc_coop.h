@@ -21,7 +21,7 @@ extern "C" {
 #endif
 
 #define LC_COOP_PORT		29760
-#define LC_COOP_PROTOCOL	6
+#define LC_COOP_PROTOCOL	7	// = VSP_COOP_PROTOCOL (sys_coop_net.h)
 
 typedef struct {
 	/* "ok" (a co-op game of this version answered), "mismatch" (answered, other co-op/app version:

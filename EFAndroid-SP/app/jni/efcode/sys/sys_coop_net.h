@@ -24,8 +24,9 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 // (1: the M0 check only; 2: M1, a guest can connect; 3: the guest mirrors the host's world;
 // 4: one guest command per host frame, acknowledged for prediction; 5: the guest says which host
 // level it has up, movies, cutscene skips; 6: each guest command says what host time the guest was
-// looking at, for its shots)
-#define VSP_COOP_PROTOCOL	6
+// looking at, for its shots; 7: the game's own paks by name and checksum in the check's answer,
+// the connect and the accept)
+#define VSP_COOP_PROTOCOL	7
 
 // the longest player name co-op sends (coop_name; the launcher's "Your name")
 #define COOP_NAME_MAX		31
@@ -53,6 +54,13 @@ int			CoopNet_HostNeedsPassword( void );
 int			CoopNet_HostHasGuest( void );
 // the host level (sp/sp_bridge.cpp's level id) the guest has loaded and runs, 0 for none yet
 int			CoopNet_HostGuestLevel( void );
+// Host's and guest's game files (FS_CoopPaks lists, "pak0.pk3:<checksum> ..."): the same,
+// only the Expansion Pack's pak3.pk3 differs (a warning: they can still play), or pak0-pak2
+// differ (the host refuses). text: sentences naming the packs, for the host (forHost) or guest.
+#define COOP_PAKS_SAME		0
+#define COOP_PAKS_EXPANSION	1
+#define COOP_PAKS_DIFFER	2
+int			CoopNet_ComparePaks( const char *hostPaks, const char *guestPaks, qboolean forHost, char *text, int size );
 // the coop_status / coop_disconnect / coop_kick commands (once; the guest adds them itself)
 void		CoopNet_AddCommands( void );
 

@@ -11,7 +11,10 @@ The Single Player card gets a "Co-op…" button. Its sheet has:
     +set sp_coop 1 (the latched cvar that turns co-op on at the next level
     start). The sheet lists this Mac's network addresses for the friend.
   - Join: an address field and Check, which asks that address whether a
-    co-op game runs there and shows what the host answers. Connect (after a
+    co-op game runs there and shows what the host answers, and compares the
+    host's game paks with this Mac's (CoopNet_ComparePaks): a different
+    pak0-pak2 is shown as a refusal (no Connect), a different Expansion Pack
+    (pak3) as a warning with "Join Anyway". Connect (after a
     Check found a game) plays single player with +set coop_connect <address>:
     the engine joins that host as player 2 (sys_coop_net.c).
   - Internet play (Host side): "Open the port on my router" asks the router
@@ -39,7 +42,9 @@ small UDP socket of its own on VSP_COOP_PORT (29760) while sp_coop is 1 and
 answers one connectionless query, polled once a frame from Com_Frame:
   -> "\xff\xff\xff\xffgetcoopinfo [challenge]"
   <- "\xff\xff\xff\xffcoopInfoResponse\n" and an infostring with
-     coopProtocol, version (the app's), hostname (the Mac's name), state
+     coopProtocol, version (the app's), hostname (the Mac's name), paks
+     (the game's own .pk3 files loaded, FS_CoopPaks: the Join side compares
+     them with its own before connecting), state
      (playing / menu), map, mission (the level's title), skill (g_spskill),
      players, maxPlayers, time (seconds of game time on the level),
      player (the host player's name, coop_name),
@@ -59,6 +64,8 @@ Test hooks (environment variables; the launcher's are in sys_osx_launcher.m):
                                 Check and wait for the answer (logged)
   VOYAGERSP_TEST_COOP_HOLD=<seconds>    ...keep it open that long after the
                                 snapshot (the window numbers are logged)
+  VOYAGERSP_TEST_COOP_JOIN=1    ...after the Check, snapshot and press Connect (or
+                                Join Anyway) when it is enabled, and play
   VOYAGERSP_TEST_COOP_HOST=1    once the launcher is up, open the sheet and
                                 press Host
   VOYAGERSP_TEST_COOP_INTERNET=1  ...tick "Open the port on my router", wait
@@ -306,6 +313,7 @@ static BOOL CoopAnswer( const char *packet, int len, const struct sockaddr_in *f
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
 	CoopSetInfo( info, "version", EF_APP_VERSION );
 	CoopSetInfo( info, "hostname", coopHostName );
+	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	if( Cvar_VariableString( "coop_name" )[0] )
 		CoopSetInfo( info, "player", Cvar_VariableString( "coop_name" ) );
 	CoopSetInfo( info, "state", playing ? "playing" : "menu" );
@@ -795,6 +803,7 @@ NSString *VSP_CoopLinkAddress( NSString *link )
 - (void)selectMode: (int)mode;		// launchMode_t; 0 is Single Player
 - (void)play: (id)sender;
 - (BOOL)canPlay;
+- (NSString *)dataFolder;			// the BaseEF folder found, or nil
 @end
 
 static BOOL coopHostChosen;
@@ -831,6 +840,13 @@ static NSString *CoopMacName( void )
 	return [n length] ? n : @"Mac";
 }
 
+// the sheet's scrolling middle: its content starts at the top
+@interface CoopFlippedView : NSView
+@end
+@implementation CoopFlippedView
+- (BOOL)isFlipped	{ return YES; }
+@end
+
 @interface VSPCoopController : NSObject <NSTextFieldDelegate>
 @property (nonatomic, strong) NSWindow *panel;
 @property (nonatomic, weak) id<VSPCoopLauncher> launcher;
@@ -843,6 +859,8 @@ static NSString *CoopMacName( void )
 @property (nonatomic, readonly) NSTextField *address;
 @property (nonatomic, readonly) NSButton *internetCheck;
 @property (nonatomic, copy) void ( ^checked )( NSDictionary *result );	// tests
+- (NSString *)connectTitle;		// tests
+- (BOOL)canConnect;
 @end
 
 static NSStackView *CoopStack( NSArray<NSView *> *views, NSUserInterfaceLayoutOrientation o, CGFloat spacing )
@@ -865,6 +883,63 @@ static NSString *CoopSkillName( NSString *skill )
 	}
 }
 
+// This Mac's own game paks, as the engine will list them once it runs (FS_CoopPaks): every .pk3 in
+// the homepath's baseEF and the game's BaseEF, by checksum
+static NSString *CoopLocalPaks( NSString *dataFolder )
+{
+	NSMutableArray *dirs = [NSMutableArray arrayWithObject: VSP_HomeBase()];
+	unsigned int found[4] = { 0, 0, 0, 0 };
+	NSMutableArray *list = [NSMutableArray array];
+
+	if( dataFolder && ![dirs containsObject: dataFolder] )
+		[dirs addObject: dataFolder];
+	for( NSString *dir in dirs )
+		for( NSString *e in [[NSFileManager defaultManager] contentsOfDirectoryAtPath: dir error: NULL] )
+		{
+			unsigned int sum;
+			int i;
+			if( [e hasPrefix: @"."] || [[e pathExtension] caseInsensitiveCompare: @"pk3"] != NSOrderedSame ||
+				!VSP_PakChecksum( [dir stringByAppendingPathComponent: e], &sum ) )
+				continue;
+			i = FS_CoopCorePakIndex( sum );
+			if( i >= 0 && i < 4 )
+				found[i] = sum;
+		}
+	for( int i = 0; i < 4; i++ )
+		if( found[i] )
+			[list addObject: [NSString stringWithFormat: @"pak%d.pk3:%u", i, found[i]]];
+	return [list componentsJoinedByString: @" "];
+}
+
+// A Check that found a game: compare the host's paks (its answer's "paks") with this Mac's. pak0-pak2
+// differ: status @"paks" and the sentences in error (Connect stays off; the host would refuse).
+// Only the Expansion Pack's pak3 differs: still found, with the sentences in warning ("Join Anyway").
+static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
+{
+	NSMutableDictionary *m;
+	NSString *hostPaks = r[@"info"][@"paks"] ?: @"", *ours;
+	char text[1024];
+	int match;
+
+	if( ![r[@"status"] isEqualToString: @"found"] )
+		return r;
+	ours = CoopLocalPaks( dataFolder );
+	match = CoopNet_ComparePaks( [hostPaks UTF8String], [ours UTF8String], qfalse, text, sizeof( text ) );
+	LLog( @"Co-op: host's paks \"%@\", this Mac's \"%@\": %s", hostPaks, ours,
+		match == COOP_PAKS_SAME ? "the same" : text );
+	if( match == COOP_PAKS_SAME )
+		return r;
+	m = [r mutableCopy];
+	if( match == COOP_PAKS_DIFFER )
+	{
+		m[@"status"] = @"paks";
+		m[@"error"] = [@( text ) stringByReplacingOccurrencesOfString: @"'" withString: @"’"];
+	}
+	else
+		m[@"warning"] = [@( text ) stringByReplacingOccurrencesOfString: @"'" withString: @"’"];
+	return m;
+}
+
 @implementation VSPCoopController
 {
 	NSTextField *resultTitle, *resultText;
@@ -873,6 +948,7 @@ static NSString *CoopSkillName( NSString *skill )
 	NSButton *checkButton, *hostButton, *connectButton;
 	NSSecureTextField *hostPassword, *joinPassword;
 	NSView *resultRow;
+	NSScrollView *_scroll;		// the sheet's middle (name, Host, Join)
 	NSString *foundAddress;		// the last Check found a game there ("address:port"); Connect joins it
 	NSDictionary *foundInfo;
 	BOOL checking;
@@ -1050,7 +1126,8 @@ static NSString *CoopSkillName( NSString *skill )
 - (void)build
 {
 	NSView *content;
-	NSStackView *root, *footer, *head;
+	NSStackView *root, *footer, *head, *middle;
+	NSView *document;
 	NSButton *cancel;
 	NSTextField *badge;
 
@@ -1070,18 +1147,57 @@ static NSString *CoopSkillName( NSString *skill )
 	footer = CoopStack( @[ [NSView new], cancel ], NSUserInterfaceLayoutOrientationHorizontal, 10 );
 	[[footer views][0] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
 
+	// The name and the Host and Join groups scroll when the screen is too short for all of them
+	// (a 13" MacBook Air); the heading stays at the top and Cancel at the bottom.
+	middle = CoopStack( @[ [self nameRow], [self hostGroup], [self joinGroup] ], NSUserInterfaceLayoutOrientationVertical, 12 );
+	[middle setEdgeInsets: NSEdgeInsetsMake( 0, 0, 2, 20 )];	// (right: room for the scroller)
+	[middle setTranslatesAutoresizingMaskIntoConstraints: NO];
+	for( NSView *v in @[ [middle views][1], [middle views][2] ] )
+		[[v widthAnchor] constraintEqualToAnchor: [middle widthAnchor] constant: -20].active = YES;
+	document = [[CoopFlippedView alloc] init];
+	[document setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[document addSubview: middle];
+	_scroll = [[NSScrollView alloc] init];
+	[_scroll setHasVerticalScroller: YES];
+	[_scroll setAutohidesScrollers: YES];
+	[_scroll setDrawsBackground: NO];
+	[_scroll setBorderType: NSNoBorder];
+	[_scroll setDocumentView: document];
+	{
+		NSRect visible = [[NSScreen mainScreen] visibleFrame];
+		NSLayoutConstraint *all = [[_scroll heightAnchor] constraintEqualToAnchor: [document heightAnchor]];
+		if( getenv( "VOYAGERSP_TEST_LAUNCHER_HEIGHT" ) )
+			visible.size.height = atof( getenv( "VOYAGERSP_TEST_LAUNCHER_HEIGHT" ) );
+		// (above the window's own wish to keep its size: the sheet grows with the Check's answer)
+		[all setPriority: NSLayoutPriorityWindowSizeStayPut + 1];
+		[all setActive: YES];
+		[NSLayoutConstraint activateConstraints: @[
+			[[middle leadingAnchor] constraintEqualToAnchor: [document leadingAnchor]],
+			[[middle trailingAnchor] constraintEqualToAnchor: [document trailingAnchor]],
+			[[middle topAnchor] constraintEqualToAnchor: [document topAnchor]],
+			[[middle bottomAnchor] constraintEqualToAnchor: [document bottomAnchor]],
+			[[document leadingAnchor] constraintEqualToAnchor: [[_scroll contentView] leadingAnchor]],
+			[[document topAnchor] constraintEqualToAnchor: [[_scroll contentView] topAnchor]],
+			[[document widthAnchor] constraintEqualToAnchor: [[_scroll contentView] widthAnchor]],
+			[[_scroll heightAnchor] constraintLessThanOrEqualToAnchor: [document heightAnchor]],
+			[[_scroll heightAnchor] constraintGreaterThanOrEqualToConstant: 160],
+			// the whole sheet within the screen's visible part, title bar included
+			[[content heightAnchor] constraintLessThanOrEqualToConstant: MAX( 360, visible.size.height - 40 )],
+		]];
+	}
+
 	root = CoopStack( @[ head,
 		VSP_WrapLabel( @"Play the campaign with a friend. The host is player 1 and plays the story; the friend joins as player 2.",
 			[NSFont systemFontOfSize: 12], [NSColor secondaryLabelColor] ),
-		[self nameRow], [self hostGroup], [self joinGroup], footer ], NSUserInterfaceLayoutOrientationVertical, 12 );
+		_scroll, footer ], NSUserInterfaceLayoutOrientationVertical, 12 );
 	[(NSTextField *)[root views][1] setPreferredMaxLayoutWidth: 520];
 	[root setCustomSpacing: 4 afterView: head];
-	[root setCustomSpacing: 18 afterView: [root views][4]];
+	[root setCustomSpacing: 18 afterView: _scroll];
 	[root setEdgeInsets: NSEdgeInsetsMake( 18, 20, 20, 20 )];
 	[root setTranslatesAutoresizingMaskIntoConstraints: NO];
 	[content addSubview: root];
-	for( NSView *v in @[ [root views][3], [root views][4], footer ] )
-		[[v widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -40].active = YES;
+	[[_scroll widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -20].active = YES;
+	[[footer widthAnchor] constraintEqualToAnchor: [root widthAnchor] constant: -40].active = YES;
 	[NSLayoutConstraint activateConstraints: @[
 		[[root leadingAnchor] constraintEqualToAnchor: [content leadingAnchor]],
 		[[root trailingAnchor] constraintEqualToAnchor: [content trailingAnchor]],
@@ -1157,6 +1273,10 @@ static NSString *CoopSkillName( NSString *skill )
 	[resultTitle setStringValue: title];
 	[resultText setStringValue: text ? text : @""];
 	[resultText setHidden: ![text length]];
+	// a short screen: show the answer and Connect below it
+	[[_panel contentView] layoutSubtreeIfNeeded];
+	[connectButton scrollRectToVisible: [connectButton bounds]];
+	[resultRow scrollRectToVisible: [resultRow bounds]];
 }
 
 // what the host told us, as lines for the result
@@ -1201,13 +1321,23 @@ static NSString *CoopDescribe( NSDictionary *info )
 	NSString *host = [info[@"hostname"] length] ? [NSString stringWithFormat: @" on “%@”", info[@"hostname"]] : @"";
 
 	BOOL found = [status isEqualToString: @"found"] && r[@"address"];
+	NSString *warning = found ? r[@"warning"] : nil;
 
 	foundAddress = found ? r[@"address"] : nil;
 	foundInfo = found ? info : nil;
 	[connectButton setEnabled: found && [_launcher canPlay]];
+	[connectButton setTitle: warning ? @"Join Anyway" : @"Connect"];
 	[connectButton setToolTip: found ? [NSString stringWithFormat: @"Join %@ as player 2", r[@"address"]] :
 		@"Check the address first"];
-	if( [status isEqualToString: @"found"] )
+	if( warning )
+		[self showIcon: @"exclamationmark.triangle.fill" color: [NSColor systemYellowColor]
+			title: [NSString stringWithFormat: @"Co-op game found%@ (%@), but the Expansion Pack differs", host, where]
+			text: [NSString stringWithFormat: @"%@\n\n%@", warning, CoopDescribe( info )]];
+	else if( [status isEqualToString: @"paks"] )
+		[self showIcon: @"xmark.octagon.fill" color: [NSColor systemRedColor]
+			title: [NSString stringWithFormat: @"Your game files don’t match the host’s%@ (%@)", host, where]
+			text: [NSString stringWithFormat: @"%@\n\n%@", r[@"error"], CoopDescribe( info )]];
+	else if( [status isEqualToString: @"found"] )
 		[self showIcon: @"checkmark.circle.fill" color: [NSColor systemGreenColor]
 			title: [NSString stringWithFormat: @"Co-op game found%@ (%@)", host, where] text: CoopDescribe( info )];
 	else if( [status isEqualToString: @"mismatch"] )
@@ -1226,7 +1356,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 
 - (void)check: (id)sender
 {
-	NSString *a = [_address stringValue];
+	NSString *a = [_address stringValue], *dataFolder = [_launcher dataFolder];
 
 	if( checking )
 		return;
@@ -1236,7 +1366,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 		[a length] ? a : @"the address"] text: nil];
 	[spinner startAnimation: nil];
 	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
-		NSDictionary *r = VSP_CoopQuery( a, 2.0 );
+		NSDictionary *r = CoopCheckPaks( VSP_CoopQuery( a, 2.0 ), dataFolder );
 		dispatch_async( dispatch_get_main_queue(), ^{
 			self->checking = NO;
 			[self->checkButton setEnabled: YES];
@@ -1276,6 +1406,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 	foundAddress = nil;
 	foundInfo = nil;
 	[connectButton setEnabled: NO];
+	[connectButton setTitle: @"Connect"];
 	[connectButton setToolTip: @"Check the address first"];
 }
 
@@ -1310,6 +1441,9 @@ static NSString *CoopDescribe( NSDictionary *info )
 {
 	[[_panel sheetParent] endSheet: _panel returnCode: NSModalResponseCancel];
 }
+
+- (NSString *)connectTitle	{ return [connectButton title]; }
+- (BOOL)canConnect			{ return [connectButton isEnabled]; }
 
 @end
 
@@ -1392,6 +1526,17 @@ static NSString *CoopDescribe( NSDictionary *info )
 	{
 		c.checked = ^( NSDictionary *r ) {
 			LLog( @"[test] co-op check %s: %@", query, r[@"status"] );
+			if( getenv( "VOYAGERSP_TEST_COOP_JOIN" ) )
+			{
+				if( sheet )
+					VSP_SnapshotWindow( [c panel], sheet );
+				LLog( @"[test] co-op: pressing %@ (%s)", [c connectTitle], [c canConnect] ? "enabled" : "disabled" );
+				if( [c canConnect] )
+					[c connect: nil];
+				else
+					finish();
+				return;
+			}
 			finish();
 		};
 		[[c address] setStringValue: @( query )];

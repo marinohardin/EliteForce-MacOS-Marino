@@ -19,7 +19,8 @@ Allow "find devices on your local network" when macOS asks.
 Co-op (EXPERIMENTAL, new in this version, Mac only): play the single-player campaign with a
 friend. Click Co-op... on the launcher's Single Player card: one Mac clicks Host, the other types
 the host's address and clicks Check, then Connect, to join as player 2. Both need this same
-version and the same game files. Co-op uses UDP port 29760; for a friend on the internet, tick
+version and the game's own pak0.pk3-pak2.pk3 (other packs don't matter; a different Expansion
+Pack only gives a warning, "Join Anyway"). Co-op uses UDP port 29760; for a friend on the internet, tick
 "Open the port on my router" and send them the link from Copy Invite. Only the host saves. It is
 new and lightly tested: please report glitches on the GitHub page above.
 

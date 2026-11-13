@@ -1232,8 +1232,8 @@ for interop (the engine cleans names again, `CoopCleanName` `N:232-250`).
   `[A-Za-z0-9_-]`. Rate limits (leaky bucket as the server's SVC_RateLimit):
   10/s per source address (32-slot table, oldest evicted) and 10 per 100 ms
   overall; limited queries are dropped silently. Reply: `\xff\xff\xff\xff`
-  `coopInfoResponse\n` + infostring with keys `coopProtocol` (6), `version`
-  (EF_APP_VERSION), `hostname` (computer name), `player` (coop_name, if set),
+  `coopInfoResponse\n` + infostring with keys `coopProtocol` (7), `version`
+  (EF_APP_VERSION), `hostname` (computer name), `paks` (`FS_CoopPaks()`), `player` (coop_name, if set),
   `state` (`playing`|`menu`), when playing `map`, `mission` (cvar
   `coop_mission`), `time` (cvar `coop_time`), always `skill` (`g_spskill`),
   `players` (playing ? max(1, `coop_players`) : 1), `maxPlayers` 2,
@@ -1266,7 +1266,8 @@ Pure sockets; portable except `arc4random` and the Cocoa return type.
 7. Accept only packets from the exact ip:port, starting with
    `\xff\xff\xff\xffcoopInfoResponse\n`, whose infostring parses and whose
    `challenge` (if present) equals ours.
-8. `coopProtocol != 6` or `version != EF_APP_VERSION` → mismatch: `"The host runs Elite Force for Mac <v> (co-op version <p>), and this Mac runs <mine> (co-op version 6). Both need the same version to play together."`
+8. `coopProtocol != 7` or `version != EF_APP_VERSION` → mismatch: `"The host runs Elite Force for Mac <v> (co-op version <p>), and this Mac runs <mine> (co-op version 7). Both need the same version to play together."`
+   Then the pak check (protocol 7): this computer's own paks (every `.pk3` in the homepath's baseEF and the game's BaseEF, by checksum, `FS_CoopCorePakIndex`) against the answer's `paks` with `CoopNet_ComparePaks`: pak0-pak2 differ → refused, shown with the sentences naming the packs (no Connect); only pak3 (Expansion Pack) differs → found with a warning and "Join Anyway".
 9. Else found (with info). Timeout → none; if a send failed → error `"macOS couldn’t send to it (<strerror>). If you didn’t allow Elite Force to find devices on your local network, allow it in System Settings > Privacy & Security > Local Network."` (Port: firewall wording.)
 
 Infostring parse (`C:439-461`): `\k\v\k\v…` → map; bytes as UTF-8, falling back
@@ -1275,7 +1276,7 @@ to Latin-1.
 ### 6.5 Host↔guest protocol (`sys_coop_net.c`)
 
 UDP, port 29760, packets ≤ 1400 bytes (`COOP_MAX_PACKET`). Protocol version
-`VSP_COOP_PROTOCOL = 6`; the app versions must also be **string-equal**
+`VSP_COOP_PROTOCOL = 7`; the app versions must also be **string-equal**
 (`EF_APP_VERSION`, e.g. "1.3.0"), so a Windows/Linux build interoperates with a
 Mac only at the same version string (and the same single-player paks). Byte
 order little-endian; messages after connect are built with the engine's `msg_t`
@@ -1286,15 +1287,15 @@ in OOB mode (`MSG_InitOOB`: no Huffman; `MSG_WriteLong/Short/Byte/String/Data`
 
 | Dir | Word | Payload |
 |---|---|---|
-| guest→host | `coopConnect` | `coopProtocol`, `version`, `paks` (`"<count>-<8 hex>"`: count and `Com_BlockChecksum` of the sorted `FS_CoopPakChecksums()` ints), `name` (clean, else "Player 2"), `sex` (optional `male`/`female`), `nonce` (16 hex), `password` (if any) |
-| host→guest | `coopAccept` | `session` (decimal, 1…0x7ffffffe), `nonce` (echo), `hostName`, `state`, `map`, `time`, `players` |
+| guest→host | `coopConnect` | `coopProtocol`, `version`, `paks` (`FS_CoopPaks()`: the game's own paks loaded, `"pak0.pk3:<checksum> pak1.pk3:<checksum> ..."`), `name` (clean, else "Player 2"), `sex` (optional `male`/`female`), `nonce` (16 hex), `password` (if any) |
+| host→guest | `coopAccept` | `session` (decimal, 1…0x7ffffffe), `nonce` (echo), `paks` (the host's), `hostName`, `state`, `map`, `time`, `players` |
 | host→guest | `coopReject` | sentence |
 
 Host rules (`N:969-1071`): ≤ 5 connect requests per second from anyone; the
 same guest (address + nonce) gets the same accept again; protocol/version
-mismatch → `"The host runs Elite Force for Mac <v> (co-op version 6), and you run <v'> (co-op version <p'>). Both need the same version."`;
+mismatch → `"The host runs Elite Force for Mac <v> (co-op version 7), and you run <v'> (co-op version <p'>). Both need the same version."`;
 another address while a guest is active → `"The game already has a player 2 (<name>)."`;
-paks differ → `"Your game files differ from the host's (host: <n> single-player .pk3 files, you: <m>). Both need the same pak0-pak3, and the same packs that change single player (Holomatch map packs don't matter)."`;
+pak0-pak2 differ (`CoopNet_ComparePaks`) → `"Your game files differ from the host's. You're missing pak2.pk3 (the host has it). Both need the game's original pak0.pk3, pak1.pk3 and pak2.pk3 (other packs don't matter)."` (each differing pack named); only pak3 differs → accepted, with a note on both consoles;
 password set and wrong → "Wrong password." / missing → "This game needs a password.";
 same address, new nonce → drop the old session silently and accept.
 Guest: up to 5 tries 1 s apart (`COOP_CONNECT_TRIES`, `COOP_CONNECT_RETRY`);
