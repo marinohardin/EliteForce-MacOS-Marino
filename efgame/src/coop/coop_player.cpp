@@ -342,6 +342,48 @@ void COOP_SpawnP2( void )
 }
 
 /*
+COOP_GuestWeapon
+
+The weapon P2 holds while a guest steers. The guest's command names the weapon its own screen has
+selected, and the host's scripts never reach that screen:
+- A script gave the players a weapon (COOP_OnScriptWeapon): player 1 switches to it at once, but the
+  guest's selection still names the old weapon (or none). P2 switches too and keeps it until the
+  guest picks a weapon itself, i.e. its selection changes.
+- P2 holds nothing (it spawned while player 1 was still raising a weapon a script had just given,
+  as after a level-entry autosave) while it has the weapon player 1 holds: it takes that one.
+*/
+static void COOP_GuestWeapon( gentity_t *ent, int guestWeapon, usercmd_t *cmd )
+{
+	gclient_t	*cl = ent->client;
+	gentity_t	*p1 = &g_entities[0];
+
+	if ( coop_p2.scriptWeapon )
+	{
+		if ( coop_p2.scriptGuestWeapon < 0 )
+		{
+			coop_p2.scriptGuestWeapon = guestWeapon;
+		}
+		if ( guestWeapon != coop_p2.scriptGuestWeapon || !( cl->ps.stats[STAT_WEAPONS] & ( 1 << coop_p2.scriptWeapon ) ) )
+		{
+			coop_p2.scriptWeapon = 0;	// the guest chose (or P2 lost it): theirs from now on
+		}
+		else
+		{
+			cmd->weapon = coop_p2.scriptWeapon;
+			return;
+		}
+	}
+	if ( cmd->weapon == WP_NONE && p1->client )
+	{
+		int w = p1->client->ps.weapon;
+		if ( w > WP_NONE && w < WP_NUM_WEAPONS && ( cl->ps.stats[STAT_WEAPONS] & ( 1 << w ) ) )
+		{
+			cmd->weapon = w;
+		}
+	}
+}
+
+/*
 COOP_GuestBuildCmd
 
 The guest's input, when a guest steers P2 (coop_net.cpp). The guest's view angles are its own;
@@ -383,6 +425,7 @@ static qboolean COOP_GuestBuildCmd( gentity_t *ent, usercmd_t *cmd )
 	{
 		cmd->weapon = cl->ps.weapon;
 	}
+	COOP_GuestWeapon( ent, g.weapon, cmd );
 	coop_p2.stuckFrames = 0;
 	VectorCopy( ent->currentOrigin, coop_p2.lastOrigin );
 	return qtrue;
@@ -413,6 +456,7 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 	cmd->serverTime = level.time;
 	cmd->weapon = coop_p2.weapon > 0 ? coop_p2.weapon : cl->ps.weapon;
 	coop_p2.weapon = 0;
+	coop_p2.scriptWeapon = 0;
 	VectorCopy( cl->ps.viewangles, view );
 
 	if ( coop_p2.moveFrames > 0 )

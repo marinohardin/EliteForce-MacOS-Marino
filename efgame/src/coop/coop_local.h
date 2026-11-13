@@ -28,6 +28,8 @@ typedef struct
 	qboolean	haveAngles;
 	vec3_t		viewAngles;
 	int			weapon;				// > 0: switch to it
+	int			scriptWeapon;		// a script gave the players this weapon (COOP_OnScriptWeapon); 0: none pending
+	int			scriptGuestWeapon;	// the guest's own selection when it did (-1: not seen yet)
 
 	// the guest's input (coop_net.cpp) steers P2; its view angles were re-based on the guest's
 	qboolean	guestSteering;

@@ -55,7 +55,9 @@ void COOP_OnScriptWeapon( gentity_t *ent, int wp )
 	ps->stats[STAT_WEAPONS] &= ~( 1 << WP_RED_HYPO );
 	ps->stats[STAT_WEAPONS] |= ( 1 << wp );
 	ps->ammo[weaponData[wp].ammoIndex] = ammoData[weaponData[wp].ammoIndex].max;
-	coop_p2.weapon = wp;
+	coop_p2.weapon = wp;				// the puppet's next command
+	coop_p2.scriptWeapon = wp;			// a guest's (COOP_GuestWeapon)
+	coop_p2.scriptGuestWeapon = -1;
 }
 
 // P2's health, armor, weapon and ammo as text ("" when it has none to keep: not in the level and no
