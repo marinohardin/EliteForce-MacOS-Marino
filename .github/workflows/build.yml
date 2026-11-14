@@ -232,8 +232,10 @@ jobs:
           $ver = "${{ github.ref_name }}".Substring("windows-v".Length)
           $zip = Get-ChildItem dist/EliteForce-Marino-*-windows-x64.zip | Select-Object -First 1
           Expand-Archive $zip.FullName -DestinationPath dist/stage
-          # installer.iss takes /DAppVersion and /DSourceDir (the unzipped release folder)
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DSourceDir=$((Resolve-Path dist/stage).Path)" "/O$((Resolve-Path dist).Path)" "/FEliteForce-Marino-$ver-setup" windows/installer.iss
+          # the zip holds one top-level folder named like the zip; installer.iss takes /DAppVersion and
+          # /DSourceDir (that unzipped release folder)
+          $src = (Resolve-Path (Join-Path dist/stage $zip.BaseName)).Path
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DSourceDir=$src" "/O$((Resolve-Path dist).Path)" "/FEliteForce-Marino-$ver-setup" windows/installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4.6.0
         with:
