@@ -372,9 +372,10 @@ cMod game modules as the Mac app: single player and Holomatch. **Co-op is Mac on
 builds don't have it (the Co-op button is hidden). They've had little testing on real Windows PCs
 and Linux distributions so far, so please [report](#reporting-issues) what you find.
 
-Download them from the [Releases page](https://github.com/marinohardin/EliteForce-MacOS-Marino/releases):
+Download them from the [Releases page](https://github.com/marinohardin/EliteForce-MacOS-Marino/releases)
+(each version is one release with the Mac, Windows and Linux files):
 
-- **Windows 10 or 11, 64-bit:** `EliteForce-Marino-<version>-windows-x64-setup.exe` (an installer
+- **Windows 10 or 11, 64-bit:** `EliteForce-Marino-<version>-setup.exe` (an installer
   for your user only, no administrator rights; Start menu entries for Single Player, Holomatch and
   a Dedicated Server, and `stvef://` join links) or `EliteForce-Marino-<version>-windows-x64.zip`
   (unpack anywhere and run `EliteForce.exe`).

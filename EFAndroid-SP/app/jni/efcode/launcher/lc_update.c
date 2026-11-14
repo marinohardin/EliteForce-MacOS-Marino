@@ -84,7 +84,8 @@ int lc_update_due( long long lastCheck, long long now )
 }
 
 /* ===================================================================== */
-/* a small JSON scanner: an array of objects with tag_name, draft, prerelease, html_url */
+/* a small JSON scanner: an array of objects with tag_name, draft, prerelease, html_url,
+   assets[].name */
 
 typedef struct {
 	const char *p, *end;
@@ -222,14 +223,103 @@ static int Skip( json *j, int depth )
 }
 
 typedef struct {
-	char tag[128], url[512];
+	char tag[128], url[512], asset[256];
 	int draft, prerelease, haveTag;
+	int assetRank;			/* index in the suffix list of asset; -1 none */
 } release;
 
+/* the index of the first suffix name ends with (case-insensitive), or -1 */
+static int SuffixRank( const char *name, const char *const *suffixes )
+{
+	size_t n = strlen( name );
+	int i;
+
+	for ( i = 0; suffixes && suffixes[i]; i++ ) {
+		size_t k = strlen( suffixes[i] );
+
+		if ( n > k && !lc_stricmp( name + n - k, suffixes[i] ) )
+			return i;
+	}
+	return -1;
+}
+
+/* an "assets" array at p: the best-ranked asset name into r; 0 on a syntax error */
+static int Assets( json *j, release *r, const char *const *suffixes )
+{
+	j->p++;				/* [ */
+	Ws( j );
+	if ( j->p < j->end && *j->p == ']' ) {
+		j->p++;
+		return 1;
+	}
+	for ( ;; ) {
+		Ws( j );
+		if ( j->p >= j->end )
+			return 0;
+		if ( *j->p == '{' ) {
+			j->p++;
+			Ws( j );
+			if ( j->p < j->end && *j->p == '}' )
+				j->p++;
+			else for ( ;; ) {
+				char key[64];
+
+				Ws( j );
+				if ( !Str( j, key, sizeof( key ) ) )
+					return 0;
+				Ws( j );
+				if ( j->p >= j->end || *j->p != ':' )
+					return 0;
+				j->p++;
+				Ws( j );
+				if ( !strcmp( key, "name" ) && j->p < j->end && *j->p == '"' ) {
+					char name[256];
+					int rank;
+
+					if ( !Str( j, name, sizeof( name ) ) )
+						return 0;
+					rank = SuffixRank( name, suffixes );
+					if ( rank >= 0 && ( r->assetRank < 0 || rank < r->assetRank ) ) {
+						r->assetRank = rank;
+						lc_strlcpy( r->asset, name, sizeof( r->asset ) );
+					}
+				} else if ( !Skip( j, 2 ) )
+					return 0;
+				Ws( j );
+				if ( j->p >= j->end )
+					return 0;
+				if ( *j->p == ',' ) {
+					j->p++;
+					continue;
+				}
+				if ( *j->p == '}' ) {
+					j->p++;
+					break;
+				}
+				return 0;
+			}
+		} else if ( !Skip( j, 2 ) )
+			return 0;
+		Ws( j );
+		if ( j->p >= j->end )
+			return 0;
+		if ( *j->p == ',' ) {
+			j->p++;
+			continue;
+		}
+		if ( *j->p == ']' ) {
+			j->p++;
+			return 1;
+		}
+		return 0;
+	}
+}
+
 /* an object at p; fills r; 0 on a syntax error */
-static int Release( json *j, release *r )
+static int Release( json *j, release *r, const char *const *suffixes )
 {
 	memset( r, 0, sizeof( *r ) );
+	r->assetRank = -1;
 	j->p++;				/* { */
 	Ws( j );
 	if ( j->p < j->end && *j->p == '}' ) {
@@ -255,6 +345,9 @@ static int Release( json *j, release *r )
 			r->haveTag = 1;
 		} else if ( !strcmp( key, "html_url" ) && *j->p == '"' ) {
 			if ( !Str( j, r->url, sizeof( r->url ) ) )
+				return 0;
+		} else if ( !strcmp( key, "assets" ) && *j->p == '[' ) {
+			if ( !Assets( j, r, suffixes ) )
 				return 0;
 		} else if ( ( !strcmp( key, "draft" ) || !strcmp( key, "prerelease" ) ) && ( *j->p == 't' || *j->p == 'f' ) ) {
 			int v = *j->p == 't';
@@ -282,12 +375,26 @@ static int Release( json *j, release *r )
 	}
 }
 
-int lc_update_parse( const char *text, size_t len, const char *tagPrefix, const char *repo,
-	char *version, size_t vSize, char *url, size_t uSize )
+/* the prefix of tag among prefixes (with a version after it), or NULL */
+static const char *TagPrefix( const char *tag, const char *const *prefixes )
+{
+	int i;
+
+	for ( i = 0; prefixes && prefixes[i]; i++ ) {
+		size_t n = strlen( prefixes[i] );
+
+		if ( !strncmp( tag, prefixes[i], n ) && tag[n] )
+			return prefixes[i];
+	}
+	return NULL;
+}
+
+int lc_update_parse( const char *text, size_t len, const char *const *tagPrefixes,
+	const char *const *assetSuffixes, const char *repo,
+	char *version, size_t vSize, char *url, size_t uSize, char *asset, size_t aSize )
 {
 	json j;
-	size_t prefixLen = strlen( tagPrefix );
-	char best[128] = "", bestUrl[512] = "", releases[256];
+	char best[128] = "", bestUrl[512] = "", bestAsset[256] = "", releases[256];
 	int found = 0;
 
 	j.p = text;
@@ -297,6 +404,8 @@ int lc_update_parse( const char *text, size_t len, const char *tagPrefix, const 
 		version[0] = 0;
 	if ( url && uSize )
 		lc_strlcpy( url, releases, uSize );
+	if ( asset && aSize )
+		asset[0] = 0;
 	Ws( &j );
 	if ( j.p >= j.end || *j.p != '[' )
 		return -1;
@@ -310,15 +419,18 @@ int lc_update_parse( const char *text, size_t len, const char *tagPrefix, const 
 			return -1;
 		if ( *j.p == '{' ) {
 			release r;
+			const char *prefix;
 
-			if ( !Release( &j, &r ) )
+			if ( !Release( &j, &r, assetSuffixes ) )
 				return -1;
-			if ( r.haveTag && !r.draft && !r.prerelease && !strncmp( r.tag, tagPrefix, prefixLen ) && r.tag[prefixLen] ) {
-				const char *v = r.tag + prefixLen;
+			if ( r.haveTag && !r.draft && !r.prerelease && ( prefix = TagPrefix( r.tag, tagPrefixes ) ) != NULL
+				&& ( !assetSuffixes || r.assetRank >= 0 ) ) {
+				const char *v = r.tag + strlen( prefix );
 
 				if ( !found || lc_version_compare( v, best ) > 0 ) {
 					lc_strlcpy( best, v, sizeof( best ) );
 					lc_strlcpy( bestUrl, r.url[0] ? r.url : releases, sizeof( bestUrl ) );
+					lc_strlcpy( bestAsset, r.asset, sizeof( bestAsset ) );
 					found = 1;
 				}
 			}
@@ -341,6 +453,8 @@ int lc_update_parse( const char *text, size_t len, const char *tagPrefix, const 
 		lc_strlcpy( version, best, vSize );
 	if ( url && uSize )
 		lc_strlcpy( url, bestUrl, uSize );
+	if ( asset && aSize )
+		lc_strlcpy( asset, bestAsset, aSize );
 	return 1;
 }
 
@@ -400,16 +514,20 @@ void lc_update_fetch( const char *appVersion, lc_update_result *out )
 		lc_snprintf( p, sizeof( p ), "GitHub answered %ld.", status );
 		Fail( out, p );
 	} else {
-		char version[64];
-		int n = lc_update_parse( body ? body : "", len, LC_UPDATE_TAG_PREFIX, LC_GITHUB_REPO,
-			version, sizeof( version ), out->url, sizeof( out->url ) );
+		static const char *const prefixes[] = { LC_UPDATE_TAG_PREFIX, LC_UPDATE_LEGACY_TAG_PREFIX, NULL };
+		static const char *const suffixes[] = { LC_UPDATE_ASSET_SUFFIXES, NULL };
+		char version[64], asset[256];
+		int n = lc_update_parse( body ? body : "", len, prefixes, suffixes, LC_GITHUB_REPO,
+			version, sizeof( version ), out->url, sizeof( out->url ), asset, sizeof( asset ) );
 
 		if ( n < 0 )
 			Fail( out, "GitHub's answer wasn't a list of releases" );
 		else {
 			out->ok = 1;
-			if ( n > 0 )
+			if ( n > 0 ) {
 				lc_strlcpy( out->version, version, sizeof( out->version ) );
+				lc_log( "Updates: release %s has %s", version, asset );
+			}
 		}
 	}
 	free( body );

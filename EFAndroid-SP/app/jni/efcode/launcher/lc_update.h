@@ -23,11 +23,17 @@ typedef struct {
 	char problem[256];
 } lc_update_result;
 
-/* blocking fetch + parse (VOYAGERSP_TEST_UPDATE honoured); tag prefix LC_UPDATE_TAG_PREFIX */
+/* blocking fetch + parse (VOYAGERSP_TEST_UPDATE honoured): the newest release tagged
+   LC_UPDATE_TAG_PREFIX (or LC_UPDATE_LEGACY_TAG_PREFIX) that has one of this platform's
+   LC_UPDATE_ASSET_SUFFIXES downloads; url is its release page */
 void lc_update_fetch( const char *appVersion, lc_update_result *out );
-/* parse the releases JSON: 1 version found, 0 none, -1 not a JSON array */
-int lc_update_parse( const char *json, size_t len, const char *tagPrefix, const char *repo,
-	char *version, size_t vSize, char *url, size_t uSize );
+/* parse the releases JSON: 1 version found, 0 none, -1 not a JSON array. A release counts
+   when its tag starts with one of tagPrefixes (NULL-terminated; version = the rest) and,
+   unless assetSuffixes is NULL, one of its assets' names ends with one of assetSuffixes
+   (NULL-terminated, case-insensitive). asset = that asset's name, the earliest suffix first. */
+int lc_update_parse( const char *json, size_t len, const char *const *tagPrefixes,
+	const char *const *assetSuffixes, const char *repo,
+	char *version, size_t vSize, char *url, size_t uSize, char *asset, size_t aSize );
 int lc_version_compare( const char *a, const char *b );		/* NSNumericSearch semantics */
 int lc_version_is_newer( const char *v, const char *appVersion );
 int lc_update_due( long long lastCheck, long long now );

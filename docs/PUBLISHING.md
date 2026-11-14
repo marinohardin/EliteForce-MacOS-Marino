@@ -99,14 +99,28 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
    `xcrun notarytool store-credentials EliteForce-notary --apple-id <apple-id> --team-id 4UCK4VV22J`.
    The script prints Gatekeeper's verdict (`spctl`); "accepted, source=Notarized Developer ID" is
    the goal. `UNSIGNED=1` makes the ad-hoc build.
-5. Draft the release on the tag `macos-v<version>` (not `v<version>`: the Android project's
-   `v1.x` tags are in this repo's history) targeting `main`, as a pre-release while in beta:
-   `gh release create macos-v<version> dist/EliteForce-MacOS-Marino-<version>-arm64.{dmg,zip}
-   --draft --prerelease --target main --title "Elite Force for Mac <version>" --notes-file notes.md`.
-   Notes: what's new, install (DMG drag, Gatekeeper), requirements (Apple Silicon, macOS, retail
-   data), known issues, licenses and credits.
-6. Review the draft on GitHub and publish. Publishing creates the tag. Once it's published (and
-   not a pre-release), the launchers of earlier versions (1.2.1 on) announce it within a day.
+5. **One release per version, with every platform's downloads**, titled
+   "Elite Force (Marino's Build) <version>", on the tag `macos-v<version>` (not `v<version>`:
+   the Android project's `v1.x` tags are in this repo's history). Keep the `macos-v` prefix for
+   all platforms: the Mac app's update check only knows `macos-v*` tags, and the Windows/Linux
+   launchers look for a `macos-v*` release that has their own download (setup `.exe` or
+   `-windows-x64.zip`; `.AppImage`). Don't make `windows-v`/`linux-v` releases any more.
+   1. Bump `EF_APP_VERSION` in `EFAndroid-SP/app/jni/engine/CMakeLists.txt` to the same
+      version (CI's Windows/Linux builds take theirs from the tag), commit, and push the tag:
+      `git tag macos-v<version> && git push origin macos-v<version>`.
+   2. CI (`.github/workflows/build.yml`) builds all three platforms and puts the Windows zip and
+      installer and the Linux AppImage into the draft release for the tag, creating it from
+      `.github/release-notes.md` (intro, "No game data" note, Downloads table, "What's new") if
+      it isn't there yet. CI's own macOS build is unsigned and never uploaded.
+   3. Add the notarized Mac files: `UPLOAD=1 macos/make-release.sh` (or, after a build,
+      `NO_BUILD=1 UPLOAD=1 macos/make-release.sh`). It uploads the dmg and zip into the same
+      release (creating the draft with the same title and notes if CI hasn't yet).
+   4. Write "What's new" in the draft (what's new per platform, known issues, credits). Mark it
+      a pre-release while in beta.
+6. Check the draft has all five files (Mac dmg + zip, Windows setup.exe + zip, Linux AppImage),
+   then publish. Once it's published (and not a pre-release), the launchers of earlier versions
+   (Mac 1.2.1 on; Windows/Linux 1.5.0 on) announce it within a day. Windows/Linux 1.4.0 only
+   look for `windows-v`/`linux-v` releases, which no longer exist, so they aren't told.
 
 ## 4. Open doc TODO markers
 
