@@ -22,7 +22,7 @@ Status: done = implemented as specified; DEV = deviates (reason); TODO = not don
 | 4.2 chooser | done as a pre-dialog with in-place checkbox + "Choose Folder…" / "Choose GOG Installer…" (the spec's accepted equivalent) |
 | 4.3/4.4 GOG unpack, copy, Add Game Files…, progress panel, alerts | done (alert texts from the core) |
 | 5.x in-game File menu equivalents | not UI: core-a console commands |
-| 6.1 Co-op sheet (hidden unless `lc_coop_ui_enabled()`), NAT, Check, Host, Connect | done (not verified end to end against a second PC) |
+| 6.1 Co-op sheet (shown in EF_COOP builds, `lc_coop_ui_enabled()`), NAT, Check (with the Mac's pak compare and Join Anyway), Host, Character, Connect | done (cross-built; not verified end to end against a second PC) |
 | 7.1 stvef:// registration, single-instance forwarding (WM_COPYDATA), pending link | done; link while the game (not launcher) runs starts a new launcher instead of the in-game dialogs: DEV |
 | 7.2 About | done (system menu / gear menu) |
 | 8 update check, badge, alerts, auto toggle | done (needs libcurl-4.dll next to the exe) |

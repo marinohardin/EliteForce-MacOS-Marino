@@ -1385,3 +1385,20 @@ visible screen were that tall (checked at 500, 600 and 700 with `screencapture -
   above them says how) and the runtime row in THIRD_PARTY_LICENSES.md.
 - `windows/ReadMe.txt` and `linux/ReadMe.txt` describe the launcher and its data setup (and get the
   version filled in); the installer's first Start menu entry is now "Elite Force" (the launcher).
+
+## Co-op on Windows and Linux (1.5.0)
+- The `windows-x64` and `linux-x64` presets set `EF_COOP=ON` (CI, `windows/make-release.sh` and
+  `linux/make-appimage.sh` configure with them), so both releases have co-op. The CMake default
+  stays OFF, and `macos/make-app.sh` / `macos/regress.sh` are unchanged.
+- `lc_coop_ui_enabled()` is now just `LC_COOP_BUILT`: `LC_COOP_UI_ENABLED` and `EF_SHOW_COOP` are gone.
+- The launcher core gained what the Mac sheet does in `sys_osx_coop.m`: the pak compare after a
+  Check (`lc_pak_checksum`, the engine's pack checksum from a pk3's central directory;
+  `lc_coop_check_paks`, the same sentences as `CoopNet_ComparePaks`; status "paks" or a `warning`
+  for the Expansion Pack only), and player 2's character from `efgame/src/game/coop_characters.h`
+  (`coop_look`, saved as `coopguestcharacter`). The Win32 and Qt sheets show a Character menu, the
+  red/yellow results and **Join Anyway** like the Mac. The Qt sheet's Check also no longer shows a
+  failed send ("error") as a version mismatch.
+- The host's version-mismatch reply says "Elite Force" instead of "Elite Force for Mac" off Apple
+  (`#ifdef __APPLE__`, so the Mac build is unchanged).
+- tests/launcher: test_coop uses protocol 7 and covers MD4, the pak compare, the checksum of a
+  generated zip and the character arguments.

@@ -170,11 +170,11 @@ list(REMOVE_ITEM EFGAME_SRC ${SRC}/game/bg_lib.cpp)   # QVM freestanding libc â€
 list(REMOVE_ITEM EFGAME_SRC
   ${SRC}/icarus/Interface.cpp ${SRC}/icarus/Interpreter.cpp ${SRC}/icarus/Tokenizer.cpp)
 
-# Co-op (experimental, default OFF; macos/make-app.sh builds the Mac app with it): the sources live
+# Co-op (experimental, default OFF; macos/make-app.sh builds the Mac app with it, the windows-x64 and
+# linux-x64 presets the Windows and Linux releases): the sources live
 # in src/coop/, outside the globs above, so an OFF build (and the Android build) never compiles
 # them. With it OFF, game/coop_public.h turns every co-op helper back into the expression it
-# replaced. Windows/Linux can build it (the engine side is sys/sys_coop_host.c) but their releases
-# don't, for now.
+# replaced. On Windows/Linux the engine side is sys/sys_coop_host.c.
 option(EF_COOP "Single-player co-op (experimental)" OFF)
 if(EF_COOP)
   file(GLOB EFCOOP_SRC ${SRC}/coop/*.cpp)

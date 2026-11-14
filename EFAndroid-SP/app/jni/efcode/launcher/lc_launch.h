@@ -28,6 +28,7 @@ typedef struct {
 	/* co-op (§6.2): set by the co-op sheet */
 	int coopHost, coopBackground;
 	const char *coopConnect, *coopSex, *coopName;
+	const char *coopLook;			/* player 2's character id (lc_coop_character), NULL: Munro */
 	/* Browse… / link (§3.5) */
 	const char *joinAddress, *joinPassword;
 } lc_launch;

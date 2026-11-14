@@ -22,6 +22,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 
 #include <ctype.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -464,54 +465,66 @@ int lc_data_missing_patch_paks( const char *homeBase, const char *base, char nam
 	return n;
 }
 
-int lc_zip_has_entry( const char *pk3, const char *name )
+unsigned char *lc_zip_central_directory( const char *pk3, size_t *cdLen )
 {
 	FILE *f = lc_fopen( pk3, "rb" );
-	unsigned char tail[65536 + 22], *cd = NULL, *p;
+	unsigned char tail[65536 + 22], *cd = NULL;
 	long long size;
 	size_t tailLen, cdSize;
 	long i;
 	unsigned cdOffset;
-	int found = 0;
-	size_t nameLen = strlen( name );
 
+	*cdLen = 0;
 	if ( !f )
-		return 0;
+		return NULL;
 	if ( fseek( f, 0, SEEK_END ) ) {
 		fclose( f );
-		return 0;
+		return NULL;
 	}
 	size = ftell( f );
 	if ( size < 22 ) {
 		fclose( f );
-		return 0;
+		return NULL;
 	}
 	tailLen = size < (long long)sizeof( tail ) ? (size_t)size : sizeof( tail );
 	if ( fseek( f, (long)( size - (long long)tailLen ), SEEK_SET ) || fread( tail, 1, tailLen, f ) != tailLen ) {
 		fclose( f );
-		return 0;
+		return NULL;
 	}
 	for ( i = tailLen - 22; ; i-- ) {
 		if ( tail[i] == 'P' && tail[i + 1] == 'K' && tail[i + 2] == 5 && tail[i + 3] == 6 )
 			break;
 		if ( i == 0 ) {
 			fclose( f );
-			return 0;
+			return NULL;
 		}
 	}
 	cdSize = (size_t)tail[i + 12] | ( (size_t)tail[i + 13] << 8 ) | ( (size_t)tail[i + 14] << 16 ) | ( (size_t)tail[i + 15] << 24 );
 	cdOffset = (unsigned)tail[i + 16] | ( (unsigned)tail[i + 17] << 8 ) | ( (unsigned)tail[i + 18] << 16 ) | ( (unsigned)tail[i + 19] << 24 );
 	if ( !cdSize || cdSize > ( 64u << 20 ) || (long long)cdOffset + (long long)cdSize > size ) {
 		fclose( f );
-		return 0;
+		return NULL;
 	}
 	cd = malloc( cdSize );
 	if ( !cd || fseek( f, (long)cdOffset, SEEK_SET ) || fread( cd, 1, cdSize, f ) != cdSize ) {
 		free( cd );
 		fclose( f );
-		return 0;
+		return NULL;
 	}
 	fclose( f );
+	*cdLen = cdSize;
+	return cd;
+}
+
+int lc_zip_has_entry( const char *pk3, const char *name )
+{
+	size_t cdSize;
+	unsigned char *cd = lc_zip_central_directory( pk3, &cdSize ), *p;
+	int found = 0;
+	size_t nameLen = strlen( name );
+
+	if ( !cd )
+		return 0;
 	p = cd;
 	while ( p + 46 <= cd + cdSize && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 ) {
 		size_t nl = (size_t)p[28] | ( (size_t)p[29] << 8 );
@@ -528,6 +541,127 @@ int lc_zip_has_entry( const char *pk3, const char *name )
 	}
 	free( cd );
 	return found;
+}
+
+/* ---- the engine's pack checksum (qcommon/md4.c Com_BlockChecksum, files.c FS_LoadZipFile) ---- */
+
+typedef struct { uint32_t a, b, c, d; } md4State;
+
+#define MD4_F( x, y, z )	( ( ( x ) & ( y ) ) | ( ~( x ) & ( z ) ) )
+#define MD4_G( x, y, z )	( ( ( x ) & ( y ) ) | ( ( x ) & ( z ) ) | ( ( y ) & ( z ) ) )
+#define MD4_H( x, y, z )	( ( x ) ^ ( y ) ^ ( z ) )
+#define MD4_ROT( x, s )		( ( ( x ) << ( s ) ) | ( ( x ) >> ( 32 - ( s ) ) ) )
+
+static void Md4Block( md4State *m, const unsigned char *in )
+{
+	static const int r1[4] = { 3, 7, 11, 19 }, r2[4] = { 3, 5, 9, 13 }, r3[4] = { 3, 9, 11, 15 };
+	static const int o3[16] = { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 };
+	uint32_t x[16], v[4], t;
+	int i;
+
+	for ( i = 0; i < 16; i++ )
+		x[i] = (uint32_t)in[i * 4] | ( (uint32_t)in[i * 4 + 1] << 8 ) | ( (uint32_t)in[i * 4 + 2] << 16 ) | ( (uint32_t)in[i * 4 + 3] << 24 );
+	v[0] = m->a; v[1] = m->b; v[2] = m->c; v[3] = m->d;
+	/* each step updates v[(4 - i % 4) % 4] from the other three, in the order a, d, c, b */
+	for ( i = 0; i < 16; i++ ) {
+		uint32_t *A = &v[( 4 - i % 4 ) % 4], B = v[( 5 - i % 4 ) % 4], C = v[( 6 - i % 4 ) % 4], D = v[( 7 - i % 4 ) % 4];
+		t = *A + MD4_F( B, C, D ) + x[i];
+		*A = MD4_ROT( t, r1[i % 4] );
+	}
+	for ( i = 0; i < 16; i++ ) {
+		uint32_t *A = &v[( 4 - i % 4 ) % 4], B = v[( 5 - i % 4 ) % 4], C = v[( 6 - i % 4 ) % 4], D = v[( 7 - i % 4 ) % 4];
+		t = *A + MD4_G( B, C, D ) + x[( i % 4 ) * 4 + i / 4] + 0x5A827999u;
+		*A = MD4_ROT( t, r2[i % 4] );
+	}
+	for ( i = 0; i < 16; i++ ) {
+		uint32_t *A = &v[( 4 - i % 4 ) % 4], B = v[( 5 - i % 4 ) % 4], C = v[( 6 - i % 4 ) % 4], D = v[( 7 - i % 4 ) % 4];
+		t = *A + MD4_H( B, C, D ) + x[o3[i]] + 0x6ED9EBA1u;
+		*A = MD4_ROT( t, r3[i % 4] );
+	}
+	m->a += v[0]; m->b += v[1]; m->c += v[2]; m->d += v[3];
+}
+
+void lc_md4( const void *data, size_t len, unsigned char out[16] )
+{
+	md4State m = { 0x67452301u, 0xefcdab89u, 0x98badcfeu, 0x10325476u };
+	const unsigned char *p = (const unsigned char *)data;
+	unsigned char buf[128];
+	size_t n = len, i;
+	uint32_t bits;
+
+	while ( n >= 64 ) {
+		Md4Block( &m, p );
+		p += 64;
+		n -= 64;
+	}
+	memset( buf, 0, sizeof( buf ) );
+	if ( n )
+		memcpy( buf, p, n );
+	buf[n] = 0x80;
+	bits = (uint32_t)( len * 8 );		/* the low 32 bits of the length, as the engine's mdfour */
+	if ( n <= 55 ) {
+		for ( i = 0; i < 4; i++ )
+			buf[56 + i] = (unsigned char)( bits >> ( 8 * i ) );
+		Md4Block( &m, buf );
+	} else {
+		for ( i = 0; i < 4; i++ )
+			buf[120 + i] = (unsigned char)( bits >> ( 8 * i ) );
+		Md4Block( &m, buf );
+		Md4Block( &m, buf + 64 );
+	}
+	for ( i = 0; i < 4; i++ ) {
+		out[i] = (unsigned char)( m.a >> ( 8 * i ) );
+		out[4 + i] = (unsigned char)( m.b >> ( 8 * i ) );
+		out[8 + i] = (unsigned char)( m.c >> ( 8 * i ) );
+		out[12 + i] = (unsigned char)( m.d >> ( 8 * i ) );
+	}
+}
+
+int lc_pak_checksum( const char *pk3, unsigned *checksum )
+{
+	size_t cdSize, n = 0, cap = 256;
+	unsigned char *cd = lc_zip_central_directory( pk3, &cdSize ), *p, digest[16];
+	unsigned char *crcs;
+	uint32_t w[4];
+	int i;
+
+	if ( !cd )
+		return 0;
+	crcs = malloc( cap );
+	if ( !crcs ) {
+		free( cd );
+		return 0;
+	}
+	p = cd;
+	while ( p + 46 <= cd + cdSize && p[0] == 'P' && p[1] == 'K' && p[2] == 1 && p[3] == 2 ) {
+		size_t nl = (size_t)p[28] | ( (size_t)p[29] << 8 );
+		size_t el = (size_t)p[30] | ( (size_t)p[31] << 8 );
+		size_t cl = (size_t)p[32] | ( (size_t)p[33] << 8 );
+		unsigned uncompressed = (unsigned)p[24] | ( (unsigned)p[25] << 8 ) | ( (unsigned)p[26] << 16 ) | ( (unsigned)p[27] << 24 );
+
+		if ( uncompressed > 0 ) {		/* the CRC-32 of each non-empty file, little-endian, in order */
+			if ( n + 4 > cap ) {
+				unsigned char *bigger = realloc( crcs, cap * 2 );
+				if ( !bigger ) {
+					free( crcs );
+					free( cd );
+					return 0;
+				}
+				crcs = bigger;
+				cap *= 2;
+			}
+			memcpy( crcs + n, p + 16, 4 );
+			n += 4;
+		}
+		p += 46 + nl + el + cl;
+	}
+	free( cd );
+	lc_md4( crcs, n, digest );
+	free( crcs );
+	for ( i = 0; i < 4; i++ )
+		w[i] = (uint32_t)digest[i * 4] | ( (uint32_t)digest[i * 4 + 1] << 8 ) | ( (uint32_t)digest[i * 4 + 2] << 16 ) | ( (uint32_t)digest[i * 4 + 3] << 24 );
+	*checksum = (unsigned)( w[0] ^ w[1] ^ w[2] ^ w[3] );
+	return 1;
 }
 
 typedef struct { const char *dir; int found; } expCtx;

@@ -20,11 +20,11 @@ simplifying hosting servers compared to the original game.
 
 New in 1.4.0, both **experimental**:
 
-- **Co-op for the single-player campaign, on the Mac only.** A friend joins your game as a
-  second Hazard Team member, on your network or over the internet. See
-  [Co-op (experimental, Mac only)](#co-op-experimental-mac-only).
+- **Co-op for the single-player campaign.** A friend joins your game as a second Hazard Team
+  member, on your network or over the internet. See [Co-op (experimental)](#co-op-experimental).
+  Since 1.5.0 the Windows and Linux builds have it too.
 - **Windows and Linux (including Steam Deck) builds** of the same game, with their own
-  launchers, but without co-op. See [Windows and Linux (experimental)](#windows-and-linux-experimental).
+  launchers. See [Windows and Linux (experimental)](#windows-and-linux-experimental).
 
 
 **No game data is included.** You need your own copy of the retail game. (Even the icon is intentionally not using copyrighted symbols.)
@@ -67,10 +67,10 @@ New in 1.4.0, both **experimental**:
   prediction on servers that offer it (see [cMod's game modules](#cmods-game-modules)).
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection, except when you use co-op.
-- **Co-op (experimental, Mac only).** Play the single-player campaign with a friend: the
+- **Co-op (experimental).** Play the single-player campaign with a friend: the
   launcher's **Co-op…** button hosts a game or joins one, on your network or over the
   internet, with revives instead of instant death. See
-  [Co-op (experimental, Mac only)](#co-op-experimental-mac-only).
+  [Co-op (experimental)](#co-op-experimental).
 - **Dedicated server.** **Host a Server** runs a standalone server with a status window
   (players with Kick, console, map and bot controls), **Play on This Mac**, and automatic
   router port opening (NAT-PMP / UPnP). See [Hosting a server](#hosting-a-server).
@@ -158,11 +158,14 @@ folder yourself: the app's **File** menu has
 Saves from the Windows version work: the app copies them when it copies your `BaseEF`, or
 you can drop `.sav` files into the saves folder.
 
-## Co-op (experimental, Mac only)
+## Co-op (experimental)
 
-Play the single-player campaign with a friend. One Mac **hosts**: it plays the story as usual,
-as player 1. The other Mac **joins** as player 2, a second Hazard Team member in the host's
-game. Co-op is new and experimental, and only in the Mac app (not on Windows or Linux).
+Play the single-player campaign with a friend. One computer **hosts**: it plays the story as
+usual, as player 1. The other **joins** as player 2, a second Hazard Team member in the host's
+game. Co-op is new and experimental. It is in the Mac app and, since 1.5.0, in the Windows and
+Linux builds too, with the same Co-op sheet (the steps below say "Mac"; on Windows it's your PC).
+A Mac, a Windows PC and a Linux computer use the same co-op protocol, so they should be able to
+play together as long as they run the same version.
 
 Both players need the same version of the app and the game's own `pak0.pk3`, `pak1.pk3` and
 `pak2.pk3`. Other packs (Holomatch maps, mods, community packs) don't matter. If only one of you
@@ -235,7 +238,8 @@ this off.
   low gaps. It is moved next to you when it gets stuck.
 - Only the rifle and I-MOD shots show at once on the guest; other weapons fire after a round trip.
 - So far co-op has been tested with two copies of the app on one Mac. It hasn't been tested yet
-  between two Macs, on a home network or over the internet.
+  between two Macs, on a home network or over the internet, nor on real Windows PCs or Linux
+  computers, nor between a Mac and a PC.
 - Some maps may still have co-op glitches (turbolifts, transporters, scripted sequences). Please
   [report them](#reporting-issues).
 
@@ -368,9 +372,11 @@ app copied), then drag the app to the Trash.
 ## Windows and Linux (experimental)
 
 There are also **experimental** builds for Windows and Linux, with the same engine, fixes and
-cMod game modules as the Mac app: single player and Holomatch. **Co-op is Mac only**: these
-builds don't have it (the Co-op button is hidden). They've had little testing on real Windows PCs
-and Linux distributions so far, so please [report](#reporting-issues) what you find.
+cMod game modules as the Mac app: single player, Holomatch and, since 1.5.0, co-op (the same
+**Co-op…** button and sheet; see [Co-op (experimental)](#co-op-experimental)). They've had little
+testing on real Windows PCs and Linux distributions so far, so please [report](#reporting-issues)
+what you find. Allow Elite Force through the Windows firewall (or open UDP 29760 on Linux) when you
+host a co-op game.
 
 Download them from the [Releases page](https://github.com/marinohardin/EliteForce-MacOS-Marino/releases):
 
@@ -502,9 +508,9 @@ Technical background on the port is in
 - The Mac app is Apple Silicon only.
 - **Holomatch is new.** Mac-to-Mac games over LAN and online are tested. The internet
   server browser depends on community master servers being online (see **Servers…**).
-- **Co-op is experimental (Mac only).** Host and guest need the same app version and the same
+- **Co-op is experimental.** Host and guest need the same app version and the same
   single-player game files. It has been tested with two copies on one Mac, not yet between two
-  Macs or over the internet. See [Known limits](#known-limits) for the rest.
+  Macs, over the internet, or on Windows and Linux. See [Known limits](#known-limits) for the rest.
 - **Windows and Linux are experimental.** The Windows build is unsigned (SmartScreen warning), and
   both have had little testing on real PCs and Linux distributions.
 - Lip sync uses a simpler mouth cycle when the OpenAL sound backend is selected.

@@ -96,9 +96,7 @@ int lc_test_env( const char *name )
 
 int lc_coop_ui_enabled( void )
 {
-	if ( !LC_COOP_BUILT )
-		return 0;	/* the engine has no co-op to start */
-	return LC_COOP_UI_ENABLED || lc_test_env( "EF_SHOW_COOP" );
+	return LC_COOP_BUILT;	/* only when the engine has co-op to start */
 }
 
 /* ===================================================================== */

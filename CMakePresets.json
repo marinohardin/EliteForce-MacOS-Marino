@@ -28,7 +28,8 @@
       "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-w64-mingw32.cmake",
       "cacheVariables": {
         "EF_DEPS_PREFIX": "${sourceDir}/build-deps/windows/install",
-        "EF_FFMPEG_PREFIX": "${sourceDir}/build-ffmpeg/windows/install"
+        "EF_FFMPEG_PREFIX": "${sourceDir}/build-ffmpeg/windows/install",
+        "EF_COOP": "ON"
       }
     },
     {
@@ -38,7 +39,8 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
       "cacheVariables": {
         "EF_DEPS_PREFIX": "${sourceDir}/build-deps/linux/install",
-        "EF_FFMPEG_PREFIX": "${sourceDir}/build-ffmpeg/linux/install"
+        "EF_FFMPEG_PREFIX": "${sourceDir}/build-ffmpeg/linux/install",
+        "EF_COOP": "ON"
       }
     }
   ],

@@ -51,6 +51,13 @@ void lc_data_status_text( const lc_data *d, char *line, size_t lineSize, char *d
 int lc_data_missing_patch_paks( const char *homeBase, const char *base, char names[2][16] );
 int lc_data_has_expansion( const char *homeBase, const char *base );
 int lc_zip_has_entry( const char *pk3, const char *name );
+/* a zip's central directory (malloc'd, free it; NULL when it isn't a readable zip) */
+unsigned char *lc_zip_central_directory( const char *pk3, size_t *cdLen );
+/* MD4 (RFC 1320; the engine's mdfour, which counts only the low 32 bits of the length) */
+void lc_md4( const void *data, size_t len, unsigned char out[16] );
+/* a pk3's checksum as the engine computes it when it loads the pack (Com_BlockChecksum of the
+   CRCs of its non-empty files, in order), from the central directory alone; 0 when unreadable */
+int lc_pak_checksum( const char *pk3, unsigned *checksum );
 
 /* §4.2's wording; MSG_USE_BASEEF is reworded for this platform */
 #define LC_MSG_PAK0_ON_CD	"pak0.pk3 is missing \xe2\x80\x94 minimum CD installs leave it on the CD; copy it from BaseEF on the CD into this BaseEF folder, or choose a full installation."

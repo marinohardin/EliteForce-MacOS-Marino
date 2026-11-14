@@ -23,7 +23,8 @@ int coopPort()
 
 }
 
-CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) : QDialog( parent ), m_canPlay( canPlay )
+CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, const QString &dataFolder )
+	: QDialog( parent ), m_canPlay( canPlay ), m_dataFolder( dataFolder )
 {
 	setWindowTitle( "Co-op" );
 	setModal( true );
@@ -159,6 +160,41 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 	r2->addLayout( jm );
 	r2->addStretch( 1 );
 	jl->addLayout( r2 );
+
+	/* player 2's character (coop_characters.h): Munro, or one of the crew / the Hazard Team */
+	QHBoxLayout *lr = new QHBoxLayout;
+	lr->addWidget( label( "Character", 12 ) );
+	m_look = new QComboBox;
+	m_look->setFixedWidth( px( 220 ) );
+	m_look->setToolTip( QString::fromUtf8( "Player 2\xe2\x80\x99s look on both screens: Munro, or a member of Voyager\xe2\x80\x99s crew or the Hazard Team. "
+		"Only characters from the game\xe2\x80\x99s own files, so the host has them too." ) );
+	m_look->addItem( "Munro (default)", QString() );
+	{
+		const char *saved = lc_store_get( st, LC_KEY_COOP_LOOK );
+		const char *lastGroup = "";
+		int select = 0;
+		for ( int i = 0; i < lc_coop_character_count(); ++i ) {
+			const char *id, *name, *group;
+			if ( !lc_coop_character( i, &id, &name, &group ) )
+				continue;
+			if ( strcmp( group, lastGroup ) ) {
+				lastGroup = group;
+				m_look->insertSeparator( m_look->count() );
+				m_look->addItem( QString::fromUtf8( strcmp( group, "crew" ) ? "Hazard Team" : "Voyager crew" ) );
+				if ( QStandardItemModel *m = qobject_cast<QStandardItemModel *>( m_look->model() ) )
+					if ( QStandardItem *it = m->item( m_look->count() - 1 ) )
+						it->setFlags( it->flags() & ~( Qt::ItemIsSelectable | Qt::ItemIsEnabled ) );
+			}
+			m_look->addItem( QString( "    " ) + U( name ), U( id ) );
+			if ( saved && !strcmp( saved, id ) )
+				select = m_look->count() - 1;
+		}
+		m_look->setCurrentIndex( select );
+	}
+	lr->addWidget( m_look );
+	lr->addWidget( label( "with the voice of the Munro above", 11, QFont::Normal, secondary() ) );
+	lr->addStretch( 1 );
+	jl->addLayout( lr );
 
 	/* result row */
 	QWidget *result = new QWidget;
@@ -413,6 +449,7 @@ void CoopDialog::updateConnect()
 {
 	const bool ok = m_status == "ok" && m_canPlay;
 	m_connect->setEnabled( ok );
+	m_connect->setText( ok && !m_warning.isEmpty() ? "Join Anyway" : "Connect" );
 	m_connect->setToolTip( ok ? QString( "Join %1 as player 2" ).arg( m_foundAddress ) : QString( "Check the address first" ) );
 }
 
@@ -433,7 +470,11 @@ void CoopDialog::doCheck()
 	auto *q = new lc_coop_query;
 	memset( q, 0, sizeof *q );
 	const QByteArray ab = B( addr );
-	async( this, [q, ab]() { lc_coop_query_run( ab.constData(), 2.0, q ); }, [this, q, addr]() {
+	const QByteArray df = B( m_dataFolder );
+	async( this, [q, ab, df]() {
+		lc_coop_query_run( ab.constData(), 2.0, q );
+		lc_coop_check_paks( q, df.isEmpty() ? nullptr : df.constData() );		/* only after an "ok" */
+	}, [this, q, addr]() {
 		m_checking = false;
 		m_check->setEnabled( true );
 		const QString status = U( q->status );
@@ -446,19 +487,28 @@ void CoopDialog::doCheck()
 		const QString hostname = U( host );
 		const QString on = hostname.isEmpty() ? QString() : QString::fromUtf8( " on \xe2\x80\x9c%1\xe2\x80\x9d" ).arg( hostname );
 		QString shown = status;
+		const QString more = desc[0] ? "\n\n" + U( desc ) : QString();
+		m_warning = U( q->warning );
 		if ( status == "ok" ) {
 			m_status = "ok";
 			m_foundAddress = address;
 			m_foundHostname = hostname;
 			m_needsPassword = !strcmp( needPw, "1" );
-			showResult( "check.circle.fill", green(), QString( "Co-op game found%1 (%2)" ).arg( on, address ), U( desc ) );
-		} else if ( status == "error" ) {
+			if ( !m_warning.isEmpty() )
+				showResult( "exclamationmark.triangle.fill", yellow(),
+					QString( "Co-op game found%1 (%2), but the Expansion Pack differs" ).arg( on, address ), m_warning + more );
+			else
+				showResult( "check.circle.fill", green(), QString( "Co-op game found%1 (%2)" ).arg( on, address ), U( desc ) );
+		} else if ( status == "paks" ) {
+			m_status = "paks";
+			showResult( "xmark.circle.fill", red(),
+				QString::fromUtf8( "Your game files don\xe2\x80\x99t match the host\xe2\x80\x99s%1 (%2)" ).arg( on, address ), U( q->error ) + more );
+		} else if ( status == "mismatch" ) {
 			m_status = "mismatch";
 			showResult( "exclamationmark.triangle.fill", orange(),
 				QString::fromUtf8( "Version mismatch: the co-op game%1 (%2) can\xe2\x80\x99t be joined from this %3" ).arg( on, address, nounLc() ),
-				U( q->error ) + ( desc[0] ? "\n\n" + U( desc ) : QString() ) );
-			shown = "mismatch";
-		} else if ( status == "noanswer" ) {
+				U( q->error ) + more );
+		} else if ( status == "noanswer" || status == "error" ) {
 			m_status = "none";
 			showResult( "xmark.circle.fill", secondary(), QString( "No co-op game found at %1" ).arg( address.isEmpty() ? addr : address ),
 				q->error[0] ? U( q->error ) : QString( "Nothing answered within 2 seconds. Check the address, that the host pressed Host and is running co-op, "
@@ -466,7 +516,7 @@ void CoopDialog::doCheck()
 			shown = "none";
 		} else {
 			m_status = "bad";
-			showResult( "exclamationmark.circle.fill", red(), "This address can\xe2\x80\x99t be used", U( q->error ) );
+			showResult( "exclamationmark.circle.fill", red(), QString::fromUtf8( "This address can\xe2\x80\x99t be used" ), U( q->error ) );
 			shown = "bad";
 		}
 		log( QString( "Co-op: check %1 -> %2" ).arg( addr, shown ) );
@@ -512,11 +562,14 @@ void CoopDialog::doConnect()
 	lc_coop_safe_name( B( m_name->text() ).constData(), name, sizeof name );
 	const char *sex = m_munro->current() == 1 ? "female" : "male";
 	lc_store_set( st, LC_KEY_COOP_NAME, name[0] ? name : nullptr );
+	const QByteArray look = B( m_look->currentData().toString() );
 	lc_store_set( st, LC_KEY_COOP_MUNRO, sex );
+	lc_store_set( st, LC_KEY_COOP_LOOK, look.isEmpty() ? nullptr : look.constData() );
 	lc_store_save( st );
-	lc_coop_choose_join( B( m_foundAddress ).constData(), sex, name, B( m_joinPw->text() ).constData() );
-	log( QString( "Co-op: joining %1 as player 2 (single player with coop_connect), %2, %3 Munro" )
-		.arg( m_foundAddress, name[0] ? U( name ) : U( lc_computer_name() ), U( sex ) ) );
+	lc_coop_choose_join( B( m_foundAddress ).constData(), sex, look.constData(), name, B( m_joinPw->text() ).constData() );
+	log( QString( "Co-op: joining %1 as player 2 (single player with coop_connect), %2, %3 Munro%4" )
+		.arg( m_foundAddress, name[0] ? U( name ) : U( lc_computer_name() ), U( sex ),
+			look.isEmpty() ? QString() : QString( " as %1" ).arg( U( look.constData() ) ) ) );
 	m_choice = Connect;
 	accept();
 }

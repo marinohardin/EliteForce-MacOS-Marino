@@ -155,7 +155,7 @@ struct Launcher : Wnd {
 	/* what the Game Files group shows */
 	int stGlyph = G_CHECK_CIRCLE, stRole = R_GREEN, exGlyph = -1, exRole = R_GREEN;
 	str folderPathText, statusText, statusTip, expText;
-	lc_launch launch; str launchName, launchBase, launchLoop, launchCoopConnect, launchCoopSex, launchCoopName;
+	lc_launch launch; str launchName, launchBase, launchLoop, launchCoopConnect, launchCoopSex, launchCoopName, launchCoopLook;
 	char coopHostPw[64] = "";
 	bool test = false;
 
@@ -627,6 +627,7 @@ struct Launcher : Wnd {
 			launch.coopConnect = launchCoopConnect.empty( ) ? 0 : launchCoopConnect.c_str( );
 			launch.coopSex = launchCoopSex.empty( ) ? 0 : launchCoopSex.c_str( );
 			launch.coopName = launchCoopName.empty( ) ? 0 : launchCoopName.c_str( );
+			launchCoopLook = cf.coopLook ? cf.coopLook : ""; launch.coopLook = launchCoopLook.empty( ) ? 0 : launchCoopLook.c_str( );
 			if ( lc_coop_choice( ) && Sys_CoopSetLaunchPassword ) Sys_CoopSetLaunchPassword( lc_coop_password( ) );
 		}
 		lc_store_set_int( st, LC_KEY_MODE, mode ); lc_store_save( st );
