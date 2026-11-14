@@ -7,6 +7,7 @@
 
 #include "g_local.h"
 #include "g_functions.h"
+#include "b_local.h"
 #include "anims.h"
 #include "boltons.h"
 #include "coop_public.h"
@@ -63,8 +64,76 @@ COOP_FindSpotNear
 A clear standing spot next to P1 that P1 could walk to in a straight line (so never through a
 wall; NPCs on the way do not count), with floor under it. Behind P1 first, then the sides, then in
 front, then further out. When P1 crouches (a vent, a crawlspace) a crouching spot will do.
+With enemies around, the first spot that no more of them can see than can see P1: P1's cover is
+the partner's too (forge2's reaver ambush: the camera leaves P1 below a reaver's ledge, out of its
+sight, and the spot behind P1 was in the open, so that reaver shot player 2 unopposed). Without
+such a spot, the first one.
 */
 static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out );
+
+#define COOP_COVER_MAX		32		// enemies looked at
+#define COOP_COVER_RANGE	3072	// further enemies don't count
+
+typedef struct
+{
+	int			count;
+	gentity_t	*ent[COOP_COVER_MAX];
+	vec3_t		eyes[COOP_COVER_MAX];
+} coopCover_t;
+
+// NPCs that fight the players, alive, near org and in its PVS
+static void COOP_CoverEnemies( const vec3_t org, coopCover_t *cover )
+{
+	cover->count = 0;
+	for ( int i = 1; i < globals.num_entities && cover->count < COOP_COVER_MAX; i++ )
+	{
+		gentity_t *e = &g_entities[i];
+		if ( !e->inuse || !e->NPC || !e->client || e->health <= 0 || e->client->ps.pm_type >= PM_DEAD )
+		{
+			continue;
+		}
+		if ( e->client->enemyTeam != TEAM_STARFLEET && !COOP_IsPlayerPtr( e->enemy ) )
+		{
+			continue;
+		}
+		if ( DistanceSquared( e->currentOrigin, org ) > COOP_COVER_RANGE * COOP_COVER_RANGE
+			|| !gi.inPVS( e->currentOrigin, org ) )
+		{
+			continue;
+		}
+		cover->ent[cover->count] = e;
+		CalcEntitySpot( e, SPOT_HEAD, cover->eyes[cover->count] );
+		cover->count++;
+	}
+}
+
+// how many of them have a clear line (world only, as NPC_ClearLOS) to someone standing at org
+static int COOP_CoverSeen( const coopCover_t *cover, const vec3_t org )
+{
+	vec3_t	head;
+	trace_t	tr;
+	int		seen = 0;
+
+	VectorCopy( org, head );
+	head[2] += playerMaxs[2] + STANDARD_VIEWHEIGHT_OFFSET;	// the eyes
+	for ( int i = 0; i < cover->count; i++ )
+	{
+		if ( !gi.inPVS( cover->ent[i]->currentOrigin, org ) )
+		{
+			continue;
+		}
+		gi.trace( &tr, cover->eyes[i], NULL, NULL, org, ENTITYNUM_NONE, CONTENTS_SOLID );
+		if ( tr.fraction < 1.0f )
+		{
+			gi.trace( &tr, cover->eyes[i], NULL, NULL, head, ENTITYNUM_NONE, CONTENTS_SOLID );
+		}
+		if ( tr.fraction >= 1.0f )
+		{
+			seen++;
+		}
+	}
+	return seen;
+}
 
 qboolean COOP_FindSpotNear( gentity_t *p1, vec3_t out )
 {
@@ -105,6 +174,17 @@ static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out )
 	AngleVectors( yawOnly, forward, right, NULL );
 	VectorCopy( p1->currentOrigin, start );
 
+	coopCover_t	cover;
+	int			p1Seen = 0;
+	qboolean	haveFirst = qfalse;
+	vec3_t		first;
+
+	COOP_CoverEnemies( start, &cover );
+	if ( cover.count )
+	{
+		p1Seen = COOP_CoverSeen( &cover, start );
+	}
+
 	for ( unsigned i = 0; i < sizeof( offsets ) / sizeof( offsets[0] ); i++ )
 	{
 		VectorMA( start, offsets[i][0], forward, spot );
@@ -129,7 +209,20 @@ static qboolean COOP_FindSpotNear2( gentity_t *p1, vec3_t out )
 		{
 			continue;	// no floor (ledge, pit)
 		}
-		VectorCopy( tr.endpos, out );
+		if ( !cover.count || COOP_CoverSeen( &cover, tr.endpos ) <= p1Seen )
+		{
+			VectorCopy( tr.endpos, out );
+			return qtrue;
+		}
+		if ( !haveFirst )
+		{
+			VectorCopy( tr.endpos, first );
+			haveFirst = qtrue;
+		}
+	}
+	if ( haveFirst )
+	{
+		VectorCopy( first, out );
 		return qtrue;
 	}
 	return qfalse;
