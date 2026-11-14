@@ -2129,6 +2129,14 @@ static void PM_Weapon( void )
 
 		case WP_MELEE:
 
+			// Prediction runs without an entity (gent NULL, e.g. the client predicting while slowed down):
+			// just play the plain attack animation.
+			if ( !pm->gent || !pm->gent->client )
+			{
+				PM_SetAnim(pm,SETANIM_BOTH,BOTH_ATTACK1,SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD);
+				break;
+			}
+
 			// The slash trail "formation" hasn't been started yet, so don't try and use the old points.
 			pm->gent->trigger_formation = qfalse;
 
