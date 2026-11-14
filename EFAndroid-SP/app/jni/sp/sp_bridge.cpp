@@ -792,11 +792,56 @@ static void SP_UpdateVoiceOverride(void){
     SP_UpdateVisemes();
 }
 
+#ifdef EF_COOP
+// Cheats in co-op. The guest's world is a copy of the host's, so a cheat run there changes nothing
+// that lasts (its "god" said "godmode ON" while player 2 still took the host's damage). The guest
+// sends these to the host, whose game runs them for player 2 with the host's cheat rules (CheatsOk:
+// sv_cheats, and alive); the answer ("godmode ON") comes back as player 2's message. The other
+// cheats act on the world itself and only work on the host.
+static const char *const s_coopP2Cheats[] = { "god", "noclip", "give", "notarget", "undying", NULL };
+static const char *const s_coopHostCheats[] = { "spawn", "kill", "levelshot", "setviewpos", "setobjective", NULL };
+static qboolean SP_CoopListed( const char *const *list, const char *cmd ){
+    for( ; *list; list++ ) if( !sp_stricmpn( *list, cmd, 64 ) ) return qtrue;
+    return qfalse;
+}
+// guest: a game console command typed here (tokenized); qtrue when it was handled here
+static qboolean SP_CoopGuestConsoleCmd( void ){
+    if( !g_coopReplica ) return qfalse;
+    const char *cmd = Cmd_Argv( 0 );
+    if( SP_CoopListed( s_coopP2Cheats, cmd ) ){
+        char text[128]; int n = snprintf( text, sizeof(text), "%s", cmd );
+        for( int i = 1; i < Cmd_Argc() && n < (int)sizeof(text) - 1; i++ )
+            n += snprintf( text + n, sizeof(text) - n, " %s", Cmd_Argv( i ) );
+        if( !CoopNet_GuestSendCommand( text ) ) SP_ComPrintf()( "co-op: not connected to the host\n" );
+        return qtrue;
+    }
+    if( SP_CoopListed( s_coopHostCheats, cmd ) ){
+        SP_ComPrintf()( "co-op: %s only works in the host's game\n", cmd );
+        return qtrue;
+    }
+    return qfalse;
+}
+// host, before a game frame: the guest's cheats, for player 2
+static void SP_CoopHostConsoleCmds( void ){
+    char text[128];
+    if( !g_coopRep || g_coopReplica || !ge || !g_spActive ) return;
+    while( CoopNet_HostTakeCommand( text, sizeof(text) ) ){
+        Cmd_TokenizeString( text );
+        int p2 = g_coopRep->ViewEntity();
+        if( p2 <= 0 || !SP_CoopListed( s_coopP2Cheats, Cmd_Argv( 0 ) ) ) continue;   // (only those)
+        blog("co-op: player 2's console command: %s\n", text);
+        ge->ClientCommand( p2 );
+    }
+}
+#endif
 // One game frame at g_levelTime. With the regression harness on (qcommon/regress.c), rand() is
 // reseeded first and the game's state is logged after; otherwise this is just the voice update +
 // ge->RunFrame it always was.
 static void SP_GameRunFrame(void){
     Regress_SeedRand( g_levelTime );
+#ifdef EF_COOP
+    SP_CoopHostConsoleCmds();
+#endif
     SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
     if( Regress_Active() && g_regressDump ){
         Regress_BeginFrame( g_curMap, g_levelTime );
@@ -1137,6 +1182,9 @@ static void SP_CgameConsoleCmd(void){
     // qfalse, and they must be forwarded to the game's ClientCommand (mirrors retail CL_GameCommand ->
     // CL_ForwardCommandToServer). argv is already tokenized; gi.argv==Cmd_Argv so ClientCommand reads it.
     if(g_vmMain && SP_VmMain(CG_CONSOLE_COMMAND, 0,0,0)) return;
+#ifdef EF_COOP
+    if(SP_CoopGuestConsoleCmd()) return;
+#endif
     if(ge && g_spActive) ge->ClientCommand(0);
 }
 
@@ -1832,7 +1880,12 @@ extern "C" qboolean SP_FinishTransition(void){
 }
 
 // 'use <targetname>' and other game console commands -> the game's ClientCommand (turbolift, triggers).
-extern "C" void SP_ClientCommand(void){ if(ge && g_spActive) ge->ClientCommand(0); }
+extern "C" void SP_ClientCommand(void){
+#ifdef EF_COOP
+    if(SP_CoopGuestConsoleCmd()) return;
+#endif
+    if(ge && g_spActive) ge->ClientCommand(0);
+}
 
 // ---- user save / load (Phase 2). Retail-byte-compatible framing chunks around ge->WriteLevel/ReadLevel.
 // Retail's save gate: SV_SaveGame calls SV_CanSave, which

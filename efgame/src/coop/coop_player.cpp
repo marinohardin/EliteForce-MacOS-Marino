@@ -296,9 +296,26 @@ void COOP_ApplyHidden( gentity_t *ent, qboolean hidden )
 		ent->svFlags &= ~SVF_NOCLIENT;
 		ent->contents = ( ent->health > 0 ) ? CONTENTS_BODY : CONTENTS_CORPSE;
 		ent->takedamage = ( ent->health > 0 ) ? qtrue : qfalse;
-		ent->flags &= ~FL_NOTARGET;
+		if ( !coop_p2.notarget )
+		{
+			ent->flags &= ~FL_NOTARGET;
+		}
 	}
 	gi.linkentity( ent );
+}
+
+void COOP_P2Notarget( gentity_t *ent )
+{
+	coop_p2.notarget = (qboolean)!coop_p2.notarget;
+	if ( coop_p2.notarget )
+	{
+		ent->flags |= FL_NOTARGET;
+	}
+	else if ( !coop_p2.hidden && !COOP_IsDowned( ent ) )
+	{
+		ent->flags &= ~FL_NOTARGET;
+	}
+	gi.SendServerCommand( ent - g_entities, "print \"%s\"", coop_p2.notarget ? "notarget ON\n" : "notarget OFF\n" );
 }
 
 /*
@@ -474,7 +491,7 @@ static void COOP_SetupP2( gentity_t *ent, const vec3_t org, float yaw, qboolean 
 	ent->contents = CONTENTS_BODY;
 	ent->clipmask = MASK_PLAYERSOLID;
 	ent->svFlags &= ~SVF_NOCLIENT;
-	ent->flags &= ~FL_NOTARGET;
+	ent->flags = coop_p2.notarget ? ( ent->flags | FL_NOTARGET ) : ( ent->flags & ~FL_NOTARGET );
 	ent->e_DieFunc = dieF_player_die;	// player_die hands P2 to COOP_P2Die
 	ent->e_PainFunc = painF_NULL;
 	ent->e_TouchFunc = touchF_NULL;

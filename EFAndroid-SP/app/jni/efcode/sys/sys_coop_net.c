@@ -34,6 +34,11 @@ After that every packet starts with the session number (a long that is never
                                       lost packet costs nothing
                  COOP_MSG_KEEPALIVE   nothing new to send for a second, or
                                       the newest replica frame it decoded
+                 COOP_MSG_COMMAND     a console command for player 2 (the
+                                      cheats god, noclip, give, notarget and
+                                      undying), numbered, sent a few times;
+                                      the host's game runs it for player 2
+                                      when the host allows cheats
                  COOP_MSG_DISCONNECT  a sentence
   host -> guest  COOP_MSG_STATUS      an infostring (map, state, players, time)
                                       once a second
@@ -106,6 +111,10 @@ Console:
 #define COOP_MSG_STATUS			3		// host -> guest
 #define COOP_MSG_DISCONNECT		4		// both ways
 #define COOP_MSG_FRAME			5		// host -> guest: a fragment of a replica frame
+#define COOP_MSG_COMMAND		6		// guest -> host: a console command for player 2
+#define COOP_COMMAND_QUEUE		4		// guest commands the host's game hasn't run yet
+#define COOP_COMMAND_LEN		128
+#define COOP_COMMAND_SENDS		3		// each is sent this often (they're few, and a lost one is missed)
 
 #define COOP_TIMEOUT			10000	// ms without a packet: the other side is gone
 #define COOP_CONNECT_TRIES		5		// the guest asks this often, COOP_CONNECT_RETRY apart
@@ -974,6 +983,11 @@ static struct {
 	int					heldButtons;	// buttons of commands dropped from a full queue
 	int					viewTime;		// the applied command's (CoopNet_GuestViewTime)
 
+	// the guest's console commands (CoopNet_HostTakeCommand)
+	int					textSeq;		// the newest one's number
+	char				text[COOP_COMMAND_QUEUE][COOP_COMMAND_LEN];
+	int					textQueued;
+
 	// replica frames
 	coopFrame_t			*ring;
 	coopFrame_t			*building;		// between CoopNet_HostFrameBegin and End
@@ -1036,6 +1050,8 @@ static void CoopHostDrop( int sock, const char *reason, qboolean tell )
 	coopHost.queued = 0;
 	coopHost.appliedSeq = 0;
 	coopHost.viewTime = 0;
+	coopHost.textSeq = 0;
+	coopHost.textQueued = 0;
 	coopHost.name[0] = 0;
 	coopHost.sex[0] = 0;
 	coopHost.look[0] = 0;
@@ -1139,6 +1155,8 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	coopHost.queued = 0;
 	coopHost.appliedSeq = 0;
 	coopHost.viewTime = 0;
+	coopHost.textSeq = 0;
+	coopHost.textQueued = 0;
 	memset( &coopHost.cmd, 0, sizeof( coopHost.cmd ) );
 	CoopRingClear( coopHost.ring );
 	coopHost.ackFrame = 0;
@@ -1242,6 +1260,18 @@ void CoopNet_HostPacket( int sock, const unsigned char *data, int len, const str
 	case COOP_MSG_KEEPALIVE:
 		CoopHostReadAck( &msg );
 		break;
+	case COOP_MSG_COMMAND:
+		{
+			int seq = MSG_ReadLong( &msg );
+			char text[COOP_COMMAND_LEN];
+			CoopCleanText( MSG_ReadString( &msg ), text, sizeof( text ) );
+			if ( msg.readcount > msg.cursize || seq <= coopHost.textSeq )
+				break;		// (a copy of one already taken)
+			coopHost.textSeq = seq;
+			if ( text[0] && coopHost.textQueued < COOP_COMMAND_QUEUE )
+				Q_strncpyz( coopHost.text[coopHost.textQueued++], text, COOP_COMMAND_LEN );
+		}
+		break;
 	case COOP_MSG_DISCONNECT:
 		{
 			char reason[128];
@@ -1303,6 +1333,24 @@ void CoopNet_HostShutdown( int sock, const char *reason )
 {
 	CoopHostDrop( sock, reason, qtrue );
 	coopHostSock = -1;
+}
+
+/*
+=================
+CoopNet_HostTakeCommand
+
+The bridge on the host, before a game frame: the guest's oldest console command not run
+yet (for player 2), into out. 0 when there is none.
+=================
+*/
+int CoopNet_HostTakeCommand( char *out, int size )
+{
+	if ( !coopHost.active || !coopHost.textQueued )
+		return 0;
+	Q_strncpyz( out, coopHost.text[0], size );
+	coopHost.textQueued--;
+	memmove( &coopHost.text[0], &coopHost.text[1], sizeof( coopHost.text[0] ) * coopHost.textQueued );
+	return 1;
 }
 
 int CoopNet_HostNeedsPassword( void )
@@ -1563,6 +1611,7 @@ static struct {
 
 	// input
 	int					seq;
+	int					textSeq;		// the last console command sent (CoopNet_GuestSendCommand)
 	coopCmd_t			cmds[COOP_INPUT_BACKUP];	// the newest last
 	int					numCmds;
 	qboolean			unsent;			// a command not sent yet
@@ -1991,6 +2040,34 @@ int CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
 	c->viewTime = viewTime;
 	coopGuest.unsent = qtrue;
 	CoopGuestSend();
+	return 1;
+}
+
+/*
+=================
+CoopNet_GuestSendCommand
+
+The bridge on the guest: a console command for player 2 on the host (a cheat). Returns 0
+when not connected.
+=================
+*/
+int CoopNet_GuestSendCommand( const char *text )
+{
+	byte	buf[COOP_MAX_PACKET];
+	msg_t	msg;
+	char	clean[COOP_COMMAND_LEN];
+
+	if ( coopGuest.state != COOP_GUEST_CONNECTED )
+		return 0;
+	CoopCleanText( text, clean, sizeof( clean ) );
+	coopGuest.textSeq++;
+	for ( int i = 0; i < COOP_COMMAND_SENDS; i++ )
+	{
+		CoopBeginMessage( &msg, buf, sizeof( buf ), coopGuest.session, COOP_MSG_COMMAND );
+		MSG_WriteLong( &msg, coopGuest.textSeq );
+		MSG_WriteString( &msg, clean );
+		CoopSendMessage( coopGuest.sock, NULL, &msg );
+	}
 	return 1;
 }
 

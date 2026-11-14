@@ -38,6 +38,7 @@
 #define COOP_OnCameraEnable()		((void)0)
 #define COOP_OnCameraDisable()		((void)0)
 #define COOP_ConsoleCommand(c)		0
+#define COOP_P2Notarget(e)			((void)0)
 #define COOP_RegisterCommands()		((void)0)
 #define COOP_FindPlayerWaypoints()	((void)0)
 #define COOP_OnPickup(i,p)			((void)0)
@@ -231,6 +232,9 @@ void		COOP_OnCameraDisable( void );
 // the game's ClientCommand, which calls this. qtrue = handled
 void		COOP_RegisterCommands( void );
 qboolean	COOP_ConsoleCommand( const char *cmd );
+// the notarget cheat for player 2 (typed on the guest, run by the host's game): kept apart from
+// the notarget that hiding and going down give it, so neither undoes the other
+void		COOP_P2Notarget( gentity_t *ent );
 
 #endif // EF_COOP
 

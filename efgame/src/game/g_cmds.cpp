@@ -308,6 +308,10 @@ void Cmd_Notarget_f( gentity_t *ent ) {
 	if ( !CheatsOk( ent ) ) {
 		return;
 	}
+	if ( COOP_IsP2( ent ) ) {
+		COOP_P2Notarget( ent );
+		return;
+	}
 
 	ent->flags ^= FL_NOTARGET;
 	if (!(ent->flags & FL_NOTARGET) )

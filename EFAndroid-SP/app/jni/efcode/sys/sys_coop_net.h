@@ -74,6 +74,9 @@ int			CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *f
 // the host level time the guest's screen showed when it made the command CoopNet_GuestInput
 // returned last (its shots are checked against the world as it was then); 0 when unknown
 int			CoopNet_GuestViewTime( void );
+// the guest's oldest console command for player 2 not run yet (a cheat; the bridge checks which),
+// 0 when there is none
+int			CoopNet_HostTakeCommand( char *out, int size );
 // the guest's name, "" without a guest
 const char	*CoopNet_GuestName( void );
 // how the guest wants player 2 to look: "male", "female", or "" (like player 1, or no guest)
@@ -111,6 +114,8 @@ int			CoopNet_GuestHostPaused( void );
 // at once; 0 when this player has no input now
 int			CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
 				int forwardmove, int rightmove, int upmove, int viewTime );
+// a console command for player 2 on the host (a cheat), sent now; 0 when not connected
+int			CoopNet_GuestSendCommand( const char *text );
 
 // The guest. Once a frame (sys_osx_coop.m, before anything of the host): connects when
 // the coop_connect cvar names a host, sends this player's input, disconnects when the

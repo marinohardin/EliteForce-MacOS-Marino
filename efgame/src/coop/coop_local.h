@@ -43,6 +43,8 @@ typedef struct
 	// out of the world (COOP_CatchOutOfWorld): since when P2 has been inside solid / falling fast (0: not)
 	int			voidSince;
 	int			fallSince;
+
+	qboolean	notarget;			// the notarget cheat (COOP_P2Notarget)
 } coopP2State_t;
 
 extern coopP2State_t	coop_p2;

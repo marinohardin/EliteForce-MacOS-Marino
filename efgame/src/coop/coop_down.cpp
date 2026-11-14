@@ -420,6 +420,10 @@ static void COOP_Revive( int idx )
 	cl->ps.stats[STAT_HEALTH] = ent->health;
 	ent->takedamage = qtrue;
 	ent->flags = ( ent->flags & ~( FL_NOTARGET | FL_NO_KNOCKBACK ) ) | coop_down[idx].oldFlags;
+	if ( idx == 1 )
+	{
+		ent->flags = coop_p2.notarget ? ( ent->flags | FL_NOTARGET ) : ( ent->flags & ~FL_NOTARGET );	// (the cheat may have changed meanwhile)
+	}
 	ent->contents = CONTENTS_BODY;
 	VectorCopy( playerMins, ent->mins );
 	VectorCopy( playerMaxs, ent->maxs );
