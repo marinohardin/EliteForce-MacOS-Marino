@@ -12,6 +12,7 @@
 #include "g_local.h"
 #include "coop_public.h"
 #include "coop_local.h"
+#include "g_functions.h"
 
 extern bool		in_camera;
 
@@ -32,7 +33,7 @@ static qboolean COOP_TriggerRuns( const gentity_t *trigger, const char *script )
 }
 
 /*
-dn1, forge1: the level opens onto space. Drifting out there plays a scene of the player floating away
+dn1, forge1, forge2: the level opens onto space. Drifting out there plays a scene of the player floating away
 and kills player 1 (mission failed). Player 2 drifting out would kill player 1 the same way, so for
 player 2 it is a fall into a pit instead: down next to player 1 (with a guest), or the puppet's death
 and respawn.
@@ -54,8 +55,9 @@ static qboolean COOP_Dn1Touch( gentity_t *trigger, gentity_t *p2 )
 	return COOP_TriggerRuns( trigger, "dn1/space" ) ? COOP_P2IntoSpace( p2 ) : qfalse;
 }
 
-// forge1: the space below the hull spawns the drifting Munro (deathmunro), whose spawn script runs forge1/space
-static qboolean COOP_Forge1Touch( gentity_t *trigger, gentity_t *p2 )
+// forge1, forge2: the space below the hull spawns the drifting Munro (deathmunro), whose spawn script
+// runs forge1/space
+static qboolean COOP_ForgeSpaceTouch( gentity_t *trigger, gentity_t *p2 )
 {
 	return ( trigger->target && !Q_stricmp( trigger->target, "deathmunro" ) ) ? COOP_P2IntoSpace( p2 ) : qfalse;
 }
@@ -99,13 +101,15 @@ static void COOP_Dn2Frame( void )
 static const coopMapFix_t coop_mapFixes[] = {
 	{ "dn1", NULL, NULL, COOP_Dn1Touch },
 	{ "dn2", COOP_Dn2Start, COOP_Dn2Frame, NULL },
-	{ "forge1", NULL, NULL, COOP_Forge1Touch },
+	{ "forge1", NULL, NULL, COOP_ForgeSpaceTouch },
+	{ "forge2", NULL, NULL, COOP_ForgeSpaceTouch },
 	{ NULL, NULL, NULL, NULL }
 };
 
 static const coopMapFix_t	*coop_fix;			// this map's entry, NULL: none
 static qboolean				coop_fixLooked;		// looked it up for this level
 static qboolean				coop_fixStarted;
+static int					coop_p2PushAt;		// player 2's next push from a push trigger
 static int					coop_scriptMoveAt;	// a script moved player 1: check player 2 at this time
 
 void COOP_FixesInit( void )
@@ -114,6 +118,7 @@ void COOP_FixesInit( void )
 	coop_fixLooked = qfalse;
 	coop_fixStarted = qfalse;
 	coop_scriptMoveAt = 0;
+	coop_p2PushAt = 0;
 }
 
 /*
@@ -157,10 +162,18 @@ Gravity switches (dn6's zero-gravity section): a trigger whose targets are targe
 activator (the story's player), so player 2 walking through switched player 1's gravity, wherever
 player 1 was, and kept its own. For these the one who walked through counts: player 2 gets the
 gravity, player 1 keeps its own.
+
+Two exceptions keep player 2 in step with what player 1 gets in single player:
+- Player 1 is inside the same trigger: player 2 takes player 1's gravity, so two players standing in
+  one zone have the same gravity whoever won the touch. NPCs fire these triggers too: forge1's start
+  corridor (800 there, 500 in the rest of the level) has the squad standing in it, who fire it every
+  0.5 s, so in single player player 1 standing in it never wins the touch and keeps 500.
+- The trigger is waiting out its re-trigger time: somebody else just set their gravity with it, and
+  a player touching it now gets nothing from it, so neither does player 2.
 */
 static qboolean COOP_P2GravityTrigger( gentity_t *trigger, gentity_t *p2 )
 {
-	gentity_t	*t = NULL, *grav = NULL;
+	gentity_t	*t = NULL, *grav = NULL, *p1 = &g_entities[0];
 
 	if ( !trigger->target || trigger->target2 || trigger->behaviorSet[BSET_USE] )
 	{
@@ -179,8 +192,58 @@ static qboolean COOP_P2GravityTrigger( gentity_t *trigger, gentity_t *p2 )
 	{
 		return qfalse;
 	}
+	if ( p1->client && p1->health > 0 && gi.EntityContact( p1->absmin, p1->absmax, trigger ) )
+	{
+		p2->client->ps.gravity = p1->client->ps.gravity;
+		p2->svFlags = ( p2->svFlags & ~SVF_CUSTOM_GRAVITY ) | ( p1->svFlags & SVF_CUSTOM_GRAVITY );
+		return qtrue;
+	}
+	if ( trigger->nextthink )
+	{
+		return qtrue;	// waiting out its re-trigger time: nobody gets anything from it now
+	}
 	p2->client->ps.gravity = (int)floor( grav->speed );
 	p2->svFlags |= SVF_CUSTOM_GRAVITY;
+	return qtrue;
+}
+
+/*
+COOP_P2PushTrigger
+
+Push shafts (forge2, forge4): a trigger whose targets are all target_push pushes its activator, again
+and again (every "wait") while someone stands in it. With player 2 in the shaft the push went to
+player 1 (the story activator), wherever player 1 was. Player 2 is pushed instead, on its own timer,
+so the trigger's wait stays player 1's.
+*/
+static qboolean COOP_P2PushTrigger( gentity_t *trigger, gentity_t *p2 )
+{
+	gentity_t	*t = NULL;
+	qboolean	any = qfalse;
+
+	if ( !trigger->target || trigger->target2 || trigger->behaviorSet[BSET_USE] || trigger->delay )
+	{
+		return qfalse;
+	}
+	while ( ( t = G_Find( t, FOFS( targetname ), trigger->target ) ) != NULL )
+	{
+		if ( !t->classname || Q_stricmp( t->classname, "target_push" ) || t->behaviorSet[BSET_USE] )
+		{
+			return qfalse;	// it does more than push
+		}
+		any = qtrue;
+	}
+	if ( !any )
+	{
+		return qfalse;
+	}
+	if ( level.time >= coop_p2PushAt )
+	{
+		coop_p2PushAt = level.time + (int)( trigger->wait * 1000 );
+		while ( ( t = G_Find( t, FOFS( targetname ), trigger->target ) ) != NULL )
+		{
+			GEntity_UseFunc( t, p2, p2 );
+		}
+	}
 	return qtrue;
 }
 
@@ -190,7 +253,7 @@ qboolean COOP_P2Trigger( gentity_t *trigger, gentity_t *other )
 	{
 		return qfalse;
 	}
-	if ( COOP_P2GravityTrigger( trigger, other ) )
+	if ( COOP_P2GravityTrigger( trigger, other ) || COOP_P2PushTrigger( trigger, other ) )
 	{
 		return qtrue;
 	}
