@@ -132,6 +132,8 @@ extern const char	*SP_CurMap( void );
 extern int			SP_MenuPaused( void );
 extern int			SP_IsLoading( void );
 extern void			SP_AbortToMenu( void );
+extern int			SP_CoopCreditsUp( void );
+extern void			SP_CoopCreditsDone( void );
 
 // one guest command, as it crosses the network
 typedef struct {
@@ -1259,7 +1261,17 @@ void CoopNet_HostFrame( int sock )
 
 	coopHostSock = sock;
 	if ( !coopHost.active )
+	{
+		SP_CoopCreditsDone();
 		return;
+	}
+	// the closing credits are over (this game went back to the menu after them): so is the guest's game
+	if ( SP_CoopCreditsUp() && ( !SP_IsActive() || clc.state != CA_ACTIVE ) && !SP_IsLoading() )
+	{
+		SP_CoopCreditsDone();
+		CoopHostDrop( sock, "the game is over", qtrue );
+		return;
+	}
 	CoopNetStats();
 	if ( now - coopHost.lastHeard > COOP_TIMEOUT )
 	{

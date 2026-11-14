@@ -582,6 +582,8 @@ static int   g_spMovieQueued = 0;   // the game queued "inGameCinematic" this fr
 static int   g_coopMovieSeq = 0;    // host: counts the in-game movies the game started (the guest plays them too)
 static char  g_coopMovie[64];       // ...and its name
 static void  SP_CoopNoteMovie( const char *t );
+static int   g_coopCreditsSeq = 0;  // host: counts the closing credits the game started (the guest shows them too)
+static int   g_coopCreditsUp = 0;   // ...they started with a guest here; when they end, so does the game
 #endif
 static void  I_SendConsole( const char *t ){
     if( t && !sp_stricmpn( t, "inGameCinematic", 15 ) ){
@@ -590,6 +592,13 @@ static void  I_SendConsole( const char *t ){
         SP_CoopNoteMovie( t );
 #endif
     }
+#ifdef EF_COOP
+    // the closing credits (a script's SET_CLOSINGCREDITS): a menu that pauses this game and ends it
+    if( t && !sp_stricmpn( t, "ui_closingcredits", 17 ) && g_coopRep && !g_coopReplica && CoopNet_HostHasGuest() ){
+        g_coopCreditsSeq++;
+        g_coopCreditsUp = 1;
+    }
+#endif
     Cbuf_AddText(t);
 }
 static void  I_DropClient( int n, const char *r ){ (void)n;(void)r; }
@@ -2293,17 +2302,22 @@ static int SP_CoopCommandsImage( unsigned char *buf, int size ){
         put++;
     }
     memcpy( buf + 4, &put, 4 );
-    // then whether this level's start is held for the guest, whether a movie plays here now, and the
-    // newest in-game movie: [held][playing][seq][name\0] (seq 0: none yet)
+    // then whether this level's start is held for the guest, whether a movie plays here now, the
+    // newest in-game movie and the closing credits: [held][playing][seq][credits seq][name\0] (seq 0: none yet)
     int held = ( g_coopHoldLevel && g_coopHoldLevel == g_coopLevelId ) ? 1 : 0;
     int playing = CL_InGameCinematicActive() ? 1 : 0;
     memcpy( buf + len, &held, 4 ); len += 4;
     memcpy( buf + len, &playing, 4 ); len += 4;
     int ml = (int)strlen( g_coopMovie ) + 1;
     memcpy( buf + len, &g_coopMovieSeq, 4 ); len += 4;
+    memcpy( buf + len, &g_coopCreditsSeq, 4 ); len += 4;
     memcpy( buf + len, g_coopMovie, ml ); len += ml;
     return len;
 }
+// The host's closing credits are up (sys_coop_net.c: when this game has gone back to the menu
+// after them, the game is over for the guest too), and that was handled.
+extern "C" int  SP_CoopCreditsUp( void ){ return g_coopCreditsUp; }
+extern "C" void SP_CoopCreditsDone( void ){ g_coopCreditsUp = 0; }
 // The game started an in-game movie ("inGameCinematic <name>"): the guest plays it too.
 static void SP_CoopNoteMovie( const char *t ){
     char name[64]; int n = 0;
@@ -2390,6 +2404,21 @@ static void SP_CoopGuestMovieFrame( int paused ){
         g_coopMovieOn = 0;
     }
 }
+// The closing credits (voy20's end). The host's game pauses behind them and ends when they do; the
+// guest shows them too, from the same host frame, and is back at its menu when the host's are over
+// (the host ends the game then: CoopGuestStop), or earlier if this player skips them.
+static int g_coopCreditsSeen = 0;   // guest: the newest host credits seen
+static int g_coopCreditsSynced = 0; // ...decided for this level (joining: only ones that come later)
+static void SP_CoopGuestCredits( int seq ){
+    if( !g_spActive ) return;
+    if( !g_coopCreditsSynced ){ g_coopCreditsSynced = 1; g_coopCreditsSeen = seq; return; }
+    if( seq <= g_coopCreditsSeen ){ if( seq < g_coopCreditsSeen ) g_coopCreditsSeen = seq; return; }
+    g_coopCreditsSeen = seq;
+    blog("co-op: the host shows the closing credits; showing them here too\n");
+    if( g_coopMovieOn && CL_InGameCinematicActive() ) SCR_StopCinematic();
+    g_coopMovieOn = 0;
+    Cbuf_AddText( "ui_closingcredits 1\n" );
+}
 static qboolean SP_CoopSlotSame( int a, int b, int slot, const unsigned char **data, int *len ){
     *len = CoopNet_GuestFrameSlot( b, slot, data );
     if( !a ) return qfalse;
@@ -2421,11 +2450,11 @@ static void SP_CoopApplyFrame( int frame, int time ){
     if( len >= 8 ){
         int newest, count, pos = 8, held = 0;
         memcpy( &newest, d, 4 ); memcpy( &count, d + 4, 4 );
-        // the commands, then [held][movie seq][movie time][movie name]
+        // the commands, then [held][playing][movie seq][credits seq][movie name]
         const unsigned char *tail = NULL;
         { int p = 8, i;
           for( i = 0; i < count && p + 5 <= len; i++ ){ int tl = (int)strnlen( (const char *)d + p + 4, len - p - 4 ); if( p + 4 + tl >= len ) break; p += 4 + tl + 1; }
-          if( i == count && p + 13 <= len && !d[len - 1] ){ tail = d + p; memcpy( &held, tail, 4 ); } }
+          if( i == count && p + 17 <= len && !d[len - 1] ){ tail = d + p; memcpy( &held, tail, 4 ); } }
         // joining: only what comes from now on; but a level the host holds for this guest is new,
         // so all of its story text so far (an opening scroll text, the first subtitles) is shown
         if( !prev ) g_coopCmdSeen = held ? 0 : newest;
@@ -2439,10 +2468,11 @@ static void SP_CoopApplyFrame( int frame, int time ){
         }
         if( newest < g_coopCmdSeen ) g_coopCmdSeen = newest;   // (the host's count restarts with a level)
         if( tail ){
-            int playing, mseq;
-            memcpy( &playing, tail + 4, 4 ); memcpy( &mseq, tail + 8, 4 );
-            if( !prev ) g_coopMovieSynced = 0;
-            SP_CoopGuestMovie( mseq, (const char *)tail + 12, playing ? qtrue : qfalse );
+            int playing, mseq, cseq;
+            memcpy( &playing, tail + 4, 4 ); memcpy( &mseq, tail + 8, 4 ); memcpy( &cseq, tail + 12, 4 );
+            if( !prev ){ g_coopMovieSynced = 0; g_coopCreditsSynced = 0; }
+            SP_CoopGuestMovie( mseq, (const char *)tail + 16, playing ? qtrue : qfalse );
+            SP_CoopGuestCredits( cseq );
         }
     }
     g_coopRep->ApplyDone( g_spActive ? qtrue : qfalse );
