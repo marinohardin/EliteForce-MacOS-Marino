@@ -157,10 +157,18 @@ Gravity switches (dn6's zero-gravity section): a trigger whose targets are targe
 activator (the story's player), so player 2 walking through switched player 1's gravity, wherever
 player 1 was, and kept its own. For these the one who walked through counts: player 2 gets the
 gravity, player 1 keeps its own.
+
+Two exceptions keep player 2 in step with what player 1 gets in single player:
+- Player 1 is inside the same trigger: player 2 takes player 1's gravity, so two players standing in
+  one zone have the same gravity whoever won the touch. NPCs fire these triggers too: forge1's start
+  corridor (800 there, 500 in the rest of the level) has the squad standing in it, who fire it every
+  0.5 s, so in single player player 1 standing in it never wins the touch and keeps 500.
+- The trigger is waiting out its re-trigger time: somebody else just set their gravity with it, and
+  a player touching it now gets nothing from it, so neither does player 2.
 */
 static qboolean COOP_P2GravityTrigger( gentity_t *trigger, gentity_t *p2 )
 {
-	gentity_t	*t = NULL, *grav = NULL;
+	gentity_t	*t = NULL, *grav = NULL, *p1 = &g_entities[0];
 
 	if ( !trigger->target || trigger->target2 || trigger->behaviorSet[BSET_USE] )
 	{
@@ -178,6 +186,16 @@ static qboolean COOP_P2GravityTrigger( gentity_t *trigger, gentity_t *p2 )
 	if ( !grav )
 	{
 		return qfalse;
+	}
+	if ( p1->client && p1->health > 0 && gi.EntityContact( p1->absmin, p1->absmax, trigger ) )
+	{
+		p2->client->ps.gravity = p1->client->ps.gravity;
+		p2->svFlags = ( p2->svFlags & ~SVF_CUSTOM_GRAVITY ) | ( p1->svFlags & SVF_CUSTOM_GRAVITY );
+		return qtrue;
+	}
+	if ( trigger->nextthink )
+	{
+		return qtrue;	// waiting out its re-trigger time: nobody gets anything from it now
 	}
 	p2->client->ps.gravity = (int)floor( grav->speed );
 	p2->svFlags |= SVF_CUSTOM_GRAVITY;
