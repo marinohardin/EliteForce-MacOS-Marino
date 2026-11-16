@@ -27,16 +27,23 @@ extern "C" {
 #	define LC_PLATFORM_NOUN_LC	"PC"
 #	define LC_TRASH_NAME		"Recycle Bin"
 #	define LC_FILE_MANAGER		"File Explorer"
-#	define LC_UPDATE_TAG_PREFIX	"windows-v"
+#	define LC_UPDATE_LEGACY_TAG_PREFIX	"windows-v"	/* 1.4.0's own Windows releases */
+#	define LC_UPDATE_ASSET_SUFFIXES	"-setup.exe", "-windows-x64.zip"	/* this platform's downloads */
 #	define LC_PATH_SEP			'\\'
 #else
 #	define LC_PLATFORM_NOUN		"Computer"		/* "Play on This Computer" */
 #	define LC_PLATFORM_NOUN_LC	"computer"		/* "on this computer" */
 #	define LC_TRASH_NAME		"Trash"
 #	define LC_FILE_MANAGER		"the file manager"
-#	define LC_UPDATE_TAG_PREFIX	"linux-v"
+#	define LC_UPDATE_LEGACY_TAG_PREFIX	"linux-v"
+#	define LC_UPDATE_ASSET_SUFFIXES	".AppImage"
 #	define LC_PATH_SEP			'/'
 #endif
+
+/* Updates: each version is one GitHub release, tagged macos-v<version> (the tag the Mac
+   app's update check knows), with every platform's downloads. A release counts here only
+   when it has one of LC_UPDATE_ASSET_SUFFIXES; LC_UPDATE_LEGACY_TAG_PREFIX releases count too. */
+#define LC_UPDATE_TAG_PREFIX	"macos-v"
 
 #define LC_BASEGAME			"baseEF"
 #define LC_GITHUB_REPO		"marinohardin/EliteForce-MacOS-Marino"
