@@ -190,6 +190,7 @@ int main( int argc, char **argv )
 	else if ( qEnvironmentVariableIsEmpty( "DISPLAY" ) && qEnvironmentVariableIsEmpty( "WAYLAND_DISPLAY" )
 		&& qgetenv( "QT_QPA_PLATFORM" ) == "offscreen" )
 		app.setPalette( lightPalette() );
+	Ui::installPlaceholderFix();
 
 	/* the app's own log goes to stderr (lc_log's default sink) */
 

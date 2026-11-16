@@ -69,6 +69,8 @@ QColor groupFill();
 QColor separator();
 QColor q3Color( int idx );					/* Quake 3 colour code index 0..7 (servers.md §7.9) */
 void setColor( QWidget *w, const QColor &c );	/* text colour of a label-like widget */
+/* keeps QPalette::PlaceholderText readable on Base whatever the desktop theme gives (call after QApplication) */
+void installPlaceholderFix();
 
 /* ---- widgets ---------------------------------------------------------------------------- */
 QFont font( double pt, QFont::Weight w = QFont::Normal, bool mono = false );
