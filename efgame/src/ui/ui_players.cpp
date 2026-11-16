@@ -674,6 +674,11 @@ void UI_DrawPlayer( float x, float y, float w, float h, playerInfo_t *pi, int ti
 		pi->weaponTimer = 0;
 	}
 
+	// The field of view comes from the box's width in the 640x480 menu space, not its width in
+	// pixels: in pixels it grew with the window, so on Retina and 4K/5K windows the model was drawn
+	// huge and distorted, and not at all once the window was about 3400 pixels wide (180 degrees).
+	const float fovWidth = w;
+
 	UI_AdjustFrom640( &x, &y, &w, &h );
 
 	y -= jumpHeight;
@@ -692,7 +697,7 @@ void UI_DrawPlayer( float x, float y, float w, float h, playerInfo_t *pi, int ti
 	refdef.width = w;
 	refdef.height = h;
 
-	refdef.fov_x = (int)((float)refdef.width / 640.0f * 90.0f);
+	refdef.fov_x = (int)( fovWidth / 640.0f * 90.0f );
 	xx = refdef.width / tan( refdef.fov_x / 360 * M_PI );
 	refdef.fov_y = atan2( refdef.height, xx );
 	refdef.fov_y *= (float)( 360.0f / M_PI );
