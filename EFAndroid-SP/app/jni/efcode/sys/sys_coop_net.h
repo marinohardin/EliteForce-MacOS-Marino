@@ -25,8 +25,9 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 // 4: one guest command per host frame, acknowledged for prediction; 5: the guest says which host
 // level it has up, movies, cutscene skips; 6: each guest command says what host time the guest was
 // looking at, for its shots; 7: the game's own paks by name and checksum in the check's answer,
-// the connect and the accept)
-#define VSP_COOP_PROTOCOL	7
+// the connect and the accept;
+// 8: the commands slot carries the credits number, the look key, guest console commands)
+#define VSP_COOP_PROTOCOL	8
 
 // the longest player name co-op sends (coop_name; the launcher's "Your name")
 #define COOP_NAME_MAX		31

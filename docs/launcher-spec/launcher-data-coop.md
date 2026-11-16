@@ -1269,7 +1269,7 @@ Pure sockets; portable except `arc4random` and the Cocoa return type.
 7. Accept only packets from the exact ip:port, starting with
    `\xff\xff\xff\xffcoopInfoResponse\n`, whose infostring parses and whose
    `challenge` (if present) equals ours.
-8. `coopProtocol != 7` or `version != EF_APP_VERSION` → mismatch: `"The host runs Elite Force for Mac <v> (co-op version <p>), and this Mac runs <mine> (co-op version 7). Both need the same version to play together."`
+8. `coopProtocol != 8` or `version != EF_APP_VERSION` → mismatch: `"The host runs Elite Force for Mac <v> (co-op version <p>), and this Mac runs <mine> (co-op version 8). Both need the same version to play together."`
    Then the pak check (protocol 7): this computer's own paks (every `.pk3` in the homepath's baseEF and the game's BaseEF, by checksum, `FS_CoopCorePakIndex`) against the answer's `paks` with `CoopNet_ComparePaks`: pak0-pak2 differ → refused, shown with the sentences naming the packs (no Connect); only pak3 (Expansion Pack) differs → found with a warning and "Join Anyway".
 9. Else found (with info). Timeout → none; if a send failed → error `"macOS couldn’t send to it (<strerror>). If you didn’t allow Elite Force to find devices on your local network, allow it in System Settings > Privacy & Security > Local Network."` (Port: firewall wording.)
 
@@ -1296,7 +1296,7 @@ in OOB mode (`MSG_InitOOB`: no Huffman; `MSG_WriteLong/Short/Byte/String/Data`
 
 Host rules (`N:969-1071`): ≤ 5 connect requests per second from anyone; the
 same guest (address + nonce) gets the same accept again; protocol/version
-mismatch → `"The host runs Elite Force for Mac <v> (co-op version 7), and you run <v'> (co-op version <p'>). Both need the same version."`;
+mismatch → `"The host runs Elite Force for Mac <v> (co-op version 8), and you run <v'> (co-op version <p'>). Both need the same version."`;
 another address while a guest is active → `"The game already has a player 2 (<name>)."`;
 pak0-pak2 differ (`CoopNet_ComparePaks`) → `"Your game files differ from the host's. You're missing pak2.pk3 (the host has it). Both need the game's original pak0.pk3, pak1.pk3 and pak2.pk3 (other packs don't matter)."` (each differing pack named); only pak3 differs → accepted, with a note on both consoles;
 password set and wrong → "Wrong password." / missing → "This game needs a password.";
