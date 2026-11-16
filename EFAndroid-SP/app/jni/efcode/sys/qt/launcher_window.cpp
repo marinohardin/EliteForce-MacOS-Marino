@@ -993,7 +993,7 @@ void LauncherWindow::openCoop( const QString &address )
 {
 	if ( m_sheet )
 		return;
-	CoopDialog dlg( this, canPlay(), address );
+	CoopDialog dlg( this, canPlay(), address, m_dataFolder );
 	connect( &dlg, &QDialog::accepted, this, [&]() {
 		if ( dlg.choice() != CoopDialog::Cancelled ) {
 			selectMode( 0 );
@@ -1087,6 +1087,7 @@ lc_launch LauncherWindow::makeLaunch( int mode, QByteArray &nameBytes, QByteArra
 		o.coopBackground = lc_store_get_bool( lc_store_shared(), LC_KEY_COOP_BACKGROUND, 1 );
 		o.coopConnect = cf.coopConnect;
 		o.coopSex = cf.coopSex;
+		o.coopLook = cf.coopLook;
 		o.coopName = cf.coopName;
 		if ( cf.coopHost )
 			o.coopBackground = cf.coopBackground;
@@ -1583,7 +1584,7 @@ void LauncherWindow::runTestHooks()
 	if ( !coop.isEmpty() || testSet( "VOYAGERSP_TEST_COOP_HOST" ) || testSet( "VOYAGERSP_TEST_COOP_INTERNET" ) ) {
 		QTimer::singleShot( 1000, this, [this, coop]() {
 			selectMode( 0 );
-			CoopDialog *d = new CoopDialog( this, canPlay() );
+			CoopDialog *d = new CoopDialog( this, canPlay(), QString(), m_dataFolder );
 			m_sheet = d;
 			d->runTestHooks();
 			if ( !coop.isEmpty() ) {

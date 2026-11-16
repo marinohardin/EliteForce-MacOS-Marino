@@ -32,8 +32,8 @@ option(EF_VM_JIT "QVM JIT (aarch64: needs MAP_JIT work on macOS; x86_64: vm_x86.
 # host's answer to co-op checks and the co-op connection (sys/sys_osx_coop.m, sys_coop_net.c;
 # macOS first; Windows/Linux have sys/sys_coop_host.c); the game side is efgame's option of the
 # same name (make-app.sh passes both). OFF by default: the Mac app is built with it by
-# macos/make-app.sh; the Windows/Linux releases don't have co-op (without EF_COOP their launchers
-# never show the Co-op button: LC_COOP_BUILT in efcode/launcher).
+# macos/make-app.sh, the Windows/Linux releases by the windows-x64 / linux-x64 presets
+# (CMakePresets.json); without EF_COOP the launchers never show the Co-op button (LC_COOP_BUILT).
 option(EF_COOP "Single-player co-op (experimental)" OFF)
 # GOG installer extraction (sys_osx_gog.c + liblzma). On macOS the Mac launcher calls it; on
 # Windows/Linux the launcher core (efcode/launcher, target eflauncher) compiles it and links liblzma.

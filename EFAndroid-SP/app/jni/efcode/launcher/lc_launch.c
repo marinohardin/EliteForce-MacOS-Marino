@@ -15,6 +15,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 #endif
 
 #include "lc_launch.h"
+#include "lc_coop.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
@@ -101,9 +102,13 @@ static void BuildArgs( const lc_launch *o, const char *homeBase, size_t used, si
 			for ( p = o->coopConnect; *p; p++ )
 				if ( !( ( *p >= '0' && *p <= '9' ) || *p == '.' || *p == ':' ) )
 					break;
-			if ( !*p )
+			if ( !*p ) {
 				Addf( args, argsSize, "+set coop_connect \"%s\" +set coop_sex %s ", o->coopConnect,
 					o->coopSex && !strcmp( o->coopSex, "female" ) ? "female" : "male" );
+				/* (an id from coop_characters.h: lower case letters, digits and _) */
+				if ( lc_coop_character_valid( o->coopLook ) )
+					Addf( args, argsSize, "+set coop_look %s ", o->coopLook );
+			}
 		} else
 			ok = 0;
 		if ( ok && o->coopName && *o->coopName ) {

@@ -1,13 +1,15 @@
 /*
 ===========================================================================
 Windows launcher: the Co-op sheet (launcher-data-coop.md 6.1). The Co-op...
-button is hidden unless lc_coop_ui_enabled().
+button shows in co-op builds (lc_coop_ui_enabled()).
 
 This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 ===========================================================================
 */
 
 #include "wl_app.h"
+
+#include <vector>
 
 namespace wl {
 
@@ -17,15 +19,18 @@ static void coopNatRelease( ) { if ( g_coopNat ) { lc_nat_release( g_coopNat ); 
 struct CoopDlg : Wnd {
 	bool canPlay = false, playNow = false;
 	enum { ID_NAME = 10, ID_HOST, ID_PW, ID_BG, ID_ROUTER, ID_INET, ID_INVITE, ID_ADDR, ID_CHECK, ID_JPW, ID_MUNRO, ID_RES_ICON, ID_RES_SPIN, ID_RES_TITLE, ID_RES_TEXT,
-		ID_CONNECT, ID_CONNECT_TXT, ID_LAN, ID_NOTE };
+		ID_CONNECT, ID_CONNECT_TXT, ID_LAN, ID_NOTE, ID_LOOK };
 	/* NAT state */
 	int natState = 0;						/* 0 idle, 1 asking, 2 mapped, 3 failed */
 	str natPublic, natWhy; str lanFirst;
 	/* check state */
 	bool checking = false, found = false, needPw = false; str foundAddr;
+	str dataFolder;							/* the BaseEF in use, for the pak compare */
+	std::vector<str> lookIds;				/* the Character list's ids by row: "" Munro, "\x01" a group heading */
+	int lookRow = 0;
 	int resGlyph = -1, resRole = R_TEXT;
 	struct NatRes { CoopDlg *d; lc_nat_result r; char ip[64]; int ext, err; };
-	struct QRes { CoopDlg *d; lc_coop_query q; };
+	struct QRes { CoopDlg *d; lc_coop_query q; char dataFolder[LC_MAX_PATH]; };
 	static const int WM_NAT = WM_APP + 40, WM_QUERY = WM_APP + 41;
 
 	static void natCb( lc_nat_result r, const char *ip, int ext, int err, void *u )
@@ -96,6 +101,7 @@ struct CoopDlg : Wnd {
 	{
 		QRes *r = (QRes *)u;
 		lc_coop_query_run( r->q.address, 2.0, &r->q );
+		lc_coop_check_paks( &r->q, r->dataFolder );
 		if ( r->d->hwnd ) PostMessageW( r->d->hwnd, WM_QUERY, 0, (LPARAM)r ); else delete r;
 	}
 	void doCheck( )
@@ -106,6 +112,7 @@ struct CoopDlg : Wnd {
 		found = false; EnableWindow( ctl( ID_CONNECT ), FALSE ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" );
 		showResult( -1, R_TEXT, fmt( "Checking %s\xE2\x80\xA6", a.empty( ) ? "the address" : a.c_str( ) ), "", true );
 		QRes *r = new QRes; r->d = this; memset( &r->q, 0, sizeof r->q ); lc_strlcpy( r->q.address, a.c_str( ), sizeof r->q.address );
+		lc_strlcpy( r->dataFolder, dataFolder.c_str( ), sizeof r->dataFolder );
 		lc_thread *t = lc_thread_start( queryWorker, r );
 		if ( t ) lc_thread_detach( t ); else { delete r; checking = false; EnableWindow( ctl( ID_CHECK ), TRUE ); }
 	}
@@ -122,14 +129,19 @@ struct CoopDlg : Wnd {
 		checking = false; EnableWindow( ctl( ID_CHECK ), TRUE );
 		lc_coop_query &q = r->q;
 		char host[128]; lc_coop_info_value( q.info, "hostname", host, sizeof host );
-		char desc[2048]; desc[0] = 0; if ( !strcmp( q.status, "ok" ) || !strcmp( q.status, "mismatch" ) ) lc_coop_describe( q.info, desc, sizeof desc );
+		char desc[2048]; desc[0] = 0; if ( !strcmp( q.status, "ok" ) || !strcmp( q.status, "mismatch" ) || !strcmp( q.status, "paks" ) ) lc_coop_describe( q.info, desc, sizeof desc );
 		lc_log( "Co-op: check %s -> %s", q.address, q.status );
 		found = false;
+		str on = host[0] ? fmt( " on \xE2\x80\x9C%s\xE2\x80\x9D", host ) : str( );
 		if ( !strcmp( q.status, "ok" ) ) {
 			found = true; foundAddr = q.address;
 			char np[16]; lc_coop_info_value( q.info, "needPassword", np, sizeof np ); needPw = !strcmp( np, "1" );
-			str title = fmt( "Co-op game found%s (%s)", host[0] ? fmt( " on \xE2\x80\x9C%s\xE2\x80\x9D", host ).c_str( ) : "", q.address );
-			showResult( G_CHECK_CIRCLE, R_GREEN, title, desc );
+			if ( q.warning[0] )
+				showResult( G_TRIANGLE, R_YELLOW, fmt( "Co-op game found%s (%s), but the Expansion Pack differs", on.c_str( ), q.address ), str( q.warning ) + "\n\n" + desc );
+			else
+				showResult( G_CHECK_CIRCLE, R_GREEN, fmt( "Co-op game found%s (%s)", on.c_str( ), q.address ), desc );
+		} else if ( !strcmp( q.status, "paks" ) ) {
+			showResult( G_X_CIRCLE, R_RED, fmt( "Your game files don\xE2\x80\x99t match the host\xE2\x80\x99s%s (%s)", on.c_str( ), q.address ), str( q.error ) + "\n\n" + desc );
 		} else if ( !strcmp( q.status, "mismatch" ) ) {
 			str title = fmt( "Version mismatch: the co-op game%s (%s) can\xE2\x80\x99t be joined from this %s", host[0] ? fmt( " on \xE2\x80\x9C%s\xE2\x80\x9D", host ).c_str( ) : "", q.address, PLATFORM_NOUN );
 			showResult( G_TRIANGLE, R_ORANGE, title, str( q.error ) + "\n\n" + desc );
@@ -137,6 +149,7 @@ struct CoopDlg : Wnd {
 		else showResult( G_X_CIRCLE, R_TEXT2, fmt( "No co-op game found at %s", q.address ),
 			q.error[0] ? str( q.error ) : str( "Nothing answered within 2 seconds. Check the address, that the host pressed Host and is running co-op, and that both PCs are on the same network." ) );
 		EnableWindow( ctl( ID_CONNECT ), found && canPlay );
+		setText( ctl( ID_CONNECT ), found && q.warning[0] ? "Join Anyway" : "Connect" );
 		setTooltip( hwnd, ctl( ID_CONNECT ), found ? fmt( "Join %s as player 2", foundAddr.c_str( ) ).c_str( ) : "Check the address first" );
 		delete r;
 	}
@@ -170,8 +183,12 @@ struct CoopDlg : Wnd {
 		str n = takeName( );
 		bool female = SendMessageW( ctl( ID_MUNRO ), SEG_GETSEL, 0, 0 ) == 1;
 		lc_store *st = lc_store_shared( ); lc_store_set( st, LC_KEY_COOP_MUNRO, female ? "female" : "male" ); lc_store_save( st );
-		lc_coop_choose_join( foundAddr.c_str( ), female ? "female" : "male", n.c_str( ), pw.c_str( ) );
-		lc_log( "Co-op: joining %s as player 2 (single player with coop_connect), %s, %s Munro", foundAddr.c_str( ), n.c_str( ), female ? "female" : "male" );
+		int row = (int)SendMessageW( ctl( ID_LOOK ), CB_GETCURSEL, 0, 0 );
+		str look = row >= 0 && row < (int)lookIds.size( ) && lookIds[row] != "\x01" ? lookIds[row] : str( );
+		lc_store_set( st, LC_KEY_COOP_LOOK, look.c_str( ) ); lc_store_save( st );
+		lc_coop_choose_join( foundAddr.c_str( ), female ? "female" : "male", look.c_str( ), n.c_str( ), pw.c_str( ) );
+		lc_log( "Co-op: joining %s as player 2 (single player with coop_connect), %s, %s Munro%s%s", foundAddr.c_str( ), n.c_str( ), female ? "female" : "male",
+			look.empty( ) ? "" : " as ", look.c_str( ) );
 		playNow = true; end( IDOK );
 	}
 	void onCommand( int id, int code, HWND ) override
@@ -181,10 +198,20 @@ struct CoopDlg : Wnd {
 		case ID_ROUTER: routerToggle( ); break;
 		case ID_INVITE: {
 			char link[256]; lc_coop_invite_link( natState == 2 ? natPublic.c_str( ) : "", link, sizeof link );
-			if ( link[0] ) { copyToClipboard( hwnd, link ); setText( ctl( ID_INET ), fmt( "Copied %s. Your friend opens it (Elite Force for Windows with co-op) to check your game and join.", link ) ); setRole( ctl( ID_INET ), R_TEXT2 ); lc_log( "Co-op: invite %s", link ); }
+			if ( link[0] ) { copyToClipboard( hwnd, link ); setText( ctl( ID_INET ), fmt( "Copied %s. Your friend opens it (Elite Force with co-op, on Windows, Mac or Linux) to check your game and join.", link ) ); setRole( ctl( ID_INET ), R_TEXT2 ); lc_log( "Co-op: invite %s", link ); }
 			break; }
 		case ID_CHECK: doCheck( ); break;
-		case ID_ADDR: if ( code == EN_CHANGE && found ) { found = false; EnableWindow( ctl( ID_CONNECT ), FALSE ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" ); } break;
+		case ID_ADDR: if ( code == EN_CHANGE && found ) { found = false; EnableWindow( ctl( ID_CONNECT ), FALSE ); setText( ctl( ID_CONNECT ), "Connect" ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" ); } break;
+		case ID_LOOK:
+			if ( code == CBN_SELCHANGE ) {		/* a group heading isn't a choice: move on past it */
+				int row = (int)SendMessageW( ctl( ID_LOOK ), CB_GETCURSEL, 0, 0 );
+				if ( row >= 0 && row < (int)lookIds.size( ) && lookIds[row] == "\x01" ) {
+					row = row + 1 < (int)lookIds.size( ) ? ( row >= lookRow ? row + 1 : row - 1 ) : row - 1;
+					SendMessageW( ctl( ID_LOOK ), CB_SETCURSEL, row, 0 );
+				}
+				lookRow = row;
+			}
+			break;
 		case ID_CONNECT: doConnect( ); break;
 		case IDOK: if ( GetFocus( ) == ctl( ID_ADDR ) ) doCheck( ); break;
 		case IDCANCEL: coopNatRelease( ); end( IDCANCEL ); break;
@@ -204,13 +231,13 @@ struct CoopDlg : Wnd {
 
 void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool autoCheck, bool *playNow )
 {
-	CoopDlg d; d.canPlay = canPlay;
+	CoopDlg d; d.canPlay = canPlay; d.dataFolder = G.dataFolder;
 	const int W0 = 560;
 	lc_store *st = lc_store_shared( );
 	char lan[8][16], ifn[8][64]; int nlan = lc_coop_lan_addresses( lan, ifn, 8 );
 	if ( nlan > 0 ) d.lanFirst = lan[0];
 	int y = 18;
-	const int H = 770;
+	const int H = 802;
 	d.create( L"Co-op", W0, H, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner );
 	d.label( 20, y, 70, 24, "Co-op", 17, 700, R_TEXT, DT_SINGLELINE );
 	d.label( 100, y + 6, 120, 14, "EXPERIMENTAL", 10, 600, R_ORANGE, DT_SINGLELINE );
@@ -248,7 +275,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	setTooltip( d.hwnd, hb, canPlay ? "Play single player with co-op on" : "Add the game files first" );
 	y = hTop + hH + 22;
 	/* join group */
-	int jTop = y, jH = 218;
+	int jTop = y, jH = 250;
 	d.addGroup( 20, jTop, W0 - 40, jH, "JOIN" );
 	int jy = jTop + 14;
 	d.label( tx, jy + 3, 90, 16, "Host\xE2\x80\x99s address", 12, 400, R_TEXT, DT_SINGLELINE );
@@ -264,6 +291,30 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	segSetItems( mg, { "Male", "Female" } );
 	const char *mu = lc_store_get( st, LC_KEY_COOP_MUNRO ); SendMessageW( mg, SEG_SETSEL, mu && !strcmp( mu, "female" ) ? 1 : 0, 0 );
 	setTooltip( d.hwnd, mg, "How player 2 looks on both screens. The story still speaks to the host\xE2\x80\x99s Munro." );
+	jy += 22 + 10;
+	/* Character: Munro, then the crew and the Hazard Team (coop_characters.h, via lc_coop_character) */
+	d.label( tx, jy + 3, 66, 16, "Character", 12, 400, R_TEXT, DT_SINGLELINE );
+	HWND lk = d.combo( tx + 66, jy, 220, CoopDlg::ID_LOOK, 12 );
+	{
+		const char *saved = lc_store_get( st, LC_KEY_COOP_LOOK ), *group = "";
+		int sel = 0;
+		SendMessageW( lk, CB_ADDSTRING, 0, (LPARAM)L"Munro (default)" ); d.lookIds.push_back( "" );
+		for ( int i = 0; i < lc_coop_character_count( ); i++ ) {
+			const char *id, *name, *g;
+			lc_coop_character( i, &id, &name, &g );
+			if ( strcmp( g, group ) ) {
+				group = g;
+				SendMessageW( lk, CB_ADDSTRING, 0, (LPARAM)( !strcmp( g, "crew" ) ? L"\u2014 Voyager crew \u2014" : L"\u2014 Hazard Team \u2014" ) );
+				d.lookIds.push_back( "\x01" );
+			}
+			SendMessageW( lk, CB_ADDSTRING, 0, (LPARAM)W( fmt( "    %s", name ) ).c_str( ) );
+			if ( saved && !strcmp( saved, id ) ) sel = (int)d.lookIds.size( );
+			d.lookIds.push_back( id );
+		}
+		SendMessageW( lk, CB_SETCURSEL, sel, 0 ); d.lookRow = sel;
+	}
+	setTooltip( d.hwnd, lk, "Player 2\xE2\x80\x99s look on both screens: Munro, or a member of Voyager\xE2\x80\x99s crew or the Hazard Team. Only characters from the game\xE2\x80\x99s own files, so the host has them too." );
+	d.label( tx + 66 + 228, jy + 4, 200, 14, "with the voice of the Munro above", 11, 400, R_TEXT2, DT_SINGLELINE );
 	jy += 22 + 12;
 	d.ctl_( L"STATIC", L"", SS_NOTIFY, 0, tx, jy, 26, 26, CoopDlg::ID_RES_ICON ); ShowWindow( d.ctl( CoopDlg::ID_RES_ICON ), SW_HIDE );
 	d.ids[CoopDlg::ID_RES_SPIN] = mkSpinner( d.hwnd, tx + 4, jy + 4, 16, CoopDlg::ID_RES_SPIN );

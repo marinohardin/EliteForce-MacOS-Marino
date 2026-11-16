@@ -29,8 +29,9 @@ private:
 class CoopDialog : public QDialog {
 	Q_OBJECT
 public:
-	/* canPlay: data present and no missing patch; address: an invite's address (checked at once) */
-	CoopDialog( QWidget *parent, bool canPlay, const QString &address = QString() );
+	/* canPlay: data present and no missing patch; address: an invite's address (checked at once);
+	   dataFolder: the BaseEF in use, whose pak0-pak3 a Check compares with the host's */
+	CoopDialog( QWidget *parent, bool canPlay, const QString &address = QString(), const QString &dataFolder = QString() );
 	~CoopDialog() override;
 	enum Result { Cancelled = 0, Host = 1, Connect = 2 };
 	int choice() const { return m_choice; }
@@ -56,12 +57,13 @@ private:
 	QLabel *m_internetStatus, *m_resultIcon, *m_resultTitle, *m_resultText, *m_connectNote, *m_lanLabel;
 	QPushButton *m_copyInvite, *m_check, *m_connect, *m_host;
 	Ui::Segmented *m_munro;
+	QComboBox *m_look;
 	QProgressBar *m_spinner;
 	QWidget *m_resultWidget;
 	QStringList m_lan;
 	int m_choice = 0;
 	bool m_checking = false;
-	QString m_foundAddress, m_foundHostname, m_status;
+	QString m_foundAddress, m_foundHostname, m_status, m_warning, m_dataFolder;
 	bool m_needsPassword = false;
 	QString m_playName;
 	/* NAT mapping state (guarded by the UI thread: callbacks are marshalled) */

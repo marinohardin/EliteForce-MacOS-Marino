@@ -33,8 +33,8 @@ Verified = rendered offscreen (Qt 6.4 dev container) and/or run; "untested" = co
 | `--choose-game-folder`, `--launcher`, `--host-server` | done |
 | In-game File-menu equivalents | n/a (console commands, core-a) |
 
-## Co-op sheet (LDC §6.1) — hidden unless `lc_coop_ui_enabled()` / `EF_SHOW_COOP=1`
-Layout, name, Host group (LAN list, password, background, router checkbox + status, Copy Invite), Join group (Check, result row, Munro, Connect), Cancel: **done** (layout verified). NAT / Check / Host / Connect logic: done, Check and NAT untested against a real host. **dev:** the router mapping is released when the launcher execs the game (the process is replaced), so a hosted mapping lives only until its lease ends.
+## Co-op sheet (LDC §6.1) — shown when `lc_coop_ui_enabled()` (EF_COOP builds: the release preset)
+Layout, name, Host group (LAN list, password, background, router checkbox + status, Copy Invite), Join group (Check, result row, Munro, Character, Connect), Cancel: **done** (layout verified before 1.5.0; the Character row, pak compare and Join Anyway added in 1.5.0 are not yet compiled or run with Qt). Check compares pak0-pak3 with the host's like the Mac (`lc_coop_check_paks`): pak0-pak2 differing is a red "Your game files don’t match", only pak3 a yellow warning with **Join Anyway**. NAT / Check / Host / Connect logic: done, Check and NAT untested against a real host. **dev:** the router mapping is released when the launcher execs the game (the process is replaced), so a hosted mapping lives only until its lease ends.
 
 ## Server settings (SRV §4), masters (SRV §6), browser (SRV §8)
 | Item | State |

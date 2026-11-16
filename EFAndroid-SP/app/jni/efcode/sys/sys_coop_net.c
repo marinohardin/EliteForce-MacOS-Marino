@@ -1108,8 +1108,13 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 
 	if ( atoi( protocol ) != VSP_COOP_PROTOCOL || strcmp( version, EF_APP_VERSION ) )
 	{
+#ifdef __APPLE__
 		CoopHostReject( sock, from, va( "The host runs Elite Force for Mac %s (co-op version %d), and you run %s "
 			"(co-op version %s). Both need the same version.", EF_APP_VERSION, VSP_COOP_PROTOCOL,
+#else
+		CoopHostReject( sock, from, va( "The host runs Elite Force %s (co-op version %d), and you run %s "
+			"(co-op version %s). Both need the same version.", EF_APP_VERSION, VSP_COOP_PROTOCOL,
+#endif
 			version[0] ? version : "?", protocol[0] ? protocol : "?" ) );
 		return;
 	}

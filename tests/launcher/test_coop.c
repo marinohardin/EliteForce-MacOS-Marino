@@ -1,6 +1,8 @@
 /* lc_coop.c: infostrings, the sheet's description lines, the invite link, the choice and its launch
    fields, and the query client against a fake co-op host on loopback (launcher-data-coop.md 6.1, 6.2, 6.4) */
 #include "lc_coop.h"
+#include "lc_data.h"
+#include "lc_launch.h"
 #include "lc_sock.h"
 #include "lc_test.h"
 #include <stdlib.h>
@@ -82,20 +84,22 @@ static void test_choice( void )
 	lc_coop_launch_fields( &f );
 	CHECK( f.coopHost == 1 && f.coopBackground == 0 && !f.coopName );		/* empty name: none on the command line */
 
-	lc_coop_choose_join( "192.168.1.20:29760", "Female", "Zed", "pw" );
+	lc_coop_choose_join( "192.168.1.20:29760", "Female", "seven_hazard", "Zed", "pw" );
 	CHECK( lc_coop_choice( ) == 2 );
 	lc_coop_launch_fields( &f );
 	CHECK( !f.coopHost );
 	CHECK_STR( f.coopConnect, "192.168.1.20:29760" );
 	CHECK_STR( f.coopSex, "female" );
 	CHECK_STR( f.coopName, "Zed" );
+	CHECK_STR( f.coopLook, "seven_hazard" );
 	CHECK_STR( lc_coop_password( ), "pw" );
-	lc_coop_choose_join( "host.example.com", "male", "Zed", "" );		/* only 0-9 . : on the command line */
+	lc_coop_choose_join( "host.example.com", "male", "janeway", "Zed", "" );		/* only 0-9 . : on the command line */
 	lc_coop_launch_fields( &f );
-	CHECK( !f.coopConnect && !f.coopSex );
-	lc_coop_choose_join( "10.0.0.1", "weird", "A name that is far too long to be used as a name 123456789", "" );
+	CHECK( !f.coopConnect && !f.coopSex && !f.coopLook );
+	lc_coop_choose_join( "10.0.0.1", "weird", "borgqueen", "A name that is far too long to be used as a name 123456789", "" );
 	lc_coop_launch_fields( &f );
 	CHECK_STR( f.coopSex, "male" );
+	CHECK( !f.coopLook );							/* not one of coop_characters.h: Munro */
 	CHECK( strlen( f.coopName ) <= 31 );
 	lc_coop_choose_none( );
 	CHECK_STR( lc_coop_password( ), "" );
@@ -118,7 +122,7 @@ typedef struct {
 	int port;
 	volatile int stop;
 	lc_thread *thr;
-	char protocol[8], version[32];
+	char protocol[8], version[32], paks[128];
 	int ignoreChallenge, badChallenge, silent;
 	volatile int queries;
 } host_t;
@@ -146,8 +150,8 @@ static void host_run( void *u )
 			continue;
 		if ( buf[15] == ' ' )
 			lc_strlcpy( chal, buf + 16, sizeof( chal ) );
-		lc_snprintf( reply, sizeof( reply ), OOB "coopInfoResponse\n\\coopProtocol\\%s\\version\\%s\\hostname\\Fake\\state\\menu\\skill\\1\\players\\1\\maxPlayers\\2\\needPassword\\0\\guest\\0%s%s",
-			h->protocol, h->version, h->ignoreChallenge ? "" : "\\challenge\\", h->ignoreChallenge ? "" : h->badChallenge ? "wrong" : chal );
+		lc_snprintf( reply, sizeof( reply ), OOB "coopInfoResponse\n\\coopProtocol\\%s\\version\\%s\\hostname\\Fake\\paks\\%s\\state\\menu\\skill\\1\\players\\1\\maxPlayers\\2\\needPassword\\0\\guest\\0%s%s",
+			h->protocol, h->version, h->paks, h->ignoreChallenge ? "" : "\\challenge\\", h->ignoreChallenge ? "" : h->badChallenge ? "wrong" : chal );
 		sendto( h->s, reply, (int)strlen( reply ), 0, (struct sockaddr *)&from, fl );
 	}
 }
@@ -158,7 +162,7 @@ static host_t *host_start( void )
 	struct sockaddr_in a;
 	socklen_t al = sizeof( a );
 
-	lc_strlcpy( h->protocol, "6", sizeof( h->protocol ) );
+	lc_snprintf( h->protocol, sizeof( h->protocol ), "%d", LC_COOP_PROTOCOL );
 	lc_strlcpy( h->version, lc_coop_app_version( ), sizeof( h->version ) );
 	h->s = socket( AF_INET, SOCK_DGRAM, 0 );
 	memset( &a, 0, sizeof( a ) );
@@ -208,7 +212,7 @@ static void test_query( void )
 	CHECK( strstr( q.error, "The host runs Elite Force " ) == q.error && strstr( q.error, "(co-op version 5)" ) != NULL );
 	CHECK( strstr( q.error, "Both need the same version to play together." ) != NULL );
 	CHECK( strstr( q.info, "coopProtocol\\5" ) != NULL );
-	lc_strlcpy( h->protocol, "6", sizeof( h->protocol ) );
+	lc_snprintf( h->protocol, sizeof( h->protocol ), "%d", LC_COOP_PROTOCOL );
 	lc_strlcpy( h->version, "0.0.1-other", sizeof( h->version ) );
 	lc_coop_query_run( addr, 1.5, &q );
 	CHECK_STR( q.status, "mismatch" );
@@ -222,6 +226,23 @@ static void test_query( void )
 	lc_coop_query_run( addr, 0.9, &q );
 	CHECK_STR( q.status, "ok" );
 	h->ignoreChallenge = 0;
+	/* the pak compare after a found game (this test's homepath has no paks at all) */
+	h->paks[0] = 0;
+	lc_coop_query_run( addr, 1.5, &q );
+	lc_coop_check_paks( &q, NULL );
+	CHECK_STR( q.status, "ok" );
+	CHECK_STR( q.warning, "" );
+	lc_strlcpy( h->paks, "pak0.pk3:3376297517 pak1.pk3:596947475", sizeof( h->paks ) );
+	lc_coop_query_run( addr, 1.5, &q );
+	lc_coop_check_paks( &q, NULL );
+	CHECK_STR( q.status, "paks" );
+	CHECK_STR( q.error, "You" MAC_APOS "re missing pak0.pk3, pak1.pk3 (the host has it). Both need the game" MAC_APOS "s original pak0.pk3, pak1.pk3 and pak2.pk3 (other packs don" MAC_APOS "t matter)." );
+	lc_strlcpy( h->paks, "pak3.pk3:1592359207", sizeof( h->paks ) );
+	lc_coop_query_run( addr, 1.5, &q );
+	lc_coop_check_paks( &q, NULL );
+	CHECK_STR( q.status, "ok" );
+	CHECK( strstr( q.warning, "You don" MAC_APOS "t have the Expansion Pack (pak3.pk3); the host does." ) == q.warning );
+	h->paks[0] = 0;
 	/* asked three times over the timeout */
 	h->silent = 1;
 	h->queries = 0;
@@ -249,6 +270,112 @@ static void test_query( void )
 	CHECK( !strcmp( q.status, "bad" ) && !strcmp( q.error, "\xe2\x80\x9c" "no-such-host.invalid\xe2\x80\x9d couldn" MAC_APOS "t be found. Check the address." ) );
 }
 
+static void test_paks( void )
+{
+	char text[1024];
+	static const char *ours = "pak0.pk3:3376297517 pak1.pk3:596947475 pak2.pk3:3960871590";
+
+	CHECK( lc_coop_core_pak_index( 3376297517u ) == 0 );
+	CHECK( lc_coop_core_pak_index( 1592359207u ) == 3 );
+	CHECK( lc_coop_core_pak_index( 12345u ) == -1 );
+	CHECK( lc_coop_compare_paks( ours, ours, 0, text, sizeof( text ) ) == LC_COOP_PAKS_SAME && !text[0] );
+	/* the same sentences as the engine's CoopNet_ComparePaks (sys_coop_net.c) */
+	CHECK( lc_coop_compare_paks( ours, "pak0.pk3:3376297517 pak1.pk3:596947475 pak2.pk3:1", 0, text, sizeof( text ) ) == LC_COOP_PAKS_DIFFER );
+	CHECK_STR( text, "Your pak2.pk3 differs from the host's. Both need the game's original pak0.pk3, pak1.pk3 and pak2.pk3 (other packs don't matter)." );
+	CHECK( lc_coop_compare_paks( "pak0.pk3:3376297517", ours, 1, text, sizeof( text ) ) == LC_COOP_PAKS_DIFFER );
+	CHECK_STR( text, "You're missing pak1.pk3, pak2.pk3 (player 2 has it). Both need the game's original pak0.pk3, pak1.pk3 and pak2.pk3 (other packs don't matter)." );
+	CHECK( lc_coop_compare_paks( ours, "pak0.pk3:3376297517 pak1.pk3:596947475 pak2.pk3:3960871590 pak3.pk3:1592359207", 0, text, sizeof( text ) ) == LC_COOP_PAKS_EXPANSION );
+	CHECK( strstr( text, "The host doesn't have the Expansion Pack (pak3.pk3); you do. You can still play together" ) == text );
+	/* other packs never count */
+	CHECK( lc_coop_compare_paks( ours, "zpak.pk3:5 pak0.pk3:3376297517 pak1.pk3:596947475 pak2.pk3:3960871590", 0, text, sizeof( text ) ) == LC_COOP_PAKS_SAME );
+	lc_coop_local_paks( NULL, text, sizeof( text ) );
+	CHECK_STR( text, "" );							/* this test's homepath has none */
+}
+
+/* RFC 1320's test vectors, and a pk3's checksum from its central directory */
+static void test_checksum( void )
+{
+	static const struct { const char *in, *hex; } v[] = {
+		{ "", "31d6cfe0d16ae931b73c59d7e0c089c0" },
+		{ "abc", "a448017aaf21d8525fc10ae87aa6729d" },
+		{ "message digest", "d9130a8164549fe818874806e1c7014b" },
+		{ "12345678901234567890123456789012345678901234567890123456789012345678901234567890", "e33b4ddc9c38f2199c3e7b164fcc0536" },
+	};
+	unsigned char d[16];
+	char hex[33];
+	int i, j;
+
+	for ( i = 0; i < (int)( sizeof( v ) / sizeof( v[0] ) ); i++ ) {
+		lc_md4( v[i].in, strlen( v[i].in ), d );
+		for ( j = 0; j < 16; j++ )
+			lc_snprintf( hex + j * 2, 3, "%02x", d[j] );
+		CHECK_STR( hex, v[i].hex );
+	}
+	/* a zip with three entries: two files (CRCs 0x11223344 and 0xaabbccdd) and an empty one */
+	{
+		unsigned char zip[3 * 47 + 22], crcs[8] = { 0x44, 0x33, 0x22, 0x11, 0xdd, 0xcc, 0xbb, 0xaa };
+		const unsigned crc[3] = { 0x11223344u, 0, 0xaabbccddu }, usize[3] = { 10, 0, 7 };
+		unsigned sum, want;
+		char path[LC_MAX_PATH];
+		FILE *f;
+		size_t o = 0;
+
+		memset( zip, 0, sizeof( zip ) );
+		for ( i = 0; i < 3; i++ ) {
+			unsigned char *p = zip + o;
+			p[0] = 'P'; p[1] = 'K'; p[2] = 1; p[3] = 2;
+			for ( j = 0; j < 4; j++ ) {
+				p[16 + j] = (unsigned char)( crc[i] >> ( 8 * j ) );
+				p[24 + j] = (unsigned char)( usize[i] >> ( 8 * j ) );
+			}
+			p[28] = 1;						/* name length */
+			p[46] = (unsigned char)( 'a' + i );
+			o += 47;
+		}
+		zip[o] = 'P'; zip[o + 1] = 'K'; zip[o + 2] = 5; zip[o + 3] = 6;
+		zip[o + 12] = (unsigned char)o;		/* central directory size; offset 0 */
+		lc_path_join( path, sizeof( path ), lc_homepath( ), "t.pk3" );
+		lc_mkdir_p( lc_homepath( ) );
+		f = fopen( path, "wb" );
+		CHECK( f != NULL );
+		if ( f ) {
+			fwrite( zip, 1, sizeof( zip ), f );
+			fclose( f );
+		}
+		lc_md4( crcs, sizeof( crcs ), d );
+		want = 0;
+		for ( j = 0; j < 4; j++ )
+			want ^= (unsigned)d[j * 4] | ( (unsigned)d[j * 4 + 1] << 8 ) | ( (unsigned)d[j * 4 + 2] << 16 ) | ( (unsigned)d[j * 4 + 3] << 24 );
+		CHECK( lc_pak_checksum( path, &sum ) && sum == want );
+		remove( path );
+		CHECK( !lc_pak_checksum( path, &sum ) );
+	}
+}
+
+static void test_characters( void )
+{
+	const char *id, *name, *group;
+	char args[LC_CMDLINE_SIZE] = "";
+	lc_launch o;
+
+	CHECK( lc_coop_character_count( ) > 10 );
+	CHECK( lc_coop_character( 0, &id, &name, &group ) && !strcmp( id, "janeway" ) && !strcmp( group, "crew" ) );
+	CHECK( !lc_coop_character( lc_coop_character_count( ), &id, &name, &group ) );
+	CHECK( lc_coop_character_valid( "telsia" ) && !lc_coop_character_valid( "" ) && !lc_coop_character_valid( NULL ) && !lc_coop_character_valid( "../x" ) );
+	/* the launch arguments carry it after the sex, as the Mac's */
+	memset( &o, 0, sizeof( o ) );
+	o.mode = LC_MODE_SP;
+	o.coopConnect = "10.0.0.2:29760";
+	o.coopSex = "female";
+	o.coopLook = "seven";
+	lc_launch_append_args( &o, lc_homebase( ), args, sizeof( args ) );
+	CHECK( strstr( args, "+set coop_connect \"10.0.0.2:29760\" +set coop_sex female +set coop_look seven " ) != NULL );
+	args[0] = 0;
+	o.coopLook = "bad id";
+	lc_launch_append_args( &o, lc_homebase( ), args, sizeof( args ) );
+	CHECK( strstr( args, "coop_look" ) == NULL );
+}
+
 int main( void )
 {
 	lc_net_init( );
@@ -256,6 +383,9 @@ int main( void )
 	test_describe( );
 	test_choice( );
 	test_invite( );
+	test_paks( );
+	test_checksum( );
+	test_characters( );
 	test_query( );
 	return TEST_DONE( );
 }

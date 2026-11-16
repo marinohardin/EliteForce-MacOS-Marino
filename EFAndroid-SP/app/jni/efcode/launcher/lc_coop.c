@@ -9,6 +9,8 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 #include "lc_sock.h"
 #include "lc_coop.h"
 #include "lc_nat.h"
+#include "lc_data.h"
+#include "../../../../../efgame/src/game/coop_characters.h"	/* player 2's characters (coop_look) */
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -354,6 +356,205 @@ void lc_coop_query_run( const char *address, double timeout, lc_coop_query *out 
 	set_result( out, "noanswer", shown, NULL );
 }
 
+/* ---- the game's own paks (protocol 7) -------------------------------------------------------------- */
+
+/* = qcommon/files.c pak_checksums (ELITEFORCE): pak0.pk3, the 1.1 and 1.2 patches' pak1/pak2.pk3, the
+   Expansion Pack's pak3.pk3 */
+static const unsigned coop_pak_checksums[4] = { 3376297517u, 596947475u, 3960871590u, 1592359207u };
+
+int lc_coop_core_pak_index( unsigned checksum )
+{
+	int i;
+	for ( i = 0; i < 4; i++ )
+		if ( checksum == coop_pak_checksums[i] )
+			return i;
+	return -1;
+}
+
+typedef struct { const char *dir; unsigned found[4]; } pakScan;
+
+static int PakScanCB( const char *name, int isDir, void *user )
+{
+	pakScan *c = (pakScan *)user;
+	size_t n = strlen( name );
+	char path[LC_MAX_PATH];
+	unsigned sum;
+	int i;
+
+	if ( isDir || name[0] == '.' || n < 5 || lc_stricmp( name + n - 4, ".pk3" ) )
+		return 0;
+	lc_path_join( path, sizeof( path ), c->dir, name );
+	if ( !lc_pak_checksum( path, &sum ) )
+		return 0;
+	i = lc_coop_core_pak_index( sum );
+	if ( i >= 0 )
+		c->found[i] = sum;
+	return 0;
+}
+
+void lc_coop_local_paks( const char *dataFolder, char *out, size_t size )
+{
+	pakScan c;
+	const char *home = lc_homebase( );
+	int i;
+
+	memset( &c, 0, sizeof( c ) );
+	c.dir = home;
+	lc_list_dir( home, PakScanCB, &c );
+	if ( dataFolder && *dataFolder && strcmp( dataFolder, home ) ) {
+		c.dir = dataFolder;
+		lc_list_dir( dataFolder, PakScanCB, &c );
+	}
+	if ( size )
+		out[0] = 0;
+	for ( i = 0; i < 4; i++ )
+		if ( c.found[i] ) {
+			char one[32];
+			lc_snprintf( one, sizeof( one ), "%spak%d.pk3:%u", out[0] ? " " : "", i, c.found[i] );
+			lc_strlcat( out, one, size );
+		}
+}
+
+/* a FS_CoopPaks list as the checksum of each of pak0-pak3, 0 for one that isn't there */
+static void ParsePaks( const char *list, unsigned sums[4] )
+{
+	memset( sums, 0, 4 * sizeof( sums[0] ) );
+	while ( list && *list ) {
+		while ( *list == ' ' )
+			list++;
+		if ( !lc_strnicmp( list, "pak", 3 ) && list[3] >= '0' && list[3] <= '3' && !lc_strnicmp( list + 4, ".pk3:", 5 ) )
+			sums[list[3] - '0'] = (unsigned)strtoul( list + 9, NULL, 10 );
+		while ( *list && *list != ' ' )
+			list++;
+	}
+}
+
+static void PakListAdd( char *list, size_t size, int pak )
+{
+	char one[24];
+	lc_snprintf( one, sizeof( one ), "%spak%d.pk3", list[0] ? ", " : "", pak );
+	lc_strlcat( list, one, size );
+}
+
+int lc_coop_compare_paks( const char *hostPaks, const char *guestPaks, int forHost, char *text, size_t size )
+{
+	unsigned host[4], guest[4];
+	char hostOnly[64] = "", guestOnly[64] = "", differ[64] = "", tmp[256];
+	int i;
+
+	ParsePaks( hostPaks, host );
+	ParsePaks( guestPaks, guest );
+	if ( size )
+		text[0] = 0;
+	for ( i = 0; i < 3; i++ ) {
+		if ( host[i] == guest[i] )
+			continue;
+		if ( !guest[i] )
+			PakListAdd( hostOnly, sizeof( hostOnly ), i );
+		else if ( !host[i] )
+			PakListAdd( guestOnly, sizeof( guestOnly ), i );
+		else
+			PakListAdd( differ, sizeof( differ ), i );
+	}
+	if ( hostOnly[0] || guestOnly[0] || differ[0] ) {
+		if ( hostOnly[0] ) {
+			lc_snprintf( tmp, sizeof( tmp ), forHost ? "Player 2 is missing %s (you have it). " : "You're missing %s (the host has it). ", hostOnly );
+			lc_strlcat( text, tmp, size );
+		}
+		if ( guestOnly[0] ) {
+			lc_snprintf( tmp, sizeof( tmp ), forHost ? "You're missing %s (player 2 has it). " : "The host is missing %s (you have it). ", guestOnly );
+			lc_strlcat( text, tmp, size );
+		}
+		if ( differ[0] ) {
+			lc_snprintf( tmp, sizeof( tmp ), forHost ? "Player 2's %s differs from yours. " : "Your %s differs from the host's. ", differ );
+			lc_strlcat( text, tmp, size );
+		}
+		lc_strlcat( text, "Both need the game's original pak0.pk3, pak1.pk3 and pak2.pk3 (other packs don't matter).", size );
+		return LC_COOP_PAKS_DIFFER;
+	}
+	if ( host[3] != guest[3] ) {
+		if ( !guest[3] )
+			lc_strlcat( text, forHost ? "Player 2 doesn't have the Expansion Pack (pak3.pk3); you do." :
+				"You don't have the Expansion Pack (pak3.pk3); the host does.", size );
+		else if ( !host[3] )
+			lc_strlcat( text, forHost ? "Player 2 has the Expansion Pack (pak3.pk3); you don't." :
+				"The host doesn't have the Expansion Pack (pak3.pk3); you do.", size );
+		else
+			lc_strlcat( text, forHost ? "Player 2's Expansion Pack (pak3.pk3) differs from yours." :
+				"Your Expansion Pack (pak3.pk3) differs from the host's.", size );
+		lc_strlcat( text, " You can still play together: the host runs the game, so the difference is mostly "
+			"cosmetic on player 2's screen (some texts, the tricorder, a few weapon and NPC details).", size );
+		return LC_COOP_PAKS_EXPANSION;
+	}
+	return LC_COOP_PAKS_SAME;
+}
+
+/* straight apostrophes as the typographic one the sheets use */
+static void CurlyApostrophes( const char *in, char *out, size_t size )
+{
+	size_t o = 0;
+	for ( ; *in && o + 4 < size; in++ ) {
+		if ( *in == '\'' ) {
+			memcpy( out + o, "\xe2\x80\x99", 3 );
+			o += 3;
+		} else
+			out[o++] = *in;
+	}
+	if ( size )
+		out[o] = 0;
+}
+
+void lc_coop_check_paks( lc_coop_query *q, const char *dataFolder )
+{
+	char hostPaks[256], ours[256], text[1024];
+	int match;
+
+	q->warning[0] = 0;
+	if ( strcmp( q->status, "ok" ) )
+		return;
+	lc_coop_info_value( q->info, "paks", hostPaks, sizeof( hostPaks ) );
+	lc_coop_local_paks( dataFolder, ours, sizeof( ours ) );
+	match = lc_coop_compare_paks( hostPaks, ours, 0, text, sizeof( text ) );
+	lc_log( "Co-op: host's paks \"%s\", this %s's \"%s\": %s", hostPaks, LC_PLATFORM_NOUN_LC, ours,
+		match == LC_COOP_PAKS_SAME ? "the same" : text );
+	if ( match == LC_COOP_PAKS_DIFFER ) {
+		lc_strlcpy( q->status, "paks", sizeof( q->status ) );
+		CurlyApostrophes( text, q->error, sizeof( q->error ) );
+	} else if ( match == LC_COOP_PAKS_EXPANSION )
+		CurlyApostrophes( text, q->warning, sizeof( q->warning ) );
+}
+
+/* ---- player 2's character ------------------------------------------------------------------------- */
+
+int lc_coop_character_count( void )
+{
+	return COOP_NUM_CHARACTERS;
+}
+
+int lc_coop_character( int i, const char **id, const char **name, const char **group )
+{
+	if ( i < 0 || i >= COOP_NUM_CHARACTERS )
+		return 0;
+	if ( id )
+		*id = coop_characters[i].id;
+	if ( name )
+		*name = coop_characters[i].name;
+	if ( group )
+		*group = coop_characters[i].group;
+	return 1;
+}
+
+int lc_coop_character_valid( const char *id )
+{
+	int i;
+	if ( !id || !*id )
+		return 0;
+	for ( i = 0; i < COOP_NUM_CHARACTERS; i++ )
+		if ( !strcmp( id, coop_characters[i].id ) )
+			return 1;
+	return 0;
+}
+
 /* ---- addresses and the invite --------------------------------------------------------------------- */
 
 int lc_coop_lan_addresses( char addrs[][16], char ifnames[][64], int max )
@@ -380,7 +581,7 @@ void lc_coop_invite_link( const char *address, char *out, size_t size )
 
 static struct {
 	int choice, background;
-	char address[64], sex[16], name[40], password[72];
+	char address[64], sex[16], look[COOP_CHARACTER_MAX], name[40], password[72];
 } g_choice;
 
 void lc_coop_choose_none( void )
@@ -397,12 +598,14 @@ void lc_coop_choose_host( int background, const char *name, const char *password
 	lc_strlcpy( g_choice.password, password ? password : "", sizeof( g_choice.password ) );
 }
 
-void lc_coop_choose_join( const char *address, const char *sex, const char *name, const char *password )
+void lc_coop_choose_join( const char *address, const char *sex, const char *look, const char *name, const char *password )
 {
 	memset( &g_choice, 0, sizeof( g_choice ) );
 	g_choice.choice = 2;
 	lc_strlcpy( g_choice.address, address ? address : "", sizeof( g_choice.address ) );
 	lc_strlcpy( g_choice.sex, sex && !lc_stricmp( sex, "female" ) ? "female" : "male", sizeof( g_choice.sex ) );
+	if ( lc_coop_character_valid( look ) )
+		lc_strlcpy( g_choice.look, look, sizeof( g_choice.look ) );
 	safe_name( name, g_choice.name, sizeof( g_choice.name ) );
 	lc_strlcpy( g_choice.password, password ? password : "", sizeof( g_choice.password ) );
 }
@@ -429,6 +632,8 @@ void lc_coop_launch_fields( struct lc_launch_coop_fields *out )
 		if ( ok && g_choice.address[0] ) {
 			out->coopConnect = g_choice.address;
 			out->coopSex = g_choice.sex;
+			if ( g_choice.look[0] )
+				out->coopLook = g_choice.look;
 		}
 	}
 	if ( g_choice.choice && g_choice.name[0] )
