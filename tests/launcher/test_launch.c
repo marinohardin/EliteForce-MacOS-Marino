@@ -157,6 +157,11 @@ static void TestCoop( void )
 	lc_launch_append_args( &o, home, cl, sizeof( cl ) );
 	lc_snprintf( want, sizeof( want ), "%s+set sp_coop 1 +set coop_backgroundPlay 0 +set coop_name \"Jose\" ", prefix );
 	CHECK_STR( cl, want );
+	o.coopHidden = 1;		/* "Show this game on my network" off */
+	cl[0] = 0;
+	lc_launch_append_args( &o, home, cl, sizeof( cl ) );
+	lc_snprintf( want, sizeof( want ), "%s+set sp_coop 1 +set coop_backgroundPlay 0 +set coop_lanVisible 0 +set coop_name \"Jose\" ", prefix );
+	CHECK_STR( cl, want );
 
 	Defaults( &o );
 	o.coopConnect = "192.168.1.5:29760";

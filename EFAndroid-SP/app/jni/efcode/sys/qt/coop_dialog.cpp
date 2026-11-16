@@ -105,6 +105,11 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 	m_background->setToolTip( QString::fromUtf8( "The game goes on while its window isn\xe2\x80\x99t in front, e.g. while you click into a second copy "
 		"on this %1 (keys and the mouse still go only to the window in front)" ).arg( thisNoun ) );
 	hl->addWidget( m_background );
+	m_showLan = new QCheckBox( "Show this game on my network" );
+	m_showLan->setChecked( lc_store_get_bool( st, LC_KEY_COOP_LAN_VISIBLE, 1 ) != 0 );
+	m_showLan->setToolTip( QString::fromUtf8( "Friends on the same network see it under \xe2\x80\x9cGames on your network\xe2\x80\x9d. "
+		"Off: only someone who types this %1\xe2\x80\x99s address finds it" ).arg( thisNoun ) );
+	hl->addWidget( m_showLan );
 	m_router = new QCheckBox( "Open the port on my router (for a friend on the internet)" );
 	hl->addWidget( m_router );
 	m_internetStatus = label( QString(), 11, QFont::Normal, secondary(), 400 );
@@ -127,6 +132,29 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 	Group *jg = new Group( "Join" );
 	QVBoxLayout *jl = new QVBoxLayout;
 	jl->setSpacing( px( 12 ) );
+
+	/* Games on your network: answers to a broadcast search (lc_coop_lan_scan); a click fills the address and checks it */
+	QVBoxLayout *gl = new QVBoxLayout;
+	gl->setSpacing( px( 6 ) );
+	QHBoxLayout *gh = new QHBoxLayout;
+	gh->addWidget( label( "Games on your network", 12, QFont::DemiBold ) );
+	gh->addStretch( 1 );
+	m_gamesRefresh = button( "Refresh", "Look again for co-op games on your network (it also looks every few seconds)" );
+	m_gamesRefresh->setMinimumWidth( px( 80 ) );
+	gh->addWidget( m_gamesRefresh );
+	gl->addLayout( gh );
+	m_games = new QListWidget;
+	styleView( m_games );
+	m_games->setFrameShape( QFrame::StyledPanel );
+	m_games->setSelectionMode( QAbstractItemView::SingleSelection );
+	m_games->setHorizontalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
+	m_games->setFixedHeight( px( 3 * 40 + 4 ) );
+	gl->addWidget( m_games );
+	m_gamesStatus = label( QString(), 11, QFont::Normal, secondary(), 500 );
+	m_gamesStatus->setTextInteractionFlags( Qt::TextSelectableByMouse );
+	gl->addWidget( m_gamesStatus );
+	jl->addLayout( gl );
+
 	QHBoxLayout *ar = new QHBoxLayout;
 	ar->addWidget( label( QString::fromUtf8( "Host\xe2\x80\x99s address" ), 12 ) );
 	m_address = new QLineEdit;
@@ -283,6 +311,13 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 			showInternet();
 		}
 	} );
+	connect( m_games, &QListWidget::itemClicked, this, &CoopDialog::pickGame );
+	connect( m_gamesRefresh, &QPushButton::clicked, this, &CoopDialog::doScan );
+	m_lanTimer = new QTimer( this );
+	m_lanTimer->setInterval( 5000 );
+	connect( m_lanTimer, &QTimer::timeout, this, &CoopDialog::doScan );
+	m_lanTimer->start();
+	QTimer::singleShot( 0, this, &CoopDialog::doScan );
 	showInternet();
 	m_address->setFocus();
 	if ( !address.isEmpty() ) {
@@ -527,6 +562,104 @@ void CoopDialog::doCheck()
 	} );
 }
 
+/* ---- Games on your network ------------------------------------------------------------------------------------------ */
+
+void CoopDialog::doScan()
+{
+	if ( m_scanning )
+		return;
+	m_scanning = true;
+	m_gamesRefresh->setEnabled( false );
+	if ( m_games->count() == 0 ) {
+		m_gamesStatus->setText( QString::fromUtf8( "Looking for co-op games on your network\xe2\x80\xa6" ) );
+		setColor( m_gamesStatus, secondary() );
+	}
+	auto *r = new lc_coop_lan_result;
+	memset( r, 0, sizeof *r );
+	const QByteArray df = B( m_dataFolder );
+	async( this, [r, df]() {
+		lc_coop_lan_scan( 1.5, df.isEmpty() ? nullptr : df.constData(), r );
+	}, [this, r]() {
+		onScanned( r );
+		delete r;
+	} );
+	/* async() drops done() when the dialog is gone; the result then leaks once (a few KB), as the Check's query does */
+}
+
+void CoopDialog::onScanned( const lc_coop_lan_result *r )
+{
+	m_scanning = false;
+	m_gamesRefresh->setEnabled( true );
+	const QString selAddr = m_games->currentItem() ? m_games->currentItem()->data( Qt::UserRole ).toString() : QString();
+	QSignalBlocker block( m_games );
+	m_games->clear();
+	for ( int i = 0; i < r->count; ++i ) {
+		const lc_coop_lan_game *g = &r->games[i];
+		char title[512] = "", detail[768] = "";
+		int needPw = 0;
+		lc_coop_lan_row( g, title, sizeof title, detail, sizeof detail, &needPw );
+		/* two lines: the title (who and where), then the level or why it can't be joined; unusable rows are greyed */
+		QWidget *w = new QWidget;
+		QHBoxLayout *h = new QHBoxLayout( w );
+		h->setContentsMargins( px( 8 ), px( 3 ), px( 8 ), px( 3 ) );
+		h->setSpacing( px( 6 ) );
+		QVBoxLayout *v = new QVBoxLayout;
+		v->setSpacing( 0 );
+		QHBoxLayout *tl = new QHBoxLayout;
+		tl->setSpacing( px( 4 ) );
+		const QColor tc = g->usable ? QColor() : tertiary();
+		tl->addWidget( elidedLabel( U( title ), 12, QFont::DemiBold, tc ) );
+		if ( needPw ) {
+			QLabel *lock = new QLabel;
+			lock->setPixmap( iconPixmap( "lock.fill", g->usable ? secondary() : tertiary(), 11 ) );
+			lock->setToolTip( "The host set a password" );
+			tl->addWidget( lock );
+		}
+		tl->addStretch( 1 );
+		v->addLayout( tl );
+		v->addWidget( elidedLabel( U( detail ), 11, QFont::Normal, g->usable ? secondary() : tertiary() ) );
+		h->addLayout( v, 1 );
+		w->setAttribute( Qt::WA_TransparentForMouseEvents );
+		QListWidgetItem *it = new QListWidgetItem( m_games );
+		it->setData( Qt::UserRole, U( g->address ) );
+		it->setToolTip( g->usable ? QString( "Check %1" ).arg( U( g->address ) ) : U( g->reason ) );
+		it->setSizeHint( QSize( 0, px( 40 ) ) );
+		m_games->setItemWidget( it, w );
+		if ( !selAddr.isEmpty() && selAddr == U( g->address ) )
+			m_games->setCurrentItem( it );
+	}
+	if ( r->error[0] ) {
+		m_gamesStatus->setText( U( r->error ) );
+		setColor( m_gamesStatus, orange() );
+	} else if ( r->count == 0 ) {
+		m_gamesStatus->setText( QString::fromUtf8( "None found yet. The host presses Host with \xe2\x80\x9cShow this game on my network\xe2\x80\x9d on; "
+			"or type the host\xe2\x80\x99s address below." ) );
+		setColor( m_gamesStatus, secondary() );
+	} else {
+		m_gamesStatus->setText( "Click a game to check it." );
+		setColor( m_gamesStatus, secondary() );
+	}
+	if ( testSet( "VOYAGERSP_TEST_COOP_SHEET" ) || !testEnv( "VOYAGERSP_TEST_COOP_SCAN_PORTS" ).isEmpty() ) {
+		log( QString( "[test] co-op lan: %1 game(s)%2" ).arg( r->count ).arg( r->error[0] ? QString( ", " ) + U( r->error ) : QString() ) );
+		for ( int i = 0; i < r->count; ++i ) {
+			char title[512] = "", detail[768] = "";
+			int needPw = 0;
+			lc_coop_lan_row( &r->games[i], title, sizeof title, detail, sizeof detail, &needPw );
+			log( QString( "[test] co-op lan row: %1 | %2%3" ).arg( U( title ), U( detail ), needPw ? " | lock" : "" ) );
+		}
+	}
+}
+
+void CoopDialog::pickGame( QListWidgetItem *item )
+{
+	if ( !item )
+		return;
+	m_address->setText( item->data( Qt::UserRole ).toString() );
+	m_status.clear();
+	updateConnect();
+	doCheck();
+}
+
 /* ---- Host / Connect ----------------------------------------------------------------------------------------------- */
 
 void CoopDialog::doHost()
@@ -538,11 +671,13 @@ void CoopDialog::doHost()
 	lc_coop_safe_name( B( m_name->text() ).constData(), name, sizeof name );
 	lc_store_set_int( st, LC_KEY_COOP_BACKGROUND, m_background->isChecked() ? 1 : 0 );
 	lc_store_set( st, LC_KEY_COOP_NAME, name[0] ? name : nullptr );
+	lc_store_set_int( st, LC_KEY_COOP_LAN_VISIBLE, m_showLan->isChecked() ? 1 : 0 );
 	lc_store_save( st );
 	m_playName = U( name );
-	lc_coop_choose_host( m_background->isChecked(), name, B( m_hostPw->text() ).constData() );
-	log( QString( "Co-op: hosting (single player with sp_coop 1) as %1%2" ).arg( name[0] ? U( name ) : U( lc_computer_name() ),
-		m_hostPw->text().isEmpty() ? QString() : QString( ", with a password" ) ) );
+	lc_coop_choose_host( m_background->isChecked(), m_showLan->isChecked(), name, B( m_hostPw->text() ).constData() );
+	log( QString( "Co-op: hosting (single player with sp_coop 1) as %1%2%3" ).arg( name[0] ? U( name ) : U( lc_computer_name() ),
+		m_hostPw->text().isEmpty() ? QString() : QString( ", with a password" ),
+		m_showLan->isChecked() ? QString() : QString( ", not shown on the network" ) ) );
 	m_choice = Host;
 	accept();
 }

@@ -45,6 +45,44 @@ void lc_coop_query_run( const char *address, double timeoutSeconds, lc_coop_quer
 void lc_coop_info_value( const char *info, const char *key, char *out, size_t size );
 /* the sheet's description lines for a host's answer (§6.1) */
 void lc_coop_describe( const char *info, char *out, size_t size );
+/* ---- "Games on your network": find co-op hosts on the local network (pull, like Holomatch's LAN
+   list). The query is the Check's own getcoopinfo with " lan" after the challenge, sent to
+   255.255.255.255, each interface's directed broadcast address and 127.0.0.1 (copies on this
+   computer), on each port of lc_coop_lan_ports; every host that answers within the time is listed.
+   A host whose "Show this game on my network" is off (coop_lanVisible 0) ignores " lan" queries but
+   still answers a Check of its address. Old hosts ignore the extra word and answer. ---- */
+#define LC_COOP_LAN_MAX		24
+typedef struct {
+	char address[64];			/* a.b.c.d:port the answer came from: what Check and Connect use */
+	char info[1024];			/* the host's coopInfoResponse infostring */
+	int local;					/* answered from this computer (127/8 or one of its own addresses) */
+	int usable;					/* lc_coop_lan_check: same version, game paks match, not full */
+	char reason[256];			/* lc_coop_lan_check: why not usable (the row is greyed), "" otherwise */
+} lc_coop_lan_game;
+typedef struct {
+	int count;
+	lc_coop_lan_game games[LC_COOP_LAN_MAX];
+	int broadcasts;				/* broadcast queries that went out */
+	int sendError;				/* errno / WSA error of a broadcast that couldn't be sent (0: none) */
+	char error[256];			/* no broadcast could be sent at all: the sentence for the list ("" otherwise) */
+} lc_coop_lan_result;
+/* the ports searched: LC_COOP_PORT (test hook VOYAGERSP_TEST_COOP_SCAN_PORTS=<n>[,<n>...]); returns the count */
+int lc_coop_lan_ports( int *ports, int max );
+/* blocking (run on a thread): broadcast at once and again a third of the way in, collect answers for
+   `seconds` (~1.5), then lc_coop_lan_check. dataFolder: the BaseEF in use for the pak compare (may be NULL) */
+void lc_coop_lan_scan( double seconds, const char *dataFolder, lc_coop_lan_result *out );
+/* one answer (the whole packet) from `from` ("a.b.c.d:port"): added, or merged with the same host's
+   earlier answer (a copy on this computer answers by loopback and by its network address: one row,
+   the network address kept). challenge: the query's; an answer echoing another one is dropped.
+   1 when it was a co-op answer */
+int lc_coop_lan_take( lc_coop_lan_result *r, const char *from, int local, const char *packet, int len, const char *challenge );
+/* sets usable / reason (version, pak0-pak2, full) and sorts: usable games first, then by name */
+void lc_coop_lan_check( lc_coop_lan_result *r, const char *dataFolder );
+/* the row's two lines: title = the host player's name and the computer's (`hostname`), detail =
+   where the host is (mission and map, or the menus), difficulty and address; for a game that can't be
+   joined, the reason and the address. needPassword: the row shows a lock */
+void lc_coop_lan_row( const lc_coop_lan_game *g, char *title, size_t titleSize, char *detail, size_t detailSize, int *needPassword );
+
 /* ---- the game's own paks (protocol 7; sys_coop_net.c CoopNet_ComparePaks) ---- */
 /* which of the game's own paks a pk3 with this checksum is: 0-3 for pak0.pk3-pak3.pk3 (pak3 is the
    Expansion Pack's), -1 for any other (= qcommon/files.c FS_CoopCorePakIndex) */
@@ -77,7 +115,8 @@ void lc_coop_invite_link( const char *address, char *out, size_t size );
 
 /* the sheet's choice, kept until Play (§6.2) */
 void lc_coop_choose_none( void );
-void lc_coop_choose_host( int background, const char *name, const char *password );
+/* lanVisible: "Show this game on my network" (0 puts +set coop_lanVisible 0 on the command line) */
+void lc_coop_choose_host( int background, int lanVisible, const char *name, const char *password );
 /* look: a character id (lc_coop_character), "" or NULL for Munro */
 void lc_coop_choose_join( const char *address, const char *sex, const char *look, const char *name, const char *password );
 int lc_coop_choice( void );		/* 0 none, 1 host, 2 join */
@@ -86,7 +125,7 @@ int lc_coop_choice( void );		/* 0 none, 1 host, 2 join */
    calls Sys_CoopSetLaunchPassword(lc_coop_password()) directly; Linux ef-launcher
    puts it in env EF_COOP_PASSWORD for the exec, and sys_coop_host.c takes it from
    there (and unsets it) on startup. */
-struct lc_launch_coop_fields { int coopHost, coopBackground; const char *coopConnect, *coopSex, *coopLook, *coopName; };
+struct lc_launch_coop_fields { int coopHost, coopBackground, coopHidden; const char *coopConnect, *coopSex, *coopLook, *coopName; };
 void lc_coop_launch_fields( struct lc_launch_coop_fields *out );
 const char *lc_coop_password( void );	/* "" if none */
 

@@ -94,9 +94,11 @@ static void BuildArgs( const lc_launch *o, const char *homeBase, size_t used, si
 	if ( !holomatch ) {		/* co-op (§6.2) */
 		int ok = 1;
 
-		if ( o->coopHost )
+		if ( o->coopHost ) {
 			Addf( args, argsSize, "+set sp_coop 1 +set coop_backgroundPlay %d ", o->coopBackground ? 1 : 0 );
-		else if ( o->coopConnect && *o->coopConnect ) {
+			if ( o->coopHidden )
+				Addf( args, argsSize, "+set coop_lanVisible 0 " );
+		} else if ( o->coopConnect && *o->coopConnect ) {
 			const char *p;
 
 			for ( p = o->coopConnect; *p; p++ )

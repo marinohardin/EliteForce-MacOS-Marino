@@ -19,7 +19,7 @@ static void coopNatRelease( ) { if ( g_coopNat ) { lc_nat_release( g_coopNat ); 
 struct CoopDlg : Wnd {
 	bool canPlay = false, playNow = false;
 	enum { ID_NAME = 10, ID_HOST, ID_PW, ID_BG, ID_ROUTER, ID_INET, ID_INVITE, ID_ADDR, ID_CHECK, ID_JPW, ID_MUNRO, ID_RES_ICON, ID_RES_SPIN, ID_RES_TITLE, ID_RES_TEXT,
-		ID_CONNECT, ID_CONNECT_TXT, ID_LAN, ID_NOTE, ID_LOOK };
+		ID_CONNECT, ID_CONNECT_TXT, ID_LAN, ID_NOTE, ID_LOOK, ID_SHOWLAN, ID_GAMES, ID_GAMES_REFRESH, ID_GAMES_STATUS };
 	/* NAT state */
 	int natState = 0;						/* 0 idle, 1 asking, 2 mapped, 3 failed */
 	str natPublic, natWhy; str lanFirst;
@@ -29,9 +29,14 @@ struct CoopDlg : Wnd {
 	std::vector<str> lookIds;				/* the Character list's ids by row: "" Munro, "\x01" a group heading */
 	int lookRow = 0;
 	int resGlyph = -1, resRole = R_TEXT;
+	/* Games on your network */
+	std::vector<lc_coop_lan_game> games;
+	bool scanning = false;
+	int contentH = 0, clientH = 0;			/* the sheet scrolls when the screen is shorter than it */
 	struct NatRes { CoopDlg *d; lc_nat_result r; char ip[64]; int ext, err; };
 	struct QRes { CoopDlg *d; lc_coop_query q; char dataFolder[LC_MAX_PATH]; };
-	static const int WM_NAT = WM_APP + 40, WM_QUERY = WM_APP + 41;
+	struct LRes { HWND hwnd; lc_coop_lan_result r; char dataFolder[LC_MAX_PATH]; };
+	static const int WM_NAT = WM_APP + 40, WM_QUERY = WM_APP + 41, WM_LAN = WM_APP + 42;
 
 	static void natCb( lc_nat_result r, const char *ip, int ext, int err, void *u )
 	{
@@ -154,6 +159,100 @@ struct CoopDlg : Wnd {
 		delete r;
 	}
 
+	/* ---- Games on your network: searched when the sheet opens, then every 5 s and on Refresh ---- */
+	static void lanWorker( void *u )
+	{
+		LRes *l = (LRes *)u;
+		lc_coop_lan_scan( 1.5, l->dataFolder[0] ? l->dataFolder : 0, &l->r );
+		if ( !IsWindow( l->hwnd ) || !PostMessageW( l->hwnd, WM_LAN, 0, (LPARAM)l ) ) delete l;
+	}
+	void doScan( )
+	{
+		if ( scanning ) return;
+		LRes *l = new LRes; l->hwnd = hwnd; memset( &l->r, 0, sizeof l->r );
+		lc_strlcpy( l->dataFolder, dataFolder.c_str( ), sizeof l->dataFolder );
+		lc_thread *t = lc_thread_start( lanWorker, l );
+		if ( !t ) { delete l; return; }
+		lc_thread_detach( t );
+		scanning = true; EnableWindow( ctl( ID_GAMES_REFRESH ), FALSE );
+		if ( games.empty( ) ) { setText( ctl( ID_GAMES_STATUS ), "Looking for co-op games on your network\xE2\x80\xA6" ); setRole( ctl( ID_GAMES_STATUS ), R_TEXT2 ); }
+	}
+	void onLan( LRes *l )
+	{
+		scanning = false; EnableWindow( ctl( ID_GAMES_REFRESH ), TRUE );
+		HWND lb = ctl( ID_GAMES );
+		int sel = (int)SendMessageW( lb, LB_GETCURSEL, 0, 0 );
+		str selAddr = sel >= 0 && sel < (int)games.size( ) ? games[sel].address : "";
+		games.assign( l->r.games, l->r.games + l->r.count );
+		SendMessageW( lb, WM_SETREDRAW, FALSE, 0 );
+		SendMessageW( lb, LB_RESETCONTENT, 0, 0 );
+		sel = -1;
+		for ( size_t i = 0; i < games.size( ); i++ ) {
+			SendMessageW( lb, LB_ADDSTRING, 0, (LPARAM)i );
+			if ( !selAddr.empty( ) && selAddr == games[i].address ) sel = (int)i;
+		}
+		SendMessageW( lb, LB_SETCURSEL, sel, 0 );
+		SendMessageW( lb, WM_SETREDRAW, TRUE, 0 ); InvalidateRect( lb, 0, TRUE );
+		if ( l->r.error[0] ) { setText( ctl( ID_GAMES_STATUS ), l->r.error ); setRole( ctl( ID_GAMES_STATUS ), R_ORANGE ); }
+		else if ( games.empty( ) ) { setText( ctl( ID_GAMES_STATUS ), "None found yet. The host presses Host with \xE2\x80\x9CShow this game on my network\xE2\x80\x9D on; or type the host\xE2\x80\x99s address below." ); setRole( ctl( ID_GAMES_STATUS ), R_TEXT2 ); }
+		else { setText( ctl( ID_GAMES_STATUS ), "Click a game to check it." ); setRole( ctl( ID_GAMES_STATUS ), R_TEXT2 ); }
+		delete l;
+	}
+	void pickGame( )
+	{
+		int i = (int)SendMessageW( ctl( ID_GAMES ), LB_GETCURSEL, 0, 0 );
+		if ( i < 0 || i >= (int)games.size( ) ) return;
+		SetWindowTextW( ctl( ID_ADDR ), W( games[i].address ).c_str( ) );
+		doCheck( );
+	}
+	void drawGame( DRAWITEMSTRUCT *d )
+	{
+		if ( d->itemID == (UINT)-1 || d->itemID >= games.size( ) ) return;
+		HDC dc = d->hDC; RECT r = d->rcItem; const lc_coop_lan_game &g = games[d->itemID];
+		bool sel = ( d->itemState & ODS_SELECTED ) != 0;
+		HBRUSH b = CreateSolidBrush( sel ? blend( T.field, T.accent, 22 ) : T.field ); FillRect( dc, &r, b ); DeleteObject( b );
+		SetBkMode( dc, TRANSPARENT );
+		char title[160], detail[320]; int lock = 0;
+		lc_coop_lan_row( &g, title, sizeof title, detail, sizeof detail, &lock );
+		int x = r.left + S( 8 );
+		if ( lock ) drawGlyph( dc, G_LOCK, x, r.top + S( 4 ), S( 13 ), g.usable ? T.text2 : T.text3 );
+		RECT tr = { x + S( lock ? 18 : 0 ), r.top + S( 3 ), r.right - S( 8 ), r.top + S( 19 ) };
+		SelectObject( dc, F( 12, 600 ) ); SetTextColor( dc, g.usable ? T.text : T.text3 );
+		DrawTextW( dc, W( title ).c_str( ), -1, &tr, DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS );
+		RECT dr = { x, r.top + S( 19 ), r.right - S( 8 ), r.bottom - S( 2 ) };
+		SelectObject( dc, F( 11 ) ); SetTextColor( dc, g.usable ? T.text2 : T.text3 );
+		DrawTextW( dc, W( detail ).c_str( ), -1, &dr, DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS );
+	}
+	void scrollTo( int pos )
+	{
+		int maxp = max( 0, S( contentH ) - S( clientH ) );
+		pos = max( 0, min( pos, maxp ) );
+		if ( pos == scrollY ) return;
+		ScrollWindowEx( hwnd, 0, scrollY - pos, 0, 0, 0, 0, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE );
+		scrollY = pos;
+		SetScrollPos( hwnd, SB_VERT, pos, TRUE );
+		InvalidateRect( hwnd, 0, TRUE );
+	}
+	LRESULT onOther( UINT m, WPARAM w, LPARAM l, bool *handled ) override
+	{
+		*handled = true;
+		switch ( m ) {
+		case WM_MEASUREITEM: ( (MEASUREITEMSTRUCT *)l )->itemHeight = S( 36 ); return TRUE;
+		case WM_DRAWITEM: if ( ( (DRAWITEMSTRUCT *)l )->CtlID == ID_GAMES ) { drawGame( (DRAWITEMSTRUCT *)l ); return TRUE; } break;
+		case WM_VSCROLL: {
+			if ( l ) break;			/* (a scroll bar control's, not the sheet's) */
+			int pos = scrollY;
+			switch ( LOWORD( w ) ) {
+			case SB_LINEUP: pos -= S( 30 ); break; case SB_LINEDOWN: pos += S( 30 ); break;
+			case SB_PAGEUP: pos -= S( clientH ) - S( 40 ); break; case SB_PAGEDOWN: pos += S( clientH ) - S( 40 ); break;
+			case SB_THUMBTRACK: case SB_THUMBPOSITION: { SCROLLINFO si = { sizeof si, SIF_TRACKPOS }; GetScrollInfo( hwnd, SB_VERT, &si ); pos = si.nTrackPos; break; }
+			}
+			scrollTo( pos ); return 0; }
+		case WM_MOUSEWHEEL: if ( contentH > clientH ) { scrollTo( scrollY - (short)HIWORD( w ) * S( 60 ) / 120 ); return 0; } break;
+		}
+		*handled = false; return 0;
+	}
+
 	/* ---- actions ---- */
 	str takeName( )
 	{
@@ -167,8 +266,10 @@ struct CoopDlg : Wnd {
 		bool bg = SendMessageW( ctl( ID_BG ), BM_GETCHECK, 0, 0 ) == BST_CHECKED;
 		lc_store *st = lc_store_shared (); lc_store_set_int( st, LC_KEY_COOP_BACKGROUND, bg ); lc_store_save( st );
 		str n = takeName( ); str pw = getText( ctl( ID_PW ) );
-		lc_coop_choose_host( bg, n.c_str( ), pw.c_str( ) );
-		lc_log( "Co-op: hosting (single player with sp_coop 1) as %s%s", n.c_str( ), pw.empty( ) ? "" : ", with a password" );
+		bool showLan = SendMessageW( ctl( ID_SHOWLAN ), BM_GETCHECK, 0, 0 ) == BST_CHECKED;
+		lc_store_set_int( st, LC_KEY_COOP_LAN_VISIBLE, showLan ); lc_store_save( st );
+		lc_coop_choose_host( bg, showLan, n.c_str( ), pw.c_str( ) );
+		lc_log( "Co-op: hosting (single player with sp_coop 1) as %s%s%s", n.c_str( ), pw.empty( ) ? "" : ", with a password", showLan ? "" : ", not shown on the network" );
 		playNow = true; end( IDOK );
 	}
 	void doConnect( )
@@ -213,13 +314,15 @@ struct CoopDlg : Wnd {
 			}
 			break;
 		case ID_CONNECT: doConnect( ); break;
+		case ID_GAMES: if ( code == LBN_SELCHANGE ) pickGame( ); break;
+		case ID_GAMES_REFRESH: doScan( ); break;
 		case IDOK: if ( GetFocus( ) == ctl( ID_ADDR ) ) doCheck( ); break;
 		case IDCANCEL: coopNatRelease( ); end( IDCANCEL ); break;
 		}
 	}
 	bool onClose( ) override { coopNatRelease( ); end( IDCANCEL ); return true; }
-	void onTimer( int id ) override { if ( id == 1 && natState == 1 ) natFail( "Your router didn\xE2\x80\x99t answer the request to open the port: it may not support automatic port opening (NAT-PMP / UPnP), or has it turned off." ); }
-	void onUser( UINT m, WPARAM, LPARAM l ) override { if ( m == WM_NAT ) onNat( (NatRes *)l ); else if ( m == WM_QUERY ) onQuery( (QRes *)l ); }
+	void onTimer( int id ) override { if ( id == 2 ) { doScan( ); return; } if ( id == 1 && natState == 1 ) natFail( "Your router didn\xE2\x80\x99t answer the request to open the port: it may not support automatic port opening (NAT-PMP / UPnP), or has it turned off." ); }
+	void onUser( UINT m, WPARAM, LPARAM l ) override { if ( m == WM_NAT ) onNat( (NatRes *)l ); else if ( m == WM_QUERY ) onQuery( (QRes *)l ); else if ( m == WM_LAN ) onLan( (LRes *)l ); }
 	void paintOver( HDC dc ) override
 	{
 		if ( resGlyph >= 0 ) {
@@ -237,8 +340,20 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	char lan[8][16], ifn[8][64]; int nlan = lc_coop_lan_addresses( lan, ifn, 8 );
 	if ( nlan > 0 ) d.lanFirst = lan[0];
 	int y = 18;
-	const int H = 802;
-	d.create( L"Co-op", W0, H, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner );
+	const int H = 802 + 24 + 182;
+	{
+		RECT wa; SystemParametersInfoW( SPI_GETWORKAREA, 0, &wa, 0 );
+		if ( owner ) setDpi( dpiOf( owner ) );
+		int availH = (int)( ( wa.bottom - wa.top ) * 96 / g_dpi ) - 70;
+		d.contentH = H; d.clientH = min( H, max( 360, availH ) );
+	}
+	d.create( L"Co-op", W0, d.clientH, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner );
+	if ( d.contentH > d.clientH ) {
+		SCROLLINFO si = { sizeof si, SIF_RANGE | SIF_PAGE | SIF_POS, 0, S( d.contentH ) - 1, (UINT)S( d.clientH ), 0, 0 };
+		SetWindowLongW( d.hwnd, GWL_STYLE, GetWindowLongW( d.hwnd, GWL_STYLE ) | WS_VSCROLL );
+		SetScrollInfo( d.hwnd, SB_VERT, &si, TRUE );
+		SetWindowPos( d.hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED );
+	}
 	d.label( 20, y, 70, 24, "Co-op", 17, 700, R_TEXT, DT_SINGLELINE );
 	d.label( 100, y + 6, 120, 14, "EXPERIMENTAL", 10, 600, R_ORANGE, DT_SINGLELINE );
 	y += 24 + 4;
@@ -253,7 +368,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	d.label( 334, y + 4, 150, 14, "up to 31 letters", 11, 400, R_TEXT2, DT_SINGLELINE );
 	y += 22 + 22;
 	/* host group */
-	int hTop = y, hH = 296;
+	int hTop = y, hH = 296 + 24;
 	d.addGroup( 20, hTop, W0 - 40, hH, "HOST" );
 	int ty = hTop + 14; const int tx = 36, tw = 400;
 	str intro = fmt( "Starts single player with co-op on: choose New Game or Load as usual. Your friend then joins as player 2 with this %s\xE2\x80\x99s address:", PLATFORM_NOUN );
@@ -265,6 +380,8 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	HWND pw = d.edit( tx + 136, ty, 160, 22, CoopDlg::ID_PW, "", ES_PASSWORD ); SendMessageW( pw, EM_SETCUEBANNER, TRUE, (LPARAM)L"none" ); ty += 28;
 	HWND bg = d.check( tx, ty, 360, 20, "Keep playing in the background", CoopDlg::ID_BG, lc_store_get_bool( st, LC_KEY_COOP_BACKGROUND, 1 ) != 0, 12 );
 	setTooltip( d.hwnd, bg, "The game goes on while its window isn\xE2\x80\x99t in front, e.g. while you click into a second copy on this PC (keys and the mouse still go only to the window in front)" ); ty += 24;
+	HWND sl = d.check( tx, ty, 360, 20, "Show this game on my network", CoopDlg::ID_SHOWLAN, lc_store_get_bool( st, LC_KEY_COOP_LAN_VISIBLE, 1 ) != 0, 12 );
+	setTooltip( d.hwnd, sl, "Friends on the same network see it under \xE2\x80\x9CGames on your network\xE2\x80\x9D. Off: only someone who types this PC\xE2\x80\x99s address finds it" ); ty += 24;
 	d.check( tx, ty, 380, 20, "Open the port on my router (for a friend on the internet)", CoopDlg::ID_ROUTER, false, 12 ); ty += 24;
 	d.label( tx, ty, tw, 48, "", 11, 400, R_TEXT2, DT_WORDBREAK, CoopDlg::ID_INET ); ty += 52;
 	HWND inv = d.button( tx, ty, 100, 22, "Copy Invite", CoopDlg::ID_INVITE, false, 12 );
@@ -275,9 +392,19 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	setTooltip( d.hwnd, hb, canPlay ? "Play single player with co-op on" : "Add the game files first" );
 	y = hTop + hH + 22;
 	/* join group */
-	int jTop = y, jH = 250;
+	int jTop = y, jH = 250 + 182;
 	d.addGroup( 20, jTop, W0 - 40, jH, "JOIN" );
 	int jy = jTop + 14;
+	/* Games on your network: a list that fills in by itself; a click checks that game */
+	d.label( tx, jy + 4, 180, 16, "Games on your network", 12, 600, R_TEXT, DT_SINGLELINE );
+	HWND rf = d.button( W0 - 40 - 14 - 80, jy, 80, 24, "Refresh", CoopDlg::ID_GAMES_REFRESH, false, 12 );
+	setTooltip( d.hwnd, rf, "Look again for co-op games on your network (it also looks every few seconds)" );
+	jy += 24 + 6;
+	d.ctl_( L"LISTBOX", L"", LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE, tx, jy, W0 - 40 - 14 - 16 - 2, 3 * 36 + 4, CoopDlg::ID_GAMES );
+	SendMessageW( d.ctl( CoopDlg::ID_GAMES ), LB_SETITEMHEIGHT, 0, S( 36 ) );
+	jy += 3 * 36 + 4 + 4;
+	d.label( tx, jy, W0 - 40 - 14 - 16, 28, "", 11, 400, R_TEXT2, DT_WORDBREAK, CoopDlg::ID_GAMES_STATUS );
+	jy += 28 + 8;
 	d.label( tx, jy + 3, 90, 16, "Host\xE2\x80\x99s address", 12, 400, R_TEXT, DT_SINGLELINE );
 	HWND ae = d.edit( tx + 96, jy, 260, 22, CoopDlg::ID_ADDR, "" );
 	SendMessageW( ae, EM_SETCUEBANNER, TRUE, (LPARAM)L"192.168.1.20, or address:port (default 29760)" );
@@ -326,6 +453,8 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	d.label( tx + 92, jy, W0 - 40 - 14 - 92 - 16, 46, "Connect starts single player and joins the host\xE2\x80\x99s game as player 2: you see it from player 2\xE2\x80\x99s eyes and play player 2 while the host plays the story.", 11, 400, R_TEXT2 );
 	d.button( W0 - 20 - 80, H - 20 - 28, 80, 28, "Cancel", IDCANCEL );
 	d.showInternet( );
+	d.doScan( );
+	SetTimer( d.hwnd, 2, 5000, 0 );
 	if ( !prefillAddress.empty( ) ) SetWindowTextW( ae, W( prefillAddress ).c_str( ) );
 	SetFocus( ae );
 	if ( autoCheck ) PostMessageW( d.hwnd, WM_COMMAND, MAKEWPARAM( CoopDlg::ID_CHECK, BN_CLICKED ), (LPARAM)cb );
