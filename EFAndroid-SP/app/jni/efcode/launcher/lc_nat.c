@@ -1156,6 +1156,76 @@ int lc_lan_addresses( char addrs[][16], char ifnames[][64], int max )
 	return c;
 }
 
+/* each up IPv4 interface's directed broadcast address (host order), loopback and 169.254/16 left out,
+   without duplicates; the co-op "Games on your network" search sends to these and 255.255.255.255 */
+int lc_lan_broadcasts( unsigned *out, int max )
+{
+	int n = 0, i;
+#ifdef _WIN32
+	ULONG size = 16384;
+	IP_ADAPTER_ADDRESSES *aa = NULL, *a;
+	ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+	int tries;
+	DWORD r = ERROR_BUFFER_OVERFLOW;
+
+	lc_net_init( );
+	for ( tries = 0; tries < 3 && r == ERROR_BUFFER_OVERFLOW; tries++ ) {
+		free( aa );
+		aa = (IP_ADAPTER_ADDRESSES *)malloc( size );
+		r = GetAdaptersAddresses( AF_INET, flags, NULL, aa, &size );
+	}
+	if ( r != NO_ERROR ) {
+		free( aa );
+		return 0;
+	}
+	for ( a = aa; a && n < max; a = a->Next ) {
+		IP_ADAPTER_UNICAST_ADDRESS *ua;
+		if ( a->OperStatus != IfOperStatusUp || a->IfType == IF_TYPE_SOFTWARE_LOOPBACK )
+			continue;
+		for ( ua = a->FirstUnicastAddress; ua && n < max; ua = ua->Next ) {
+			struct sockaddr_in *sa = (struct sockaddr_in *)ua->Address.lpSockaddr;
+			unsigned ip, mask, bc;
+			int len = ua->OnLinkPrefixLength;
+			if ( !sa || sa->sin_family != AF_INET || len <= 0 || len >= 31 )
+				continue;
+			ip = ntohl( sa->sin_addr.s_addr );
+			if ( ( ip >> 24 ) == 127 || ( ip >> 16 ) == 0xA9FE )
+				continue;
+			mask = 0xffffffffu << ( 32 - len );
+			bc = ip | ~mask;
+			for ( i = 0; i < n && out[i] != bc; i++ )
+				;
+			if ( i == n )
+				out[n++] = bc;
+		}
+	}
+	free( aa );
+#else
+	struct ifaddrs *ifa0 = NULL, *ifa;
+
+	if ( getifaddrs( &ifa0 ) != 0 )
+		return 0;
+	for ( ifa = ifa0; ifa && n < max; ifa = ifa->ifa_next ) {
+		unsigned ip, bc;
+		if ( !ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET )
+			continue;
+		if ( !( ifa->ifa_flags & IFF_UP ) || !( ifa->ifa_flags & IFF_RUNNING ) || ( ifa->ifa_flags & IFF_LOOPBACK ) ||
+				!( ifa->ifa_flags & IFF_BROADCAST ) || !ifa->ifa_broadaddr || ifa->ifa_broadaddr->sa_family != AF_INET )
+			continue;
+		ip = ntohl( ( (struct sockaddr_in *)ifa->ifa_addr )->sin_addr.s_addr );
+		bc = ntohl( ( (struct sockaddr_in *)ifa->ifa_broadaddr )->sin_addr.s_addr );
+		if ( ( ip >> 16 ) == 0xA9FE || bc == 0 || bc == 0xffffffffu || bc == ip )
+			continue;
+		for ( i = 0; i < n && out[i] != bc; i++ )
+			;
+		if ( i == n )
+			out[n++] = bc;
+	}
+	freeifaddrs( ifa0 );
+#endif
+	return n;
+}
+
 /* ---- the internet-listing check (9.10) ---------------------------------------------------------------------------------------- */
 
 typedef struct {

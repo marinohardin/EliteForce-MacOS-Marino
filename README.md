@@ -180,8 +180,14 @@ Click **Co-op…** on the launcher's Single Player card. The sheet has:
   It starts as your Mac's name.
 - **Host**: starts single player with co-op on; choose **New Game** or **Load** as usual. An
   optional password keeps strangers out. The sheet lists this Mac's address for your friend.
-- **Join**: type the host's address (such as `192.168.1.20`) and click **Check**, which asks
-  whether a co-op game runs there and shows what the host is playing. Then click **Connect**.
+  **Show this game on my network** (on by default) lets friends on the same network find the game
+  without typing anything; untick it and only someone who types your address finds it.
+- **Join**: **Games on your network** lists the co-op games hosted on your network (it looks
+  again every few seconds, or click **Refresh**): who hosts, the level, a lock when the host set a
+  password, and greyed with the reason when you can't join (another app version, different game
+  files, or a friend already plays player 2). Click a game to check it, or type the host's address
+  (such as `192.168.1.20`) and click **Check**, which asks whether a co-op game runs there and
+  shows what the host is playing. Then click **Connect**.
   Choose whether you play a **male or female Munro** (how player 2 looks and sounds on both
   screens; the story still talks to the host's Munro), and optionally a **Character**: a member of
   Voyager's crew or the Hazard Team to look like instead (from the game's own files, so the host has
@@ -376,7 +382,8 @@ cMod game modules as the Mac app: single player, Holomatch and, since 1.5.0, co-
 **Co-op…** button and sheet; see [Co-op (experimental)](#co-op-experimental)). They've had little
 testing on real Windows PCs and Linux distributions so far, so please [report](#reporting-issues)
 what you find. Allow Elite Force through the Windows firewall (or open UDP 29760 on Linux) when you
-host a co-op game.
+host a co-op game. On Linux, a firewall that is on (ufw, firewalld) may also drop the answers to the
+guest's **Games on your network** search; typing the host's address and clicking **Check** still works.
 
 Download them from the [Releases page](https://github.com/marinohardin/EliteForce-MacOS-Marino/releases)
 (each version is one release with the Mac, Windows and Linux files):

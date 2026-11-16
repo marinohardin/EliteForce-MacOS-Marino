@@ -29,6 +29,7 @@ extern "C" {
 #define LC_KEY_COOP_NAME		"coopplayername"
 #define LC_KEY_COOP_MUNRO		"coopguestmunro"	/* "male" | "female" */
 #define LC_KEY_COOP_LOOK		"coopguestcharacter"	/* a coop_characters.h id, "" = Munro */
+#define LC_KEY_COOP_LAN_VISIBLE	"coopshowonnetwork"	/* bool, absent = 1: a host answers "Games on your network" */
 #define LC_KEY_LOOPBACK_FIX		"loopbackhostfix"	/* bool, absent = 1 */
 #define LC_KEY_AUTOLAUNCH		"autolaunch"		/* Linux Steam Deck addition, bool, absent = 0 */
 

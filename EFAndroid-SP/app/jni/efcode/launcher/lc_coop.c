@@ -356,6 +356,285 @@ void lc_coop_query_run( const char *address, double timeout, lc_coop_query *out 
 	set_result( out, "noanswer", shown, NULL );
 }
 
+/* ---- "Games on your network" ------------------------------------------------------------------------ */
+
+int lc_coop_lan_ports( int *ports, int max )
+{
+	const char *test = getenv( "VOYAGERSP_TEST_COOP_SCAN_PORTS" );
+	int n = 0;
+
+	if ( test && *test ) {
+		const char *p = test;
+		while ( *p && n < max ) {
+			long v = strtol( p, (char **)&p, 10 );
+			if ( v > 0 && v < 65536 )
+				ports[n++] = (int)v;
+			while ( *p && !isdigit( (unsigned char)*p ) )
+				p++;
+		}
+	}
+	if ( !n && max > 0 )
+		ports[n++] = LC_COOP_PORT;
+	return n;
+}
+
+static int lan_game_name_cmp( const lc_coop_lan_game *a, const lc_coop_lan_game *b )
+{
+	char ta[160], tb[160], d[8];
+	lc_coop_lan_row( a, ta, sizeof( ta ), d, sizeof( d ), NULL );
+	lc_coop_lan_row( b, tb, sizeof( tb ), d, sizeof( d ), NULL );
+	return lc_stricmp( ta, tb );
+}
+
+static int lan_game_cmp( const void *x, const void *y )
+{
+	const lc_coop_lan_game *a = (const lc_coop_lan_game *)x, *b = (const lc_coop_lan_game *)y;
+	int c;
+	if ( a->usable != b->usable )
+		return b->usable - a->usable;
+	if ( ( c = lan_game_name_cmp( a, b ) ) != 0 )
+		return c;
+	return strcmp( a->address, b->address );
+}
+
+int lc_coop_lan_take( lc_coop_lan_result *r, const char *from, int local, const char *packet, int len, const char *challenge )
+{
+	static const char prefix[] = COOP_OOB COOP_RESPONSE "\n";
+	char info[1024], chal[64];
+	const char *colon;
+	int i, isLoop;
+	size_t n;
+
+	if ( !packet || len < (int)sizeof( prefix ) - 1 || memcmp( packet, prefix, sizeof( prefix ) - 1 ) )
+		return 0;
+	n = (size_t)len - ( sizeof( prefix ) - 1 );
+	if ( n >= sizeof( info ) )
+		n = sizeof( info ) - 1;
+	memcpy( info, packet + sizeof( prefix ) - 1, n );
+	info[n] = 0;
+	if ( info[0] != '\\' )
+		return 0;
+	lc_coop_info_value( info, "challenge", chal, sizeof( chal ) );
+	if ( challenge && has_key( info, "challenge" ) && strcmp( chal, challenge ) )
+		return 0;
+	isLoop = !strncmp( from, "127.", 4 );
+	colon = strrchr( from, ':' );
+	for ( i = 0; i < r->count; i++ ) {
+		lc_coop_lan_game *g = &r->games[i];
+		const char *gc = strrchr( g->address, ':' );
+		int same;
+		if ( local && g->local )	/* this computer, by loopback or by one of its addresses: the port tells copies apart */
+			same = colon && gc && !strcmp( colon, gc );
+		else
+			same = !strcmp( g->address, from );
+		if ( !same )
+			continue;
+		if ( !isLoop && !strncmp( g->address, "127.", 4 ) )
+			lc_strlcpy( g->address, from, sizeof( g->address ) );	/* the network address is the one a friend can use */
+		lc_strlcpy( g->info, info, sizeof( g->info ) );
+		return 1;
+	}
+	if ( r->count >= LC_COOP_LAN_MAX )
+		return 1;
+	memset( &r->games[r->count], 0, sizeof( r->games[0] ) );
+	lc_strlcpy( r->games[r->count].address, from, sizeof( r->games[0].address ) );
+	lc_strlcpy( r->games[r->count].info, info, sizeof( r->games[0].info ) );
+	r->games[r->count].local = local || isLoop;
+	r->count++;
+	return 1;
+}
+
+void lc_coop_lan_check( lc_coop_lan_result *r, const char *dataFolder )
+{
+	char ours[256], hostPaks[256], text[1024], version[64], protocol[16], guest[8];
+	int i, havePaks = 0;
+
+	for ( i = 0; i < r->count; i++ ) {
+		lc_coop_lan_game *g = &r->games[i];
+		g->usable = 0;
+		g->reason[0] = 0;
+		lc_coop_info_value( g->info, "version", version, sizeof( version ) );
+		lc_coop_info_value( g->info, "coopProtocol", protocol, sizeof( protocol ) );
+		lc_coop_info_value( g->info, "guest", guest, sizeof( guest ) );
+		fix_utf8( version, sizeof( version ) );
+		if ( atoi( protocol ) != LC_COOP_PROTOCOL || strcmp( version, EF_APP_VERSION ) ) {
+			lc_snprintf( g->reason, sizeof( g->reason ), "Another version: the host runs Elite Force %s, this %s runs %s",
+				version[0] ? version : "?", LC_PLATFORM_NOUN_LC, EF_APP_VERSION );
+			continue;
+		}
+		if ( !havePaks ) {
+			lc_coop_local_paks( dataFolder, ours, sizeof( ours ) );
+			havePaks = 1;
+		}
+		lc_coop_info_value( g->info, "paks", hostPaks, sizeof( hostPaks ) );
+		if ( lc_coop_compare_paks( hostPaks, ours, 0, text, sizeof( text ) ) == LC_COOP_PAKS_DIFFER ) {
+			lc_strlcpy( g->reason, "Your game files don\xe2\x80\x99t match the host\xe2\x80\x99s", sizeof( g->reason ) );
+			continue;
+		}
+		if ( !strcmp( guest, "1" ) ) {
+			lc_strlcpy( g->reason, "Full: a friend already plays player 2", sizeof( g->reason ) );
+			continue;
+		}
+		g->usable = 1;
+	}
+	if ( r->count > 1 )
+		qsort( r->games, (size_t)r->count, sizeof( r->games[0] ), lan_game_cmp );
+}
+
+void lc_coop_lan_row( const lc_coop_lan_game *g, char *title, size_t titleSize, char *detail, size_t detailSize, int *needPassword )
+{
+	char player[96], safe[64], host[96], mission[160], map[96], state[32], skillRaw[16], skillBuf[40], np[8];
+	size_t o;
+
+	lc_coop_info_value( g->info, "player", player, sizeof( player ) );
+	lc_coop_info_value( g->info, "hostname", host, sizeof( host ) );
+	lc_coop_info_value( g->info, "mission", mission, sizeof( mission ) );
+	lc_coop_info_value( g->info, "map", map, sizeof( map ) );
+	lc_coop_info_value( g->info, "state", state, sizeof( state ) );
+	lc_coop_info_value( g->info, "skill", skillRaw, sizeof( skillRaw ) );
+	lc_coop_info_value( g->info, "needPassword", np, sizeof( np ) );
+	fix_utf8( host, sizeof( host ) );
+	fix_utf8( mission, sizeof( mission ) );
+	fix_utf8( map, sizeof( map ) );
+	safe_name( player, safe, sizeof( safe ) );
+	if ( needPassword )
+		*needPassword = !strcmp( np, "1" );
+
+	if ( titleSize ) {
+		title[0] = 0;
+		if ( safe[0] && host[0] && lc_stricmp( safe, host ) )
+			lc_snprintf( title, titleSize, "%s on \xe2\x80\x9c%s\xe2\x80\x9d", safe, host );
+		else
+			lc_strlcpy( title, safe[0] ? safe : host[0] ? host : g->address, titleSize );
+	}
+	if ( !detailSize )
+		return;
+	detail[0] = 0;
+	if ( !g->usable && g->reason[0] ) {
+		lc_snprintf( detail, detailSize, "%s \xc2\xb7 %s", g->reason, g->address );
+		return;
+	}
+	if ( strcmp( state, "playing" ) || !map[0] )
+		lc_strlcat( detail, "In the menus", detailSize );
+	else if ( mission[0] ) {
+		lc_strlcat( detail, "\xe2\x80\x9c", detailSize );
+		lc_strlcat( detail, mission, detailSize );
+		lc_strlcat( detail, "\xe2\x80\x9d (", detailSize );
+		lc_strlcat( detail, map, detailSize );
+		lc_strlcat( detail, ")", detailSize );
+	} else
+		lc_strlcat( detail, map, detailSize );
+	o = strlen( detail );
+	lc_snprintf( detail + o, detailSize - o, " \xc2\xb7 %s \xc2\xb7 %s", skill_name( atoi( skillRaw ), skillRaw, skillBuf, sizeof( skillBuf ) ),
+		g->address );
+}
+
+static int lan_is_own( unsigned ip, const unsigned *own, int nOwn )
+{
+	int i;
+	if ( ( ip >> 24 ) == 127 )
+		return 1;
+	for ( i = 0; i < nOwn; i++ )
+		if ( own[i] == ip )
+			return 1;
+	return 0;
+}
+
+void lc_coop_lan_scan( double seconds, const char *dataFolder, lc_coop_lan_result *out )
+{
+	int ports[8], nPorts, nBc, nOwn = 0, i, j, round, ql, failed = 0;
+	unsigned bc[16], own[16];
+	char lan[16][16], q[64], challenge[16], buf[1500];
+	lc_sock fd;
+	double start, deadline;
+	unsigned rnd;
+	int on = 1;
+
+	memset( out, 0, sizeof( *out ) );
+	lc_net_init( );
+	nPorts = lc_coop_lan_ports( ports, 8 );
+	nBc = lc_lan_broadcasts( bc, 15 );
+	bc[nBc++] = 0xffffffffu;
+	{
+		int nl = lc_lan_addresses( lan, NULL, 16 );
+		for ( i = 0; i < nl; i++ ) {
+			struct in_addr a;
+			if ( inet_pton( AF_INET, lan[i], &a ) == 1 )
+				own[nOwn++] = ntohl( a.s_addr );
+		}
+	}
+	fd = socket( AF_INET, SOCK_DGRAM, 0 );
+	if ( fd == LC_BADSOCK ) {
+		lc_strlcpy( out->error, "A network socket couldn\xe2\x80\x99t be opened.", sizeof( out->error ) );
+		return;
+	}
+	setsockopt( fd, SOL_SOCKET, SO_BROADCAST, (const char *)&on, sizeof( on ) );
+	lc_random_bytes( &rnd, sizeof( rnd ) );
+	lc_snprintf( challenge, sizeof( challenge ), "%08x", rnd );
+	ql = lc_snprintf( q, sizeof( q ), COOP_OOB COOP_QUERY " %s lan", challenge );
+
+	start = lc_now( );
+	deadline = start + seconds;
+	for ( round = 0; ; ) {
+		double now = lc_now( ), left = deadline - now;
+		struct sockaddr_in from;
+		socklen_t fl = sizeof( from );
+		int n, wait;
+		char addr[32];
+
+		if ( left <= 0 )
+			break;
+		/* asked twice: at once and a third of the way in, in case a packet goes missing */
+		if ( round < 2 && now - start >= seconds * round / 3 ) {
+			for ( j = 0; j < nPorts; j++ ) {
+				struct sockaddr_in to;
+				memset( &to, 0, sizeof( to ) );
+				to.sin_family = AF_INET;
+				to.sin_port = htons( (unsigned short)ports[j] );
+				for ( i = 0; i < nBc; i++ ) {
+					to.sin_addr.s_addr = htonl( bc[i] );
+					if ( sendto( fd, q, ql, 0, (struct sockaddr *)&to, sizeof( to ) ) < 0 ) {
+						out->sendError = lc_sock_errno( );
+						failed++;
+					} else
+						out->broadcasts++;
+				}
+				to.sin_addr.s_addr = htonl( 0x7f000001u );		/* copies on this computer, even without a network */
+				sendto( fd, q, ql, 0, (struct sockaddr *)&to, sizeof( to ) );
+			}
+			round++;
+		}
+		{
+			double next = round < 2 ? start + seconds * round / 3 : deadline;
+			wait = (int)( ( next - lc_now( ) ) * 1000 ) + 1;
+			if ( wait < 1 )
+				wait = 1;
+		}
+		if ( lc_sock_wait_readable( fd, wait ) <= 0 )
+			continue;
+		n = (int)recvfrom( fd, buf, sizeof( buf ) - 1, 0, (struct sockaddr *)&from, &fl );
+		if ( n <= 0 || from.sin_family != AF_INET )
+			continue;
+		buf[n] = 0;
+		lc_sock_addr_string( &from, addr, sizeof( addr ) );
+		lc_coop_lan_take( out, addr, lan_is_own( ntohl( from.sin_addr.s_addr ), own, nOwn ), buf, n, challenge );
+	}
+	lc_sock_close( fd );
+	if ( !out->broadcasts && failed ) {
+		char reason[64];
+#ifdef _WIN32
+		lc_snprintf( reason, sizeof( reason ), "error %d", out->sendError );
+		lc_snprintf( out->error, sizeof( out->error ), "Windows couldn\xe2\x80\x99t search your network (%s). Check that the firewall isn\xe2\x80\x99t blocking Elite Force, or type the host\xe2\x80\x99s address below.", reason );
+#else
+		lc_strlcpy( reason, strerror( out->sendError ), sizeof( reason ) );
+		lc_snprintf( out->error, sizeof( out->error ), "This %s couldn\xe2\x80\x99t search your network (%s). Connect it to Wi-Fi or Ethernet, or type the host\xe2\x80\x99s address below.", LC_PLATFORM_NOUN_LC, reason );
+#endif
+	}
+	lc_log( "Co-op: network search: %d broadcast%s sent%s, %d game%s found", out->broadcasts, out->broadcasts == 1 ? "" : "s",
+		out->error[0] ? " (none could be sent)" : "", out->count, out->count == 1 ? "" : "s" );
+	lc_coop_lan_check( out, dataFolder );
+}
+
 /* ---- the game's own paks (protocol 7) -------------------------------------------------------------- */
 
 /* = qcommon/files.c pak_checksums (ELITEFORCE): pak0.pk3, the 1.1 and 1.2 patches' pak1/pak2.pk3, the
@@ -580,7 +859,7 @@ void lc_coop_invite_link( const char *address, char *out, size_t size )
 /* ---- the sheet's choice ---------------------------------------------------------------------------- */
 
 static struct {
-	int choice, background;
+	int choice, background, hidden;
 	char address[64], sex[16], look[COOP_CHARACTER_MAX], name[40], password[72];
 } g_choice;
 
@@ -589,11 +868,12 @@ void lc_coop_choose_none( void )
 	memset( &g_choice, 0, sizeof( g_choice ) );
 }
 
-void lc_coop_choose_host( int background, const char *name, const char *password )
+void lc_coop_choose_host( int background, int lanVisible, const char *name, const char *password )
 {
 	memset( &g_choice, 0, sizeof( g_choice ) );
 	g_choice.choice = 1;
 	g_choice.background = background != 0;
+	g_choice.hidden = !lanVisible;
 	safe_name( name, g_choice.name, sizeof( g_choice.name ) );
 	lc_strlcpy( g_choice.password, password ? password : "", sizeof( g_choice.password ) );
 }
@@ -624,6 +904,7 @@ void lc_coop_launch_fields( struct lc_launch_coop_fields *out )
 	if ( g_choice.choice == 1 ) {
 		out->coopHost = 1;
 		out->coopBackground = g_choice.background;
+		out->coopHidden = g_choice.hidden;
 	} else if ( g_choice.choice == 2 ) {
 		/* only 0-9 . : may go on the command line */
 		for ( p = g_choice.address; *p; p++ )

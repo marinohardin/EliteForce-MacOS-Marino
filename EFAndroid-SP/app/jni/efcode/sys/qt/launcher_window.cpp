@@ -1089,8 +1089,10 @@ lc_launch LauncherWindow::makeLaunch( int mode, QByteArray &nameBytes, QByteArra
 		o.coopSex = cf.coopSex;
 		o.coopLook = cf.coopLook;
 		o.coopName = cf.coopName;
-		if ( cf.coopHost )
+		if ( cf.coopHost ) {
 			o.coopBackground = cf.coopBackground;
+			o.coopHidden = cf.coopHidden;
+		}
 	}
 	return o;
 }

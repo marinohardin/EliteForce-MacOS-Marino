@@ -44,8 +44,11 @@ private slots:
 	void doConnect();
 	void natToggled( bool on );
 	void copyInvite();
+	void doScan();
+	void pickGame( QListWidgetItem *item );
 private:
 	void showInternet();
+	void onScanned( const lc_coop_lan_result *r );
 	void showResult( const QString &icon, const QColor &color, const QString &title, const QString &text );
 	void updateConnect();
 	QString inviteLink() const;
@@ -53,7 +56,13 @@ private:
 
 	bool m_canPlay;
 	QLineEdit *m_name, *m_hostPw, *m_address, *m_joinPw;
-	QCheckBox *m_background, *m_router;
+	QCheckBox *m_background, *m_router, *m_showLan;
+	/* Games on your network: the rows of the last search (address per row), refreshed every 5 s */
+	QListWidget *m_games;
+	QLabel *m_gamesStatus;
+	QPushButton *m_gamesRefresh;
+	QTimer *m_lanTimer;
+	bool m_scanning = false;
 	QLabel *m_internetStatus, *m_resultIcon, *m_resultTitle, *m_resultText, *m_connectNote, *m_lanLabel;
 	QPushButton *m_copyInvite, *m_check, *m_connect, *m_host;
 	Ui::Segmented *m_munro;

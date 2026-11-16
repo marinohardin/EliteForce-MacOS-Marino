@@ -4,6 +4,7 @@
 #include "lc_data.h"
 #include "lc_launch.h"
 #include "lc_sock.h"
+#include "lc_nat.h"
 #include "lc_test.h"
 #include <stdlib.h>
 #include <string.h>
@@ -74,15 +75,15 @@ static void test_choice( void )
 	CHECK( !f.coopHost && !f.coopConnect && !f.coopName && !f.coopSex );
 	CHECK_STR( lc_coop_password( ), "" );
 
-	lc_coop_choose_host( 1, "  Capt\xc3\xa9n \"Pat\"; 50%  ", "secret" );
+	lc_coop_choose_host( 1, 1, "  Capt\xc3\xa9n \"Pat\"; 50%  ", "secret" );
 	CHECK( lc_coop_choice( ) == 1 );
 	lc_coop_launch_fields( &f );
-	CHECK( f.coopHost == 1 && f.coopBackground == 1 && !f.coopConnect );
+	CHECK( f.coopHost == 1 && f.coopBackground == 1 && !f.coopHidden && !f.coopConnect );
 	CHECK_STR( f.coopName, "Captn Pat 50" );				/* safe name: ASCII, no quotes ; % */
 	CHECK_STR( lc_coop_password( ), "secret" );
-	lc_coop_choose_host( 0, "", "" );
+	lc_coop_choose_host( 0, 0, "", "" );
 	lc_coop_launch_fields( &f );
-	CHECK( f.coopHost == 1 && f.coopBackground == 0 && !f.coopName );		/* empty name: none on the command line */
+	CHECK( f.coopHost == 1 && f.coopBackground == 0 && f.coopHidden == 1 && !f.coopName );		/* empty name: none on the command line */
 
 	lc_coop_choose_join( "192.168.1.20:29760", "Female", "seven_hazard", "Zed", "pw" );
 	CHECK( lc_coop_choice( ) == 2 );
@@ -124,7 +125,9 @@ typedef struct {
 	lc_thread *thr;
 	char protocol[8], version[32], paks[128];
 	int ignoreChallenge, badChallenge, silent;
-	volatile int queries;
+	int hidden;					/* like a host with coop_lanVisible 0: silent to " lan" queries */
+	char player[32], state[16], guest[4];
+	volatile int queries, lanQueries, fromNetwork;	/* fromNetwork: queries from a non-loopback source (a broadcast) */
 } host_t;
 
 static void host_run( void *u )
@@ -146,17 +149,29 @@ static void host_run( void *u )
 		if ( memcmp( buf, OOB "getcoopinfo", 15 ) )
 			continue;
 		h->queries++;
+		if ( ( ntohl( from.sin_addr.s_addr ) >> 24 ) != 127 )
+			h->fromNetwork++;
+		if ( strstr( buf + 15, " lan" ) ) {
+			h->lanQueries++;
+			if ( h->hidden )
+				continue;
+		}
 		if ( h->silent )
 			continue;
-		if ( buf[15] == ' ' )
+		if ( buf[15] == ' ' ) {
+			char *sp;
 			lc_strlcpy( chal, buf + 16, sizeof( chal ) );
-		lc_snprintf( reply, sizeof( reply ), OOB "coopInfoResponse\n\\coopProtocol\\%s\\version\\%s\\hostname\\Fake\\paks\\%s\\state\\menu\\skill\\1\\players\\1\\maxPlayers\\2\\needPassword\\0\\guest\\0%s%s",
-			h->protocol, h->version, h->paks, h->ignoreChallenge ? "" : "\\challenge\\", h->ignoreChallenge ? "" : h->badChallenge ? "wrong" : chal );
+			if ( ( sp = strchr( chal, ' ' ) ) != NULL )
+				*sp = 0;
+		}
+		lc_snprintf( reply, sizeof( reply ), OOB "coopInfoResponse\n\\coopProtocol\\%s\\version\\%s\\hostname\\Fake\\paks\\%s\\state\\%s\\map\\borg1\\mission\\Assimilation\\skill\\1\\players\\1\\maxPlayers\\2\\needPassword\\0\\guest\\%s%s%s%s%s",
+			h->protocol, h->version, h->paks, h->state[0] ? h->state : "menu", h->guest[0] ? h->guest : "0",
+			h->player[0] ? "\\player\\" : "", h->player, h->ignoreChallenge ? "" : "\\challenge\\", h->ignoreChallenge ? "" : h->badChallenge ? "wrong" : chal );
 		sendto( h->s, reply, (int)strlen( reply ), 0, (struct sockaddr *)&from, fl );
 	}
 }
 
-static host_t *host_start( void )
+static host_t *host_start_on( int anyAddress )
 {
 	host_t *h = (host_t *)calloc( 1, sizeof( *h ) );
 	struct sockaddr_in a;
@@ -167,12 +182,17 @@ static host_t *host_start( void )
 	h->s = socket( AF_INET, SOCK_DGRAM, 0 );
 	memset( &a, 0, sizeof( a ) );
 	a.sin_family = AF_INET;
-	a.sin_addr.s_addr = htonl( 0x7f000001u );
+	a.sin_addr.s_addr = htonl( anyAddress ? INADDR_ANY : 0x7f000001u );
 	bind( h->s, (struct sockaddr *)&a, sizeof( a ) );
 	getsockname( h->s, (struct sockaddr *)&a, &al );
 	h->port = ntohs( a.sin_port );
 	h->thr = lc_thread_start( host_run, h );
 	return h;
+}
+
+static host_t *host_start( void )
+{
+	return host_start_on( 0 );
 }
 
 static void host_stop( host_t *h )
@@ -376,6 +396,160 @@ static void test_characters( void )
 	CHECK( strstr( args, "coop_look" ) == NULL );
 }
 
+
+/* ---- "Games on your network" ---- */
+
+static void test_lan_take( void )
+{
+	static lc_coop_lan_result r;
+	char title[160], detail[256], pkt[1200];
+	int lock = -1;
+	const char *ok = OOB "coopInfoResponse\n\\coopProtocol\\%d\\version\\%s\\hostname\\Pat\xe2\x80\x99s PC\\player\\Pat\\paks\\\\state\\playing\\map\\borg1\\mission\\Assimilation\\skill\\0\\needPassword\\%s\\guest\\%s\\challenge\\%s";
+
+	memset( &r, 0, sizeof( r ) );
+	CHECK( !lc_coop_lan_take( &r, "192.168.1.20:29760", 0, "junk", 4, "abc" ) );
+	CHECK( !lc_coop_lan_take( &r, "192.168.1.20:29760", 0, OOB "coopInfoResponse\nnot-info", 25, "abc" ) );
+	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_app_version( ), "1", "0", "other" );
+	CHECK( lc_coop_lan_take( &r, "192.168.1.20:29760", 0, pkt, (int)strlen( pkt ), "abc" ) == 0 );	/* someone else's search */
+	CHECK( r.count == 0 );
+	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_app_version( ), "1", "0", "abc" );
+	CHECK( lc_coop_lan_take( &r, "192.168.1.20:29760", 0, pkt, (int)strlen( pkt ), "abc" ) == 1 );
+	CHECK( lc_coop_lan_take( &r, "192.168.1.20:29760", 0, pkt, (int)strlen( pkt ), "abc" ) == 1 );	/* asked twice: one row */
+	CHECK( r.count == 1 );
+	/* a copy on this computer answers by loopback and by its network address: one row, the network address kept */
+	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_app_version( ), "0", "0", "abc" );
+	CHECK( lc_coop_lan_take( &r, "127.0.0.1:29791", 1, pkt, (int)strlen( pkt ), "abc" ) );
+	CHECK( lc_coop_lan_take( &r, "10.0.0.5:29791", 1, pkt, (int)strlen( pkt ), "abc" ) );
+	CHECK( lc_coop_lan_take( &r, "127.0.0.1:29791", 1, pkt, (int)strlen( pkt ), "abc" ) );
+	CHECK( r.count == 2 );
+	CHECK_STR( r.games[1].address, "10.0.0.5:29791" );
+	CHECK( r.games[1].local );
+	/* a second copy on this computer (another port) is its own row */
+	CHECK( lc_coop_lan_take( &r, "127.0.0.1:29792", 1, pkt, (int)strlen( pkt ), "abc" ) );
+	CHECK( r.count == 3 );
+	/* an old host that doesn't echo the challenge is accepted (as the Check does) */
+	lc_snprintf( pkt, sizeof( pkt ), OOB "coopInfoResponse\n\\coopProtocol\\7\\version\\1.4.0\\hostname\\Old Mac\\state\\menu\\skill\\2" );
+	CHECK( lc_coop_lan_take( &r, "192.168.1.30:29760", 0, pkt, (int)strlen( pkt ), "abc" ) );
+	/* full */
+	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_app_version( ), "0", "1", "abc" );
+	CHECK( lc_coop_lan_take( &r, "192.168.1.40:29760", 0, pkt, (int)strlen( pkt ), "abc" ) );
+	/* other paks */
+	lc_snprintf( pkt, sizeof( pkt ), OOB "coopInfoResponse\n\\coopProtocol\\%d\\version\\%s\\hostname\\Paks\\paks\\pak0.pk3:3376297517\\state\\menu\\skill\\1\\guest\\0",
+		LC_COOP_PROTOCOL, lc_coop_app_version( ) );
+	CHECK( lc_coop_lan_take( &r, "192.168.1.50:29760", 0, pkt, (int)strlen( pkt ), "abc" ) );
+	CHECK( r.count == 6 );
+
+	lc_coop_lan_check( &r, NULL );		/* (this test's homepath has no paks) */
+	/* usable first, by name: Pat (x3); then the rest by name: Old Mac, Paks, Pat (full) */
+	CHECK( r.games[0].usable && r.games[1].usable && r.games[2].usable );
+	CHECK( !r.games[3].usable && !r.games[4].usable && !r.games[5].usable );
+	CHECK_STR( r.games[3].address, "192.168.1.30:29760" );
+	{
+		char want[256];
+		lc_snprintf( want, sizeof( want ), "Another version: the host runs Elite Force 1.4.0, this %s runs %s", LC_PLATFORM_NOUN_LC, lc_coop_app_version( ) );
+		CHECK_STR( r.games[3].reason, want );
+	}
+	CHECK_STR( r.games[4].address, "192.168.1.50:29760" );
+	CHECK_STR( r.games[4].reason, "Your game files don" MAC_APOS "t match the host" MAC_APOS "s" );
+	CHECK_STR( r.games[5].address, "192.168.1.40:29760" );
+	CHECK_STR( r.games[5].reason, "Full: a friend already plays player 2" );
+
+	{
+		int i;
+		for ( i = 0; i < 3 && strcmp( r.games[i].address, "192.168.1.20:29760" ); i++ )
+			;
+		CHECK( i < 3 );
+		lc_coop_lan_row( &r.games[i], title, sizeof( title ), detail, sizeof( detail ), &lock );
+		CHECK_STR( title, "Pat on \xe2\x80\x9cPat" MAC_APOS "s PC\xe2\x80\x9d" );
+		CHECK_STR( detail, "\xe2\x80\x9c" "Assimilation\xe2\x80\x9d (borg1) \xc2\xb7 Easy \xc2\xb7 192.168.1.20:29760" );
+		CHECK( lock == 1 );
+	}
+	lc_coop_lan_row( &r.games[3], title, sizeof( title ), detail, sizeof( detail ), &lock );
+	CHECK_STR( title, "Old Mac" );
+	CHECK( !strncmp( detail, "Another version: ", 17 ) && strstr( detail, " \xc2\xb7 192.168.1.30:29760" ) );
+	CHECK( lock == 0 );
+	lc_coop_lan_row( &r.games[5], title, sizeof( title ), detail, 12, NULL );	/* never overflows */
+	CHECK( strlen( detail ) < 12 );
+
+	/* never more than LC_COOP_LAN_MAX rows */
+	{
+		int i;
+		memset( &r, 0, sizeof( r ) );
+		for ( i = 0; i < LC_COOP_LAN_MAX + 5; i++ ) {
+			char from[32];
+			lc_snprintf( from, sizeof( from ), "10.1.0.%d:29760", i + 1 );
+			lc_coop_lan_take( &r, from, 0, pkt, (int)strlen( pkt ), "abc" );
+		}
+		CHECK( r.count == LC_COOP_LAN_MAX );
+	}
+}
+
+#ifdef _WIN32
+static void set_env( const char *k, const char *v ) { char b[256]; lc_snprintf( b, sizeof( b ), "%s=%s", k, v ? v : "" ); _putenv( b ); }
+#else
+static void set_env( const char *k, const char *v ) { if ( v ) setenv( k, v, 1 ); else unsetenv( k ); }
+#endif
+
+static void test_lan_scan( void )
+{
+	static lc_coop_lan_result r;
+	host_t *shown = host_start_on( 1 ), *hidden = host_start_on( 1 ), *other = host_start_on( 1 );
+	char env[64], addr[64];
+	int ports[8], n, i, foundShown = 0, foundOther = 0, foundHidden = 0;
+	unsigned bc[16];
+	lc_coop_query q;
+
+	n = lc_coop_lan_ports( ports, 8 );
+	CHECK( n == 1 && ports[0] == LC_COOP_PORT );
+	set_env( "VOYAGERSP_TEST_COOP_SCAN_PORTS", "29791, 29792,x,0" );
+	n = lc_coop_lan_ports( ports, 8 );
+	CHECK( n == 2 && ports[0] == 29791 && ports[1] == 29792 );
+
+	hidden->hidden = 1;
+	lc_strlcpy( shown->player, "Pat", sizeof( shown->player ) );
+	lc_strlcpy( shown->state, "playing", sizeof( shown->state ) );
+	lc_strlcpy( other->version, "0.0.1-other", sizeof( other->version ) );
+	lc_snprintf( env, sizeof( env ), "%d,%d,%d", shown->port, hidden->port, other->port );
+	set_env( "VOYAGERSP_TEST_COOP_SCAN_PORTS", env );
+	lc_coop_lan_scan( 1.0, NULL, &r );
+	for ( i = 0; i < r.count; i++ ) {
+		const char *c = strrchr( r.games[i].address, ':' );
+		int port = c ? atoi( c + 1 ) : 0;
+		CHECK( r.games[i].local );
+		if ( port == shown->port ) {
+			foundShown++;
+			CHECK( r.games[i].usable );
+		} else if ( port == other->port ) {
+			foundOther++;
+			CHECK( !r.games[i].usable && !strncmp( r.games[i].reason, "Another version", 15 ) );
+		} else if ( port == hidden->port )
+			foundHidden++;
+	}
+	CHECK( foundShown == 1 && foundOther == 1 && foundHidden == 0 );		/* one row each (loopback + broadcast merged) */
+	CHECK( r.count >= 1 && r.games[0].usable );
+	CHECK( shown->lanQueries >= 2 && hidden->lanQueries >= 2 );		/* asked twice, the hidden one stayed silent */
+	/* the broadcasts themselves reach a host bound to any address (when this computer has a network) */
+	if ( lc_lan_broadcasts( bc, 16 ) > 0 ) {
+		CHECK( r.broadcasts > 0 );
+		CHECK( shown->fromNetwork > 0 );
+		if ( !shown->fromNetwork )
+			fprintf( stderr, "note: no broadcast query arrived (only loopback); sendError %d\n", r.sendError );
+	}
+	fprintf( stderr, "lan scan: %d broadcast(s) sent, %d game(s), %d query(ies) from the network\n", r.broadcasts, r.count, shown->fromNetwork );
+
+	/* a direct Check of the hidden host is still answered, and carries no " lan" */
+	n = hidden->lanQueries;
+	lc_snprintf( addr, sizeof( addr ), "127.0.0.1:%d", hidden->port );
+	lc_coop_query_run( addr, 0.9, &q );
+	CHECK_STR( q.status, "ok" );
+	CHECK( hidden->lanQueries == n );
+
+	set_env( "VOYAGERSP_TEST_COOP_SCAN_PORTS", NULL );
+	host_stop( shown );
+	host_stop( hidden );
+	host_stop( other );
+}
+
 int main( void )
 {
 	lc_net_init( );
@@ -387,5 +561,7 @@ int main( void )
 	test_checksum( );
 	test_characters( );
 	test_query( );
+	test_lan_take( );
+	test_lan_scan( );
 	return TEST_DONE( );
 }
