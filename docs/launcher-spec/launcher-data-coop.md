@@ -1479,8 +1479,12 @@ app; SDL builds the menu bar; the File menu is added in game (§5.2).
 
 - Repository `marinohardin/EliteForce-MacOS-Marino`; tag prefix **`macos-v`**
   (releases `macos-v1.1.0` … `macos-v1.3.0`; `v1.x` tags are the Android
-  project's, `docs/PUBLISHING.md:102`). Port: per-platform prefixes (e.g.
-  `windows-v`, `linux-v`) or a shared one; make it a parameter.
+  project's, `docs/PUBLISHING.md:102`). Port (as built, 1.5.0): the shared
+  prefix `macos-v`, since each version is one release with every platform's
+  downloads; a release counts only when one of its `assets[].name` ends with the
+  platform's suffix (Windows `-setup.exe`, `-windows-x64.zip`; Linux
+  `.AppImage`; case-insensitive). The 1.4.0 prefixes `windows-v`/`linux-v` are
+  still accepted (same asset rule). See `LC_UPDATE_*` in `lc_common.h`.
 - Request: `GET https://api.github.com/repos/<repo>/releases?per_page=100`,
   headers `Accept: application/vnd.github+json`, `User-Agent:
   EliteForce-MacOS/<app version>`; no cookies/cache (ephemeral session);
@@ -1755,9 +1759,12 @@ shared.)
 ### 10.7 Updates
 
 ```c
-// tagPrefix e.g. "macos-v"; 1 + version/url, 0 none (url = releases page), -1 parse failure
-int  LC_ParseReleases( const char *json, size_t len, const char *tagPrefix, const char *repo,
-                       char *version, size_t vSize, char *url, size_t uSize );
+// tagPrefixes e.g. { "macos-v", "windows-v", NULL }; assetSuffixes (NULL = no asset needed)
+// e.g. { "-setup.exe", "-windows-x64.zip", NULL }; 1 + version/url/asset name,
+// 0 none (url = releases page), -1 parse failure   (as built: lc_update_parse)
+int  LC_ParseReleases( const char *json, size_t len, const char *const *tagPrefixes,
+                       const char *const *assetSuffixes, const char *repo,
+                       char *version, size_t vSize, char *url, size_t uSize, char *asset, size_t aSize );
 int  LC_VersionCompare( const char *a, const char *b );    // NSNumericSearch semantics (§8)
 int  LC_UpdateDue( long long lastCheck, long long now );   // !(0 <= now-last < 86400)
 void LC_ReleasesURL( const char *repo, char *out, size_t size );  // ...releases?per_page=100

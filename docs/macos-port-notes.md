@@ -341,7 +341,11 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   **Check for Updates…** (an alert with the answer) and **Check for Updates Automatically**
   (`CheckForUpdates`, on unless set NO) while the launcher is up.
 - **Releasing.** Nothing extra: publishing a `macos-v<version>` release (not a pre-release) is
-  what users are told about. Keep the tag format; a different prefix isn't seen.
+  what users are told about. Keep the tag format; a different prefix isn't seen. Since 1.5.0
+  that one release also carries the Windows and Linux downloads (docs/PUBLISHING.md), and the
+  Windows/Linux launchers (`efcode/launcher/lc_update.c`) look for it too: a `macos-v` release
+  counts for them only when it has their platform's file (setup `.exe` / `-windows-x64.zip`,
+  `.AppImage`); old `windows-v`/`linux-v` tags still count.
 - **Tests.** `VOYAGERSP_TEST_UPDATE=<version>|none` answers instead of GitHub (not saved);
   `VOYAGERSP_TEST_UPDATE_ALERT=<file.png>` runs Check for Updates… and renders the alert.
 

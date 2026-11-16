@@ -378,9 +378,10 @@ testing on real Windows PCs and Linux distributions so far, so please [report](#
 what you find. Allow Elite Force through the Windows firewall (or open UDP 29760 on Linux) when you
 host a co-op game.
 
-Download them from the [Releases page](https://github.com/marinohardin/EliteForce-MacOS-Marino/releases):
+Download them from the [Releases page](https://github.com/marinohardin/EliteForce-MacOS-Marino/releases)
+(each version is one release with the Mac, Windows and Linux files):
 
-- **Windows 10 or 11, 64-bit:** `EliteForce-Marino-<version>-windows-x64-setup.exe` (an installer
+- **Windows 10 or 11, 64-bit:** `EliteForce-Marino-<version>-setup.exe` (an installer
   for your user only, no administrator rights; Start menu entries for Single Player, Holomatch and
   a Dedicated Server, and `stvef://` join links) or `EliteForce-Marino-<version>-windows-x64.zip`
   (unpack anywhere and run `EliteForce.exe`).

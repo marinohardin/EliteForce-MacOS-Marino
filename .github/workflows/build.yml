@@ -1,18 +1,27 @@
 # Builds Elite Force (Marino port) for macOS arm64, Windows x64 and Linux x86_64.
 #
 #   push to main / pull requests / manual : build + smoke tests + upload artifacts
-#   tag macos-v<ver>, windows-v<ver>, linux-v<ver> : build that platform only and
-#       attach its artifacts to a DRAFT GitHub release for the tag (publish by hand)
+#   tag macos-v<ver> : build all three platforms, then attach the Windows zip + installer
+#       and the Linux AppImage to ONE draft GitHub release for the tag, titled
+#       "Elite Force (Marino's Build) <ver>" (created with .github/release-notes.md if
+#       missing, added to if it exists). Publish by hand.
+#
+# Each version is one release with every platform's downloads, on the tag macos-v<ver>:
+# the Mac app's update check only knows macos-v* tags, and the Windows/Linux launchers look
+# for macos-v* releases with their own platform's download. There are no windows-v/linux-v
+# tags any more (1.4.0's were merged into macos-v1.4.0).
 #
 # Signed/notarized macOS releases stay local (Developer ID + notary profile live on
-# the maintainer's Mac); CI builds unsigned (ad-hoc signed) macOS artifacts.
+# the maintainer's Mac): macos/make-release.sh with UPLOAD=1 adds the notarized dmg + zip
+# to the same release. CI builds unsigned (ad-hoc signed) macOS artifacts as a check and
+# never puts them in the release.
 # No retail game data is used anywhere in CI: smoke tests use a one-file fixture.
 name: build
 
 on:
   push:
     branches: [main]
-    tags: ['macos-v*', 'windows-v*', 'linux-v*']
+    tags: ['macos-v*']
   pull_request:
   workflow_dispatch:
 
@@ -26,7 +35,7 @@ permissions:
 jobs:
   # ------------------------------------------------------------------ Linux
   linux:
-    if: github.ref_type != 'tag' || startsWith(github.ref_name, 'linux-v')
+    if: github.ref_type != 'tag' || startsWith(github.ref_name, 'macos-v')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     # Steam Runtime 3 "sniper" SDK: old-glibc toolchain so the AppImage runs on
@@ -40,7 +49,7 @@ jobs:
 
       - name: Version
         run: |
-          if [ "${{ github.ref_type }}" = tag ]; then echo "VERSION=${GITHUB_REF_NAME#linux-v}" >> "$GITHUB_ENV"; fi
+          if [ "${{ github.ref_type }}" = tag ]; then echo "VERSION=${GITHUB_REF_NAME#macos-v}" >> "$GITHUB_ENV"; fi
 
       - name: Cache dependencies
         id: cache
@@ -115,28 +124,9 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x720x24" \
             tests/smoke/run-smoke.sh client "$(echo dist/EliteForce-Marino-*-x86_64.AppImage)"
 
-  linux-release:
-    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'linux-v')
-    needs: [linux, linux-smoke]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4.1.8
-        with:
-          name: linux-x86_64
-          path: dist
-      - name: Draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "Elite Force for Linux ${GITHUB_REF_NAME#linux-v}" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/EliteForce-Marino-*-x86_64.AppImage
-
   # ---------------------------------------------------------------- Windows
   windows-cross:
-    if: github.ref_type != 'tag' || startsWith(github.ref_name, 'windows-v')
+    if: github.ref_type != 'tag' || startsWith(github.ref_name, 'macos-v')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -144,7 +134,7 @@ jobs:
 
       - name: Version
         run: |
-          if [ "${{ github.ref_type }}" = tag ]; then echo "VERSION=${GITHUB_REF_NAME#windows-v}" >> "$GITHUB_ENV"; fi
+          if [ "${{ github.ref_type }}" = tag ]; then echo "VERSION=${GITHUB_REF_NAME#macos-v}" >> "$GITHUB_ENV"; fi
 
       - name: Install toolchain
         run: |
@@ -214,7 +204,7 @@ jobs:
 
   # Inno Setup only runs on Windows; consumes the cross-built zip. Tags only.
   windows-installer:
-    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'windows-v')
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'macos-v')
     needs: windows-cross
     runs-on: windows-latest
     timeout-minutes: 20
@@ -229,7 +219,7 @@ jobs:
         run: |
           if (-not (Test-Path windows/installer.iss)) { Write-Host "no windows/installer.iss: skipping"; exit 0 }
           choco install innosetup --version=6.4.3 --no-progress -y
-          $ver = "${{ github.ref_name }}".Substring("windows-v".Length)
+          $ver = "${{ github.ref_name }}".Substring("macos-v".Length)
           $zip = Get-ChildItem dist/EliteForce-Marino-*-windows-x64.zip | Select-Object -First 1
           Expand-Archive $zip.FullName -DestinationPath dist/stage
           # the zip holds one top-level folder named like the zip; installer.iss takes /DAppVersion and
@@ -242,26 +232,6 @@ jobs:
           name: windows-installer
           path: dist/EliteForce-Marino-*-setup.exe
           if-no-files-found: ignore
-
-  windows-release:
-    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'windows-v')
-    needs: [windows-cross, windows-installer]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4.1.8
-        with:
-          pattern: windows-*
-          merge-multiple: true
-          path: dist
-      - name: Draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "Elite Force for Windows ${GITHUB_REF_NAME#windows-v}" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/EliteForce-Marino-*
 
   # ------------------------------------------------------------------ macOS
   macos:
@@ -314,21 +284,46 @@ jobs:
             dist/EliteForce-MacOS-Marino-*-arm64.zip
           if-no-files-found: error
 
-  macos-release:
+  # ---------------------------------------------------------------- release
+  # One draft release per version on the macos-v tag, with the Windows and Linux downloads.
+  # The Mac dmg/zip are notarized locally and added by macos/make-release.sh (UPLOAD=1);
+  # the unsigned CI macOS build is never uploaded (it would clobber the notarized files).
+  release:
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'macos-v')
-    needs: macos
+    needs: [linux, linux-smoke, windows-cross, windows-installer]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          sparse-checkout: .github/release-notes.md
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4.1.8
         with:
-          name: macos-arm64
+          name: linux-x86_64
+          path: dist
+      - uses: actions/download-artifact@v4.1.8
+        with:
+          pattern: windows-*
+          merge-multiple: true
           path: dist
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --title "Elite Force for Mac ${GITHUB_REF_NAME#macos-v}" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/EliteForce-MacOS-Marino-*
+          ver="${GITHUB_REF_NAME#macos-v}"
+          title="Elite Force (Marino's Build) $ver"
+          set -- dist/EliteForce-Marino-"$ver"-x86_64.AppImage dist/EliteForce-Marino-"$ver"-windows-x64.zip \
+            dist/EliteForce-Marino-"$ver"-setup.exe
+          ls -l "$@"   # fails (and so does the job) if one is missing or named for another version
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # the Mac upload may have made it first: keep its notes, use the one title
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$title"
+          else
+            sed "s/@VERSION@/$ver/g" .github/release-notes.md > notes.md
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+              --title "$title" --notes-file notes.md ||
+              gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null   # lost a race with the Mac upload
+          fi
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "$@"

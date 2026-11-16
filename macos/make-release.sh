@@ -15,8 +15,11 @@
 #   xcrun notarytool store-credentials EliteForce-notary --apple-id <id> --team-id <team>)
 # the app and the DMG are also notarized and stapled. UNSIGNED=1 skips both.
 #
-# Upload both to a GitHub release (draft first), e.g.
-#   gh release create macos-v<version> dist/EliteForce-MacOS-Marino-<version>-arm64.{dmg,zip} --draft
+# UPLOAD=1 also adds both to the version's one GitHub release (tag macos-v<version>, every
+# platform's downloads; see docs/PUBLISHING.md): it creates the draft "Elite Force (Marino's
+# Build) <version>" from .github/release-notes.md if CI hasn't yet (the tag must be pushed
+# already), then uploads (--clobber).
+# Only a signed and notarized build is uploaded. Needs gh, logged in.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -153,3 +156,20 @@ echo "Built${IDENTITY:+ (signed by $IDENTITY${NOTARY:+, notarized})}:"
 for f in "$DIST/$BASE.dmg" "$DIST/$BASE.zip"; do
 	echo "  $f  ($(du -h "$f" | cut -f1 | tr -d ' '), sha256 $(shasum -a 256 "$f" | cut -c1-16)…)"
 done
+
+# upload into the version's one release (CI adds the Windows and Linux downloads to it)
+if [ -n "${UPLOAD:-}" ]; then
+	[ -n "$IDENTITY" ] && [ -n "$NOTARY" ] || { echo "UPLOAD: only a signed, notarized build is uploaded" >&2; exit 1; }
+	TAG="macos-v$VERSION"
+	REPO="marinohardin/EliteForce-MacOS-Marino"
+	TITLE="Elite Force (Marino's Build) $VERSION"
+	if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+		gh release edit "$TAG" --repo "$REPO" --title "$TITLE" >/dev/null
+	else
+		NOTES="$DIST/release-notes.md"
+		sed "s/@VERSION@/$VERSION/g" "$ROOT/.github/release-notes.md" > "$NOTES"
+		gh release create "$TAG" --repo "$REPO" --draft --verify-tag --title "$TITLE" --notes-file "$NOTES"
+	fi
+	gh release upload "$TAG" --repo "$REPO" --clobber "$DIST/$BASE.dmg" "$DIST/$BASE.zip"
+	echo "Uploaded to the draft/release $TAG: $TITLE"
+fi
