@@ -208,6 +208,8 @@ Hazards such as pits, lava and crushers don't down you: they put you back next t
 **Only the host saves.** A save stays a normal single-player save that loads without co-op too;
 player 2's health, armor and weapons go in a `.coop` file next to it, so loading it with a guest
 brings player 2 back as it was. Player 2 also keeps health and weapons across level changes.
+After a game over, pressing Attack goes back to the save the host loaded last, or to the newest
+autosave if one was made after that load (plain single player always goes back to the autosave).
 
 ### Playing over the internet
 

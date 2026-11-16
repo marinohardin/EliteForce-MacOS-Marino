@@ -359,7 +359,14 @@ static void SP_Load_f(void){
     // normal (non-holodeck) level sends `load *respawn`. Retail's `*respawn` reloads the `auto` autosave
     // (there is NO respawn.sav; the leading `*` is a special load sentinel, NOT a strippable suffix). The
     // port previously opened saves/*respawn.sav -> not found -> silent no-op, so pressing attack did nothing.
-    if( !Q_stricmp( arg, "*respawn" ) ) arg = "auto";
+    if( !Q_stricmp( arg, "*respawn" ) ) {
+#ifdef EF_COOP
+        extern const char *SP_CoopRespawnSave( void );
+        arg = SP_CoopRespawnSave();   // co-op host: the save loaded last (sp_bridge.cpp); otherwise "auto"
+#else
+        arg = "auto";
+#endif
+    }
     else if( arg[0] == '*' )           arg = arg + 1;   // strip the sentinel for any other *<name> load
     SP_LoadGameFile( arg );
 }
