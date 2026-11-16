@@ -57,6 +57,85 @@ static QColor mix( const QColor &a, const QColor &b, double t )
 		a.blueF() * ( 1 - t ) + b.blueF() * t );
 }
 
+/* ---- placeholder text ----------------------------------------------------------------------
+   Qt's own desktop themes don't always give a usable PlaceholderText: the built-in KDE theme
+   (we don't ship KDE's platform plugin) reads the colour scheme's Text and Base but leaves the
+   placeholder at Qt's light default, so in a dark scheme it is near-black on a dark field. When
+   the theme's placeholder isn't on the Text side of Base with some contrast, it is derived from
+   Text and Base instead, and kept derived as the palette changes (light <-> dark switches). */
+
+static double luminance( const QColor &c )
+{
+	auto lin = []( double v ) { return v <= 0.04045 ? v / 12.92 : std::pow( ( v + 0.055 ) / 1.055, 2.4 ); };
+	return 0.2126 * lin( c.redF() ) + 0.7152 * lin( c.greenF() ) + 0.0722 * lin( c.blueF() );
+}
+
+static QColor over( const QColor &fg, const QColor &bg )
+{
+	return mix( bg, fg, fg.alphaF() );
+}
+
+static bool placeholderReadable( const QPalette &p, QPalette::ColorGroup g )
+{
+	const QColor base = p.color( g, QPalette::Base );
+	const double lb = luminance( base );
+	const double lt = luminance( over( p.color( g, QPalette::Text ), base ) );
+	const double lp = luminance( over( p.color( g, QPalette::PlaceholderText ), base ) );
+	if ( ( lt > lb ) != ( lp > lb ) )
+		return false;
+	return ( qMax( lp, lb ) + 0.05 ) / ( qMin( lp, lb ) + 0.05 ) >= 2.0;
+}
+
+namespace {
+
+class PlaceholderGuard : public QObject {
+public:
+	using QObject::QObject;
+	void apply()
+	{
+		static const QPalette::ColorGroup groups[] = { QPalette::Active, QPalette::Inactive, QPalette::Disabled };
+		QPalette p = QApplication::palette();
+		if ( !m_derive ) {
+			bool ok = true;
+			for ( QPalette::ColorGroup g : { QPalette::Active, QPalette::Inactive } )
+				ok = ok && placeholderReadable( p, g );
+			if ( ok )
+				return;
+			m_derive = true;
+			log( "Launcher: the theme's placeholder text colour is unreadable, deriving it from Text and Base" );
+		}
+		bool changed = false;
+		for ( QPalette::ColorGroup g : groups ) {
+			const QColor base = p.color( g, QPalette::Base );
+			const QColor want = mix( over( p.color( g, QPalette::Text ), base ), base, 0.45 );
+			if ( p.color( g, QPalette::PlaceholderText ) != want ) {
+				p.setColor( g, QPalette::PlaceholderText, want );
+				changed = true;
+			}
+		}
+		if ( changed )
+			QApplication::setPalette( p );		/* sets only this role: the others still follow the theme */
+	}
+protected:
+	bool eventFilter( QObject *o, QEvent *e ) override
+	{
+		if ( o == qApp && e->type() == QEvent::ApplicationPaletteChange )
+			QMetaObject::invokeMethod( this, [this]() { apply(); }, Qt::QueuedConnection );
+		return false;
+	}
+private:
+	bool m_derive = false;
+};
+
+}	/* namespace */
+
+void installPlaceholderFix()
+{
+	PlaceholderGuard *g = new PlaceholderGuard( qApp );
+	qApp->installEventFilter( g );
+	g->apply();
+}
+
 QColor secondary()
 {
 	const QPalette p = QGuiApplication::palette();
