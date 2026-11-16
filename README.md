@@ -158,6 +158,10 @@ folder yourself: the app's **File** menu has
 Saves from the Windows version work: the app copies them when it copies your `BaseEF`, or
 you can drop `.sav` files into the saves folder.
 
+After a death, pressing Attack goes back to the save you loaded last, or to the newest autosave
+if one was made after that load (the original game always went back to the autosave, which could
+be on another map).
+
 ## Co-op (experimental)
 
 Play the single-player campaign with a friend. One computer **hosts**: it plays the story as
@@ -208,6 +212,8 @@ Hazards such as pits, lava and crushers don't down you: they put you back next t
 **Only the host saves.** A save stays a normal single-player save that loads without co-op too;
 player 2's health, armor and weapons go in a `.coop` file next to it, so loading it with a guest
 brings player 2 back as it was. Player 2 also keeps health and weapons across level changes.
+After a game over, pressing Attack goes back to the save the host loaded last, or to the newest
+autosave if one was made after that load (the same as in single player).
 
 ### Playing over the internet
 

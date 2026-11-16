@@ -1900,6 +1900,26 @@ extern "C" qboolean SP_GameAllowedToSaveHere(void){
 // non-cinematic frame. See SP_SaveGame / the death-respawn-into-cutscene fix below.
 static int g_pendingAutosave = 0;
 
+// The save the death screen's reload (`load *respawn`) goes back to: the save loaded last, until an
+// autosave is written after it (a checkpoint, a level change or a new game); then `auto`, as before.
+// Reloading only `auto` meant that loading save A, then save B, then dying went back to `auto`, often
+// A's map. A save deleted since falls back to `auto`.
+extern "C" qboolean FS_FileExists( const char *file );
+static char g_respawnSave[64];
+static void SP_NoteLoad( const char *name ){
+    if( name == g_respawnSave ) return;   // the death reload of it
+    if( !sp_stricmpn( name, "auto", 5 ) ) g_respawnSave[0] = 0;
+    else snprintf( g_respawnSave, sizeof(g_respawnSave), "%s", name );
+}
+extern "C" const char *SP_RespawnSave( void ){
+    char path[96];
+    if( !g_respawnSave[0] ) return "auto";
+    snprintf( path, sizeof(path), "saves/%s.sav", g_respawnSave );
+    if( !FS_FileExists( path ) ) return "auto";   // deleted since
+    SP_ComPrintf()( "reloading %s, the save loaded last\n", g_respawnSave );
+    return g_respawnSave;
+}
+
 // Internal save writer. bEAUTO selects retail SV_SaveGame's two flavours:
 //  - bEAUTO=qfalse -> eFULL: GAME=0 + ge->WriteLevel(qfalse) (full gclient + entity table). User saves and the
 //    mid-level target_autosave checkpoint (`save auto*`, retail gameFlag 0). On load the exact level is restored.
@@ -2027,6 +2047,7 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
 #ifdef EF_COOP
     if( g_coopRep ) SP_CoopWriteSideFile( name );
 #endif
+    if( !strcmp( name, "auto" ) ) g_respawnSave[0] = 0;   // the death reload goes back to this autosave
 }
 
 // Public save entry (the `save` console command, deferred-autosave writer, quick-save): always eFULL, exactly
@@ -2065,6 +2086,7 @@ extern "C" void SP_LoadGameFile(const char* name){
 #ifdef EF_COOP
     SP_CoopReadSideFile( name );
 #endif
+    SP_NoteLoad( name );
     static unsigned char shot[256*256*4];
     char comm[128], mpcm[1024]; int ncvc=0, game=0, tnow=0, timr=0, cscn=0;
     // EFSP 4:3: cg_forceAspect is a DISPLAY preference (the video-menu Aspect toggle), not gameplay state. The
@@ -2194,6 +2216,7 @@ extern "C" qboolean SP_StartClient(void){
     // CVSV/AMMO/ADPT chunks, and a death-respawn on this New Game would restore the previous game's weapons/health.
     // Empty carry -> Player_RestoreFromPrevLevel no-ops (it gates on strlen(playersave)) -> the default ClientSpawn
     // loadout, which is the correct New-Game respawn. Forward transitions/loads set these elsewhere and are unaffected.
+    g_respawnSave[0] = 0;   // a new game: the death reload goes back to its autosave
     Cvar_Set("playersave", "");
     for(int i=0;i<4;i++){  char nm[32]; snprintf(nm,sizeof(nm),"playerammo%d",i); Cvar_Set(nm,""); }
     for(int i=0;i<32;i++){ char nm[32]; snprintf(nm,sizeof(nm),"borgadapt%d",i); Cvar_Set(nm,""); }

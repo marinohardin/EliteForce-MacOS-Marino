@@ -99,6 +99,11 @@ Joining mid-level is the M1 path (a whole frame); verified after a map change an
   afresh after the load); only a plain single-player save (`sp_coop 0`) removes an old one of the same
   name and never writes one. A player 2 that is down, or the computer-controlled one waiting to respawn,
   is saved as revived: a quarter of its max health, its armor, weapon and ammo.
+- 1.5.0: the death reload (`load *respawn`) loads the save loaded last instead of `auto`, until an
+  autosave is written after that load (checkpoint, level change, new game), in single player and co-op
+  alike. Before, it always reloaded `auto`, so loading save A, then save B on another map, then dying
+  went back to `auto` (often A's map). The engine keeps the name (`SP_RespawnSave`, sp_bridge.cpp); a
+  save deleted since falls back to `auto`. In co-op the reloaded save's `.coop` comes with it.
 
 ## Lag compensation for player 2's shots (step 9a)
 The guest sees the host's world about a round trip plus 50 ms late (it draws between the last two host

@@ -1406,3 +1406,13 @@ visible screen were that tall (checked at 500, 600 and 700 with `screencapture -
   (`#ifdef __APPLE__`, so the Mac build is unchanged).
 - tests/launcher: test_coop uses protocol 7 and covers MD4, the pak compare, the checksum of a
   generated zip and the character arguments.
+
+## SP and co-op: the death reload goes back to the save loaded last (1.5.0)
+
+- The death screen's `load *respawn` loaded `auto` (the last level start or checkpoint). Loading save A,
+  then save B on another map, then dying went back to `auto`, often A's map (reported in co-op; plain
+  single player did the same).
+- Now `SP_Load_f` asks `SP_RespawnSave` (sp_bridge.cpp): the name of the save loaded last, until `auto`
+  is written after it (checkpoint, level change, new game: `SP_SaveGameInternal`, `SP_StartClient`).
+  Loading `auto` itself clears it; a save deleted since falls back to `auto`. Console: "reloading <name>,
+  the save loaded last". In co-op the reloaded save's `.coop` comes with it.
