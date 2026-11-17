@@ -186,6 +186,12 @@ Click **Co-op…** on the launcher's Single Player card. The sheet has:
   optional password keeps strangers out. The sheet lists this Mac's address for your friend.
   **Show this game on my network** (on by default) lets friends on the same network find the game
   without typing anything; untick it and only someone who types your address finds it.
+  **Team attack** decides whether the two players can hurt each other: **Off** (the default; your
+  shots and grenades don't hurt each other, as before), **Half** (half the damage) or **On** (full
+  damage). With Half or On, a hit that knocks enemies back knocks the other player back too.
+  Explosions follow single player's rules: your own grenade's blast counts as your attack (so the
+  setting applies to your partner), while a barrel or other explosive you set off hurts both of you
+  as it always has.
 - **Join**: **Games on your network** lists the co-op games hosted on your network (it looks
   three times in the first 10 seconds; click **Refresh** to look again): who hosts, the level, a
   lock when the host set a password, and greyed with the reason when you can't join (another app

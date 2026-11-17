@@ -622,7 +622,7 @@ struct Launcher : Wnd {
 			if ( !joinAddr.empty( ) ) { launch.joinAddress = joinAddr.c_str( ); launch.joinPassword = joinPw.empty( ) ? 0 : joinPw.c_str( ); }
 		} else {
 			struct lc_launch_coop_fields cf; lc_coop_launch_fields( &cf );
-			launch.coopHost = cf.coopHost; launch.coopBackground = cf.coopBackground; launch.coopHidden = cf.coopHidden;
+			launch.coopHost = cf.coopHost; launch.coopBackground = cf.coopBackground; launch.coopHidden = cf.coopHidden; launch.coopTeamAttack = cf.coopTeamAttack;
 			launchCoopConnect = cf.coopConnect ? cf.coopConnect : ""; launchCoopSex = cf.coopSex ? cf.coopSex : ""; launchCoopName = cf.coopName ? cf.coopName : "";
 			launch.coopConnect = launchCoopConnect.empty( ) ? 0 : launchCoopConnect.c_str( );
 			launch.coopSex = launchCoopSex.empty( ) ? 0 : launchCoopSex.c_str( );

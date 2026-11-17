@@ -28,6 +28,7 @@ typedef struct {
 	/* co-op (§6.2): set by the co-op sheet */
 	int coopHost, coopBackground;
 	int coopHidden;					/* host: "Show this game on my network" off (+set coop_lanVisible 0) */
+	int coopTeamAttack;				/* host: "Team attack" 0 Off, 1 Half, 2 On (+set coop_teamAttack 1|2) */
 	const char *coopConnect, *coopSex, *coopName;
 	const char *coopLook;			/* player 2's character id (lc_coop_character), NULL: Munro */
 	/* Browse… / link (§3.5) */

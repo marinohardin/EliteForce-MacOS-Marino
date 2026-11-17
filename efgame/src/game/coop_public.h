@@ -75,6 +75,7 @@
 #define COOP_ScriptEnemy(s,e)		(e)
 #define COOP_RethinkPlayerEnemy()	((void)0)
 #define COOP_EVERYONE				NULL
+#define COOP_TeamAttack(t,a)		0
 
 #else // EF_COOP
 
@@ -205,6 +206,12 @@ void		COOP_NoteAttacker( gentity_t *victim, gentity_t *attacker );
 gentity_t	*COOP_ScriptEnemy( gentity_t *self, gentity_t *enemy );
 void		COOP_RethinkPlayerEnemy( void );
 void		COOP_TakePlayerEnemy( gentity_t *other );
+
+// G_Damage: targ was hurt by the other player (a shot, or an explosion the game puts down to that
+// player, such as their grenade's) and the host's coop_teamAttack ("Team attack" in the launcher) is
+// 1 (Half: half the damage, at least 1) or 2 (On). Returns that; 0 for Off and for every other hit,
+// which G_Damage then handles as it always has
+int			COOP_TeamAttack( const gentity_t *targ, const gentity_t *attacker );
 
 // the shooter's third-person setting (game code reads the host cgame's cvar for it)
 int			COOP_ThirdPerson( const gentity_t *e );

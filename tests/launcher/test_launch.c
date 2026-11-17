@@ -162,6 +162,28 @@ static void TestCoop( void )
 	lc_launch_append_args( &o, home, cl, sizeof( cl ) );
 	lc_snprintf( want, sizeof( want ), "%s+set sp_coop 1 +set coop_backgroundPlay 0 +set coop_lanVisible 0 +set coop_name \"Jose\" ", prefix );
 	CHECK_STR( cl, want );
+	o.coopHidden = 0;
+	o.coopTeamAttack = 1;	/* "Team attack" Half */
+	cl[0] = 0;
+	lc_launch_append_args( &o, home, cl, sizeof( cl ) );
+	lc_snprintf( want, sizeof( want ), "%s+set sp_coop 1 +set coop_backgroundPlay 0 +set coop_teamAttack 1 +set coop_name \"Jose\" ", prefix );
+	CHECK_STR( cl, want );
+	o.coopTeamAttack = 2;	/* On */
+	cl[0] = 0;
+	lc_launch_append_args( &o, home, cl, sizeof( cl ) );
+	lc_snprintf( want, sizeof( want ), "%s+set sp_coop 1 +set coop_backgroundPlay 0 +set coop_teamAttack 2 +set coop_name \"Jose\" ", prefix );
+	CHECK_STR( cl, want );
+	o.coopTeamAttack = 7;	/* not a setting: Off, nothing on the command line */
+	cl[0] = 0;
+	lc_launch_append_args( &o, home, cl, sizeof( cl ) );
+	lc_snprintf( want, sizeof( want ), "%s+set sp_coop 1 +set coop_backgroundPlay 0 +set coop_name \"Jose\" ", prefix );
+	CHECK_STR( cl, want );
+	o.coopTeamAttack = 2;	/* a guest's launch never has it */
+	o.coopHost = 0;
+	o.coopConnect = "192.168.1.5:29760";
+	cl[0] = 0;
+	lc_launch_append_args( &o, home, cl, sizeof( cl ) );
+	CHECK( !strstr( cl, "coop_teamAttack" ) );
 
 	Defaults( &o );
 	o.coopConnect = "192.168.1.5:29760";

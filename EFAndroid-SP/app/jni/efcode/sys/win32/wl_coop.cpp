@@ -19,7 +19,7 @@ static void coopNatRelease( ) { if ( g_coopNat ) { lc_nat_release( g_coopNat ); 
 struct CoopDlg : Wnd {
 	bool canPlay = false, playNow = false;
 	enum { ID_NAME = 10, ID_HOST, ID_PW, ID_BG, ID_ROUTER, ID_INET, ID_INVITE, ID_ADDR, ID_CHECK, ID_JPW, ID_MUNRO, ID_RES_ICON, ID_RES_SPIN, ID_RES_TITLE, ID_RES_TEXT,
-		ID_CONNECT, ID_CONNECT_TXT, ID_LAN, ID_NOTE, ID_LOOK, ID_SHOWLAN, ID_GAMES, ID_GAMES_REFRESH, ID_GAMES_STATUS };
+		ID_CONNECT, ID_CONNECT_TXT, ID_LAN, ID_NOTE, ID_LOOK, ID_SHOWLAN, ID_GAMES, ID_GAMES_REFRESH, ID_GAMES_STATUS, ID_TEAMATTACK };
 	/* NAT state */
 	int natState = 0;						/* 0 idle, 1 asking, 2 mapped, 3 failed */
 	str natPublic, natWhy; str lanFirst;
@@ -270,8 +270,12 @@ struct CoopDlg : Wnd {
 		str n = takeName( ); str pw = getText( ctl( ID_PW ) );
 		bool showLan = SendMessageW( ctl( ID_SHOWLAN ), BM_GETCHECK, 0, 0 ) == BST_CHECKED;
 		lc_store_set_int( st, LC_KEY_COOP_LAN_VISIBLE, showLan ); lc_store_save( st );
-		lc_coop_choose_host( bg, showLan, n.c_str( ), pw.c_str( ) );
-		lc_log( "Co-op: hosting (single player with sp_coop 1) as %s%s%s", n.c_str( ), pw.empty( ) ? "" : ", with a password", showLan ? "" : ", not shown on the network" );
+		int teamAttack = (int)SendMessageW( ctl( ID_TEAMATTACK ), SEG_GETSEL, 0, 0 );
+		if ( teamAttack < 0 || teamAttack > 2 ) teamAttack = 0;
+		lc_store_set_int( st, LC_KEY_COOP_TEAM_ATTACK, teamAttack ); lc_store_save( st );
+		lc_coop_choose_host( bg, showLan, teamAttack, n.c_str( ), pw.c_str( ) );
+		lc_log( "Co-op: hosting (single player with sp_coop 1) as %s%s%s%s", n.c_str( ), pw.empty( ) ? "" : ", with a password", showLan ? "" : ", not shown on the network",
+			teamAttack == 2 ? ", team attack on" : teamAttack == 1 ? ", team attack half" : "" );
 		playNow = true; end( IDOK );
 	}
 	void doConnect( )
@@ -342,7 +346,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	char lan[8][16], ifn[8][64]; int nlan = lc_coop_lan_addresses( lan, ifn, 8 );
 	if ( nlan > 0 ) d.lanFirst = lan[0];
 	int y = 18;
-	const int H = 802 + 24 + 182;
+	const int H = 802 + 24 + 182 + 28;
 	{
 		RECT wa; SystemParametersInfoW( SPI_GETWORKAREA, 0, &wa, 0 );
 		if ( owner ) setDpi( dpiOf( owner ) );
@@ -370,7 +374,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	d.label( 334, y + 4, 150, 14, "up to 31 letters", 11, 400, R_TEXT2, DT_SINGLELINE );
 	y += 22 + 22;
 	/* host group */
-	int hTop = y, hH = 296 + 24;
+	int hTop = y, hH = 296 + 24 + 28;
 	d.addGroup( 20, hTop, W0 - 40, hH, "HOST" );
 	int ty = hTop + 14; const int tx = 36, tw = 400;
 	str intro = fmt( "Starts single player with co-op on: choose New Game or Load as usual. Your friend then joins as player 2 with this %s\xE2\x80\x99s address:", PLATFORM_NOUN );
@@ -380,6 +384,11 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	ty += 8;
 	d.label( tx, ty + 3, 130, 16, "Password (optional)", 12, 400, R_TEXT, DT_SINGLELINE );
 	HWND pw = d.edit( tx + 136, ty, 160, 22, CoopDlg::ID_PW, "", ES_PASSWORD ); SendMessageW( pw, EM_SETCUEBANNER, TRUE, (LPARAM)L"none" ); ty += 28;
+	d.label( tx, ty + 3, 130, 16, "Team attack", 12, 400, R_TEXT, DT_SINGLELINE );
+	HWND ta = mkSeg( d.hwnd, tx + 136, ty, 160, 22, CoopDlg::ID_TEAMATTACK ); d.ids[CoopDlg::ID_TEAMATTACK] = ta;
+	segSetItems( ta, { "Off", "Half", "On" } );
+	{ int saved = lc_store_get_int( st, LC_KEY_COOP_TEAM_ATTACK, 0 ); SendMessageW( ta, SEG_SETSEL, saved >= 0 && saved <= 2 ? saved : 0, 0 ); }
+	setTooltip( d.hwnd, ta, "Whether you and player 2 can hurt each other with your shots and grenades: not at all, half the damage, or full damage" ); ty += 28;
 	HWND bg = d.check( tx, ty, 360, 20, "Keep playing in the background", CoopDlg::ID_BG, lc_store_get_bool( st, LC_KEY_COOP_BACKGROUND, 1 ) != 0, 12 );
 	setTooltip( d.hwnd, bg, "The game goes on while its window isn\xE2\x80\x99t in front, e.g. while you click into a second copy on this PC (keys and the mouse still go only to the window in front)" ); ty += 24;
 	HWND sl = d.check( tx, ty, 360, 20, "Show this game on my network", CoopDlg::ID_SHOWLAN, lc_store_get_bool( st, LC_KEY_COOP_LAN_VISIBLE, 1 ) != 0, 12 );

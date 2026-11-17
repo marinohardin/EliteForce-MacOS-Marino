@@ -1092,6 +1092,7 @@ lc_launch LauncherWindow::makeLaunch( int mode, QByteArray &nameBytes, QByteArra
 		if ( cf.coopHost ) {
 			o.coopBackground = cf.coopBackground;
 			o.coopHidden = cf.coopHidden;
+			o.coopTeamAttack = cf.coopTeamAttack;
 		}
 	}
 	return o;

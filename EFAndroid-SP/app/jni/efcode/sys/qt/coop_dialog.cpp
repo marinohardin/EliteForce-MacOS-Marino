@@ -100,6 +100,20 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 	pw->addStretch( 1 );
 	hl->addLayout( pw );
 
+	QHBoxLayout *ta = new QHBoxLayout;
+	ta->addWidget( label( "Team attack", 12 ) );
+	m_teamAttack = new Segmented( QStringList() << "Off" << "Half" << "On" );
+	m_teamAttack->setToolTip( "Whether you and player 2 can hurt each other with your shots and grenades: "
+		"not at all, half the damage, or full damage" );
+	m_teamAttack->setFixedWidth( px( 160 ) );
+	{
+		const int saved = lc_store_get_int( st, LC_KEY_COOP_TEAM_ATTACK, 0 );
+		m_teamAttack->setCurrent( saved >= 0 && saved <= 2 ? saved : 0 );
+	}
+	ta->addWidget( m_teamAttack );
+	ta->addStretch( 1 );
+	hl->addLayout( ta );
+
 	m_background = new QCheckBox( "Keep playing in the background" );
 	m_background->setChecked( lc_store_get_bool( st, LC_KEY_COOP_BACKGROUND, 1 ) != 0 );
 	m_background->setToolTip( QString::fromUtf8( "The game goes on while its window isn\xe2\x80\x99t in front, e.g. while you click into a second copy "
@@ -678,12 +692,15 @@ void CoopDialog::doHost()
 	lc_store_set_int( st, LC_KEY_COOP_BACKGROUND, m_background->isChecked() ? 1 : 0 );
 	lc_store_set( st, LC_KEY_COOP_NAME, name[0] ? name : nullptr );
 	lc_store_set_int( st, LC_KEY_COOP_LAN_VISIBLE, m_showLan->isChecked() ? 1 : 0 );
+	const int teamAttack = m_teamAttack->current() >= 0 && m_teamAttack->current() <= 2 ? m_teamAttack->current() : 0;
+	lc_store_set_int( st, LC_KEY_COOP_TEAM_ATTACK, teamAttack );
 	lc_store_save( st );
 	m_playName = U( name );
-	lc_coop_choose_host( m_background->isChecked(), m_showLan->isChecked(), name, B( m_hostPw->text() ).constData() );
-	log( QString( "Co-op: hosting (single player with sp_coop 1) as %1%2%3" ).arg( name[0] ? U( name ) : U( lc_computer_name() ),
+	lc_coop_choose_host( m_background->isChecked(), m_showLan->isChecked(), teamAttack, name, B( m_hostPw->text() ).constData() );
+	log( QString( "Co-op: hosting (single player with sp_coop 1) as %1%2%3%4" ).arg( name[0] ? U( name ) : U( lc_computer_name() ),
 		m_hostPw->text().isEmpty() ? QString() : QString( ", with a password" ),
-		m_showLan->isChecked() ? QString() : QString( ", not shown on the network" ) ) );
+		m_showLan->isChecked() ? QString() : QString( ", not shown on the network" ),
+		teamAttack == 2 ? QString( ", team attack on" ) : teamAttack == 1 ? QString( ", team attack half" ) : QString() ) );
 	m_choice = Host;
 	accept();
 }
