@@ -1335,6 +1335,9 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 		attacker = &g_entities[ENTITYNUM_WORLD];
 	}
 
+	// co-op: one player hurt the other and the host's "Team attack" is Half (1) or On (2); 0 otherwise
+	const int teamAttack = COOP_TeamAttack( targ, attacker );
+
 	if ( !COOP_IsPlayer( attacker ) && damage >= 2 && !COOP_IsPlayer( targ ) && attacker->client && attacker->client->playerTeam == TEAM_STARFLEET )
 	{//player-helpers do only half damage to enemies
 		damage = ceil((float)damage/2.0f);
@@ -1401,7 +1404,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 	{
 		knockback = 0;
 	}
-	else if ( !g_teamKnockback->integer && targ->client && attacker->client && targ->client->playerTeam == attacker->client->playerTeam )
+	else if ( !teamAttack && !g_teamKnockback->integer && targ->client && attacker->client && targ->client->playerTeam == attacker->client->playerTeam )
 	{
 		knockback = 0;
 	}
@@ -1412,6 +1415,16 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 	else if ( mod == MOD_STASIS )
 	{//HACK, need a dflags field on ents
 		knockback = 0;
+	}
+
+	// co-op team attack Half: half the damage (at least 1); the knockback stays full
+	if ( teamAttack == 1 && damage > 0 )
+	{
+		damage /= 2;
+		if ( damage < 1 )
+		{
+			damage = 1;
+		}
 	}
 
 	// figure momentum add, even if the damage won't be taken
@@ -1431,7 +1444,7 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 	}
 
 	// Check for team damage
-	if ( targ != attacker && !(dflags&DAMAGE_IGNORE_TEAM) && OnSameTeam (targ, attacker)  ) 
+	if ( targ != attacker && !(dflags&DAMAGE_IGNORE_TEAM) && !teamAttack && OnSameTeam (targ, attacker)  ) 
 	{//on same team
 		if ( !targ->client ) 
 		{//a non-player object should never take damage from an ent on the same team
@@ -1567,7 +1580,15 @@ void G_Damage( gentity_t *targ, gentity_t *inflictor, gentity_t *attacker, vec3_
 				attackerTeam = TEAM_STARFLEET;
 			}
 
-			if ( targTeam != attackerTeam )
+			if ( teamAttack )
+			{//co-op team attack: the other player's hit counts
+				targ->health = targ->health - take;
+				if ( (targ->flags&FL_UNDYING) && !(dflags&DAMAGE_NO_PROTECTION) && targ->health < 1 )
+				{
+					targ->health = 1;
+				}
+			}
+			else if ( targTeam != attackerTeam )
 			{//on the same team
 				targ->health = targ->health - take;
 

@@ -11,6 +11,7 @@ int		coop_enabled = 0;
 int		coop_p2Num = -1;
 
 static cvar_t	*sp_coop;
+static cvar_t	*coop_teamAttack;	// the host's "Team attack": 0 Off, 1 Half, 2 On (COOP_TeamAttack)
 
 /*
 COOP_Init
@@ -23,6 +24,7 @@ void COOP_Init( void )
 	sp_coop = gi.cvar( "sp_coop", "0", CVAR_LATCH );
 	coop_enabled = ( sp_coop->integer == 1 );
 	coop_replica = ( sp_coop->integer == 2 );
+	coop_teamAttack = gi.cvar( "coop_teamAttack", "0", 0 );
 	coop_p2Num = -1;
 	COOP_ReplicaInit();
 	COOP_AIInit();
@@ -62,6 +64,23 @@ void COOP_RegisterCommands( void )
 }
 
 /*
+COOP_TeamAttack
+
+One player hurt the other: the host's "Team attack" setting decides (coop_teamAttack, which the
+launcher sets on the host's command line; a guest's game never deals damage). Anything else, a
+player's own damage included, is 0 and G_Damage takes its usual path.
+*/
+int COOP_TeamAttack( const gentity_t *targ, const gentity_t *attacker )
+{
+	if ( !coop_enabled || !coop_teamAttack || coop_teamAttack->integer <= 0 || targ == attacker
+		|| !targ->client || !attacker->client || !COOP_IsPlayerPtr( targ ) || !COOP_IsPlayerPtr( attacker ) )
+	{
+		return 0;
+	}
+	return coop_teamAttack->integer >= 2 ? 2 : 1;
+}
+
+/*
 COOP_ConsoleCommand
 
 The M0 puppet controls (host console; reached through the game's ClientCommand):
@@ -76,9 +95,14 @@ The M0 puppet controls (host console; reached through the game's ClientCommand):
 	coop_p2_damage <n> [fall|pit] [p1] [npc] [near]  hurt P2 (p1: player 1) by n (tests: death, down, respawn;
 	                                 fall: as falling damage, pit: as a trigger_hurt, npc: dealt by an NPC;
 	                                 near: P2 deals it to the nearest breakable instead)
+	               [team] [splash] [boom]  (tests, team attack) team: dealt by the other player, as a shot
+	                                 (armor and knockback apply); splash: as an explosion at the victim, put
+	                                 down to the attacker (G_RadiusDamage, radius 128); boom: player 1 hits the
+	                                 level's strongest explosive breakable, the nearest of equals (n 0: only
+	                                 say where it is)
 	coop_p2_target <n|npc> [amp] [ms] (tests) put entity n (or the nearest NPC) in front of P2's view, swaying side to side
 	                                 amp units over a period of ms; "coop_p2_target off" lets it go
-	coop_p2_aim <n>                  (tests) turn player 2's view to entity n's chest
+	coop_p2_aim <n>                  (tests) turn player 2's view to entity n's chest (0: player 1)
 	coop_p2_npcs [radius]            (tests) the NPCs near either player and their enemies
 	coop_p2_npc spawn <type> [name]  (tests) the game's "npc" console command (spawn, kill...),
 	                                 which single player doesn't reach otherwise
@@ -164,7 +188,7 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 	else if ( !Q_stricmp( cmd, "coop_p2_aim" ) )
 	{
 		int n = atoi( gi.argv( 1 ) );
-		if ( n > 0 && n < globals.num_entities && g_entities[n].inuse )
+		if ( ( n > 0 || !Q_stricmp( gi.argv( 1 ), "0" ) ) && n != ent->s.number && n < globals.num_entities && g_entities[n].inuse )
 		{
 			vec3_t eye, spot, dir;
 			VectorCopy( ent->client->ps.origin, eye );
@@ -217,6 +241,7 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 		gentity_t	*victim = ent;
 		gentity_t	*attacker = NULL;
 		int			mod = MOD_UNKNOWN;
+		qboolean	team = qfalse, splash = qfalse, boom = qfalse;
 		for ( int i = 2; i < gi.argc(); i++ )
 		{
 			if ( !Q_stricmp( gi.argv( i ), "fall" ) )
@@ -230,6 +255,18 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 			else if ( !Q_stricmp( gi.argv( i ), "p1" ) )
 			{
 				victim = &g_entities[0];
+			}
+			else if ( !Q_stricmp( gi.argv( i ), "team" ) )
+			{
+				team = qtrue;
+			}
+			else if ( !Q_stricmp( gi.argv( i ), "splash" ) )
+			{
+				splash = qtrue;
+			}
+			else if ( !Q_stricmp( gi.argv( i ), "boom" ) )
+			{
+				boom = qtrue;
 			}
 			else if ( !Q_stricmp( gi.argv( i ), "near" ) )
 			{
@@ -269,7 +306,84 @@ qboolean COOP_ConsoleCommand( const char *cmd )
 				}
 			}
 		}
-		G_Damage( victim, attacker, attacker, dir, victim->currentOrigin, atoi( gi.argv( 1 ) ), DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR | DAMAGE_NO_PROTECTION, mod );
+		if ( !team && !splash && !boom )
+		{
+			G_Damage( victim, attacker, attacker, dir, victim->currentOrigin, atoi( gi.argv( 1 ) ), DAMAGE_NO_KNOCKBACK | DAMAGE_NO_ARMOR | DAMAGE_NO_PROTECTION, mod );
+			return qtrue;
+		}
+		// the team attack tests: both players' health, armor and speed before and after
+		gentity_t	*p1 = &g_entities[0];
+		int			damage = atoi( gi.argv( 1 ) );
+		int			h1 = p1->health, a1 = p1->client->ps.stats[STAT_ARMOR], h2 = ent->health, a2 = ent->client->ps.stats[STAT_ARMOR];
+		float		v1 = VectorLength( p1->client->ps.velocity ), v2 = VectorLength( ent->client->ps.velocity );
+		if ( boom )
+		{
+			// player 1 shoots the strongest explosive breakable (the nearest of equals): its blast is put
+			// down to the breakable
+			gentity_t	*best = NULL;
+			float		bestDist = 0;
+			for ( int n = 1; n < globals.num_entities; n++ )
+			{
+				gentity_t	*t = &g_entities[n];
+				vec3_t		mid;
+				if ( !t->inuse || t->client || !t->takedamage || t->splashDamage <= 0 || t->splashRadius <= 0 )
+				{
+					continue;
+				}
+				VectorAdd( t->absmin, t->absmax, mid );
+				VectorScale( mid, 0.5f, mid );
+				float d = Distance( mid, p1->currentOrigin );
+				if ( !best || t->splashDamage > best->splashDamage || ( t->splashDamage == best->splashDamage && d < bestDist ) )
+				{
+					best = t;
+					bestDist = d;
+				}
+			}
+			if ( !best )
+			{
+				gi.Printf( "co-op: no explosive breakable in this level\n" );
+				return qtrue;
+			}
+			vec3_t mid;
+			VectorAdd( best->absmin, best->absmax, mid );
+			VectorScale( mid, 0.5f, mid );
+			gi.Printf( "co-op: explosive entity %d (%s) at %s, bounds %s", best->s.number, best->classname ? best->classname : "?",
+				vtos( mid ), vtos( best->absmin ) );
+			gi.Printf( " %s, splash %d radius %d, %.0f units from player 1, %.0f from player 2\n", vtos( best->absmax ), best->splashDamage, best->splashRadius,
+				bestDist, Distance( mid, ent->currentOrigin ) );
+			if ( damage <= 0 )
+			{
+				return qtrue;
+			}
+			VectorSubtract( mid, p1->currentOrigin, dir );
+			G_Damage( best, p1, p1, dir, mid, damage, 0, MOD_PHASER );
+		}
+		else
+		{
+			if ( team )
+			{
+				attacker = ( victim == ent ) ? p1 : ent;	// the other player
+			}
+			if ( splash )
+			{
+				// (without team: the world's or the npc's blast)
+				vec3_t org;
+				VectorCopy( victim->currentOrigin, org );
+				G_RadiusDamage( org, attacker, damage, 128, NULL, MOD_GRENADE );
+			}
+			else
+			{
+				VectorSubtract( victim->currentOrigin, attacker->currentOrigin, dir );
+				dir[2] = 0;
+				G_Damage( victim, attacker, attacker, dir, victim->currentOrigin, damage, 0, MOD_CRIFLE );
+			}
+		}
+		gi.Printf( "co-op: coop_teamAttack %d: player 1 health %d -> %d, armor %d -> %d, speed %.0f -> %.0f; "
+			"player 2 health %d -> %d, armor %d -> %d, speed %.0f -> %.0f%s%s\n",
+			coop_teamAttack ? coop_teamAttack->integer : 0, h1, p1->health, a1, p1->client->ps.stats[STAT_ARMOR],
+			v1, VectorLength( p1->client->ps.velocity ), h2, ent->health, a2, ent->client->ps.stats[STAT_ARMOR],
+			v2, VectorLength( ent->client->ps.velocity ), COOP_IsDowned( p1 ) ? ", player 1 down" : "",
+			COOP_IsDowned( ent ) ? ", player 2 down" : "" );
 	}
 	else
 	{

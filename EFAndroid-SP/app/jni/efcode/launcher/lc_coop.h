@@ -115,8 +115,9 @@ void lc_coop_invite_link( const char *address, char *out, size_t size );
 
 /* the sheet's choice, kept until Play (§6.2) */
 void lc_coop_choose_none( void );
-/* lanVisible: "Show this game on my network" (0 puts +set coop_lanVisible 0 on the command line) */
-void lc_coop_choose_host( int background, int lanVisible, const char *name, const char *password );
+/* lanVisible: "Show this game on my network" (0 puts +set coop_lanVisible 0 on the command line);
+   teamAttack: "Team attack" 0 Off, 1 Half, 2 On (1 and 2 put +set coop_teamAttack N on it; others are Off) */
+void lc_coop_choose_host( int background, int lanVisible, int teamAttack, const char *name, const char *password );
 /* look: a character id (lc_coop_character), "" or NULL for Munro */
 void lc_coop_choose_join( const char *address, const char *sex, const char *look, const char *name, const char *password );
 int lc_coop_choice( void );		/* 0 none, 1 host, 2 join */
@@ -125,7 +126,7 @@ int lc_coop_choice( void );		/* 0 none, 1 host, 2 join */
    calls Sys_CoopSetLaunchPassword(lc_coop_password()) directly; Linux ef-launcher
    puts it in env EF_COOP_PASSWORD for the exec, and sys_coop_host.c takes it from
    there (and unsets it) on startup. */
-struct lc_launch_coop_fields { int coopHost, coopBackground, coopHidden; const char *coopConnect, *coopSex, *coopLook, *coopName; };
+struct lc_launch_coop_fields { int coopHost, coopBackground, coopHidden, coopTeamAttack; const char *coopConnect, *coopSex, *coopLook, *coopName; };
 void lc_coop_launch_fields( struct lc_launch_coop_fields *out );
 const char *lc_coop_password( void );	/* "" if none */
 

@@ -102,6 +102,7 @@ key/value file in the homepath (sys_data.c already reads `gamefolder` from it,
 | `ChooserPanelSizeReset` | bool | one-time reset of the open panel's remembered size (also removes Apple's `NSNavPanelExpandedSizeForOpenMode`) | chooser | chooser, once | `D:98,713-718` (macOS-only quirk; not needed elsewhere) |
 | `ApplePressAndHoldEnabled` | registered default NO | disables the accent picker on key hold | – | registerDefaults at start | `O:94-99` (macOS-only) |
 | `CoopKeepPlayingInBackground` | bool, absent = YES | co-op Host "Keep playing in the background" | sheet build | Host pressed | `C:801-802,959-960,1262` |
+| `CoopTeamAttack` | integer 0 Off (absent), 1 Half, 2 On | co-op Host "Team attack" | sheet build | Host pressed | `hostGroup`, `host:` |
 | `CoopPlayerName` | string | co-op "Your name" (stored after cleaning; may be empty) | sheet build | Host or Connect | `C:804,898-901,916` |
 | `CoopGuestMunro` | `"male"`/`"female"` | co-op Join "Munro" choice | sheet build | Connect | `C:805,1033-1034,1301` |
 | `CoopGuestCharacter` | string: a `coop_characters.h` id, `""` = Munro | co-op Join "Character" choice | sheet build | Connect | `lookPopup`, `connect:` |
@@ -584,7 +585,7 @@ followed by a space (values in quotes exactly as shown):
 [basepath] +set fs_basepath "<basepath>"
 [HM, masters cfg written OK] +exec vsp_masters.cfg
 [HM, Loopback Host Fix on and router answered] +set cl_loopbackHostIP <public IPv4>
-[SP, co-op Host chosen]    +set sp_coop 1 +set coop_backgroundPlay <0|1>
+[SP, co-op Host chosen]    +set sp_coop 1 +set coop_backgroundPlay <0|1> [+set coop_lanVisible 0] [+set coop_teamAttack <1|2>]
 [SP, co-op Connect chosen] +set coop_connect "<a.b.c.d:port>" +set coop_sex <male|female> [+set coop_look <id>]
 [SP, co-op either, name non-empty] +set coop_name "<CoopSafeName(name)>"
 [HM, joinAddress from Browse…/link] [+set password "<pw>"] +connect <address>
@@ -1099,6 +1100,7 @@ group). Initial focus: the Join address field.
      default route first; Windows `GetAdaptersAddresses`, show the adapter's
      friendly name.)
    - "Password (optional)" (12 pt) + secure field width 160, placeholder "none"
+   - "Team attack" (12 pt) + segmented control Off | Half | On, select one (like Join's Munro Male | Female; initial from `CoopTeamAttack`, default Off); tooltip "Whether you and player 2 can hurt each other with your shots and grenades: not at all, half the damage, or full damage"
    - checkbox "Keep playing in the background" (initial from `CoopKeepPlayingInBackground`, default on); tooltip "The game goes on while its window isn’t in front, e.g. while you click into a second copy on this Mac (keys and the mouse still go only to the window in front)"
    - checkbox "Open the port on my router (for a friend on the internet)" (state mirrors the NAT mapping: on while asking or mapped)
    - internet status (11 pt, wrap 400, selectable), see below
@@ -1172,10 +1174,10 @@ Description lines (`CoopDescribe`, `C:1162-1195`):
 6. `"Host’s app: Elite Force for Mac <version or ?> · co-op version <coopProtocol or ?>"`.
 
 **Host** (`C:1251-1269`): requires canPlay. End the sheet (OK); keep the NAT
-mapping; remember Host chosen, background flag (saved to defaults), name
+mapping; remember Host chosen, background flag and team attack (saved to defaults), name
 (`takeName`: cleaned name saved to `CoopPlayerName`; empty → computer name
 used); `Sys_CoopSetLaunchPassword(host password)`; log `Co-op: hosting (single
-player with sp_coop 1) as <name>[, with a password]`; select Single Player;
+player with sp_coop 1) as <name>[, with a password][, not shown on the network][, team attack half|on]`; select Single Player;
 **Play**.
 
 **Connect** (`C:1282-1307`): requires a found address and canPlay. If the host
@@ -1192,7 +1194,9 @@ coop_connect), <name>, <sex> Munro`, select Single Player, **Play**.
 
 Only when not Holomatch:
 
-- Host chosen: `+set sp_coop 1 +set coop_backgroundPlay <1|0> `
+- Host chosen: `+set sp_coop 1 +set coop_backgroundPlay <1|0> `, then `+set coop_lanVisible 0 ` when
+  "Show this game on my network" is off, then `+set coop_teamAttack <1|2> ` when "Team attack" is Half or On
+  (Off: nothing; the game's default is 0)
 - Connect chosen and the address contains only `0-9 . :`:
   `+set coop_connect "<ip:port>" +set coop_sex <male|female> `, then `+set coop_look <id> ` when the
   chosen character's id is in `coop_characters.h` (Munro: nothing)
@@ -1629,7 +1633,7 @@ void        LC_StoreFree( lc_store_t *s );
 Keys: `gamefolder` (must stay compatible with `SD:486-517`), `launchermode`,
 `checkforupdates`, `updatelastcheck` (unix time), `updatelatestversion`,
 `updatelatesturl`, `hudwidescreen`, `coopkeepplayinginbackground`,
-`coopplayername`, `coopguestmunro`, `loopbackhostfix`, plus the server spec's
+`coopplayername`, `coopguestmunro`, `coopteamattack` (0/1/2, absent = 0), `loopbackhostfix`, plus the server spec's
 keys (master list, server settings, browser favorites).
 
 ### 10.2 Config reading and graphics model

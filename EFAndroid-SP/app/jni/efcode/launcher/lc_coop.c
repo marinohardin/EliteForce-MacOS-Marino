@@ -859,7 +859,7 @@ void lc_coop_invite_link( const char *address, char *out, size_t size )
 /* ---- the sheet's choice ---------------------------------------------------------------------------- */
 
 static struct {
-	int choice, background, hidden;
+	int choice, background, hidden, teamAttack;
 	char address[64], sex[16], look[COOP_CHARACTER_MAX], name[40], password[72];
 } g_choice;
 
@@ -868,12 +868,13 @@ void lc_coop_choose_none( void )
 	memset( &g_choice, 0, sizeof( g_choice ) );
 }
 
-void lc_coop_choose_host( int background, int lanVisible, const char *name, const char *password )
+void lc_coop_choose_host( int background, int lanVisible, int teamAttack, const char *name, const char *password )
 {
 	memset( &g_choice, 0, sizeof( g_choice ) );
 	g_choice.choice = 1;
 	g_choice.background = background != 0;
 	g_choice.hidden = !lanVisible;
+	g_choice.teamAttack = ( teamAttack == 1 || teamAttack == 2 ) ? teamAttack : 0;
 	safe_name( name, g_choice.name, sizeof( g_choice.name ) );
 	lc_strlcpy( g_choice.password, password ? password : "", sizeof( g_choice.password ) );
 }
@@ -905,6 +906,7 @@ void lc_coop_launch_fields( struct lc_launch_coop_fields *out )
 		out->coopHost = 1;
 		out->coopBackground = g_choice.background;
 		out->coopHidden = g_choice.hidden;
+		out->coopTeamAttack = g_choice.teamAttack;
 	} else if ( g_choice.choice == 2 ) {
 		/* only 0-9 . : may go on the command line */
 		for ( p = g_choice.address; *p; p++ )

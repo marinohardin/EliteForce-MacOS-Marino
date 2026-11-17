@@ -98,6 +98,8 @@ static void BuildArgs( const lc_launch *o, const char *homeBase, size_t used, si
 			Addf( args, argsSize, "+set sp_coop 1 +set coop_backgroundPlay %d ", o->coopBackground ? 1 : 0 );
 			if ( o->coopHidden )
 				Addf( args, argsSize, "+set coop_lanVisible 0 " );
+			if ( o->coopTeamAttack == 1 || o->coopTeamAttack == 2 )
+				Addf( args, argsSize, "+set coop_teamAttack %d ", o->coopTeamAttack );
 		} else if ( o->coopConnect && *o->coopConnect ) {
 			const char *p;
 

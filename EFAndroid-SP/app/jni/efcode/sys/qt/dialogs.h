@@ -68,6 +68,7 @@ private:
 	QLabel *m_internetStatus, *m_resultIcon, *m_resultTitle, *m_resultText, *m_connectNote, *m_lanLabel;
 	QPushButton *m_copyInvite, *m_check, *m_connect, *m_host;
 	Ui::Segmented *m_munro;
+	Ui::Segmented *m_teamAttack;	/* Host: "Team attack" Off / Half / On */
 	QComboBox *m_look;
 	QProgressBar *m_spinner;
 	QWidget *m_resultWidget;

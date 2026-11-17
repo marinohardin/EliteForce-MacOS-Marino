@@ -75,15 +75,31 @@ static void test_choice( void )
 	CHECK( !f.coopHost && !f.coopConnect && !f.coopName && !f.coopSex );
 	CHECK_STR( lc_coop_password( ), "" );
 
-	lc_coop_choose_host( 1, 1, "  Capt\xc3\xa9n \"Pat\"; 50%  ", "secret" );
+	lc_coop_choose_host( 1, 1, 0, "  Capt\xc3\xa9n \"Pat\"; 50%  ", "secret" );
 	CHECK( lc_coop_choice( ) == 1 );
 	lc_coop_launch_fields( &f );
-	CHECK( f.coopHost == 1 && f.coopBackground == 1 && !f.coopHidden && !f.coopConnect );
+	CHECK( f.coopHost == 1 && f.coopBackground == 1 && !f.coopHidden && !f.coopConnect && f.coopTeamAttack == 0 );
 	CHECK_STR( f.coopName, "Captn Pat 50" );				/* safe name: ASCII, no quotes ; % */
 	CHECK_STR( lc_coop_password( ), "secret" );
-	lc_coop_choose_host( 0, 0, "", "" );
+	lc_coop_choose_host( 0, 0, 0, "", "" );
 	lc_coop_launch_fields( &f );
 	CHECK( f.coopHost == 1 && f.coopBackground == 0 && f.coopHidden == 1 && !f.coopName );		/* empty name: none on the command line */
+	/* "Team attack": 0 Off, 1 Half, 2 On; anything else is Off */
+	lc_coop_choose_host( 1, 1, 1, "Pat", "" );
+	lc_coop_launch_fields( &f );
+	CHECK( f.coopHost == 1 && f.coopTeamAttack == 1 );
+	lc_coop_choose_host( 1, 1, 2, "Pat", "" );
+	lc_coop_launch_fields( &f );
+	CHECK( f.coopTeamAttack == 2 );
+	lc_coop_choose_host( 1, 1, 3, "Pat", "" );
+	lc_coop_launch_fields( &f );
+	CHECK( f.coopTeamAttack == 0 );
+	lc_coop_choose_host( 1, 1, -1, "Pat", "" );
+	lc_coop_launch_fields( &f );
+	CHECK( f.coopTeamAttack == 0 );
+	lc_coop_choose_join( "10.0.0.1", "male", "", "Zed", "" );		/* a guest never passes it */
+	lc_coop_launch_fields( &f );
+	CHECK( !f.coopHost && f.coopTeamAttack == 0 );
 
 	lc_coop_choose_join( "192.168.1.20:29760", "Female", "seven_hazard", "Zed", "pw" );
 	CHECK( lc_coop_choice( ) == 2 );

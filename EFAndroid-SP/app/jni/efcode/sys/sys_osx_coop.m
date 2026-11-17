@@ -39,6 +39,11 @@ The Single Player card gets a "Co-op…" button. Its sheet has:
     when that is denied the broadcasts can't be sent and the list says where
     to allow it. Host has "Show this game on my network" (on by default; off:
     +set coop_lanVisible 0, the host then answers only direct Checks).
+  - Host's "Team attack: Off / Half / On" (Off by default): whether the two
+    players' shots, and the explosions the game puts down to a player (their
+    grenades, not a barrel they set off), hurt each other, at half or full
+    damage. Off puts nothing on the command line; Half and On add
+    +set coop_teamAttack 1 or 2. Only the host's game deals damage.
   - "Your name" (both sides): the player's name in co-op messages ("Hold Use
     to revive ..."), the coop_name cvar; it starts as this Mac's name. Join
     also has "Munro: Male / Female" for how player 2 looks on both screens
@@ -862,6 +867,8 @@ static BOOL coopHostBackground = YES;	// Host: "Keep playing in the background" 
 #define COOP_BACKGROUND_DEFAULT	@"CoopKeepPlayingInBackground"
 static BOOL coopHostLanVisible = YES;	// Host: "Show this game on my network" (coop_lanVisible)
 #define COOP_LAN_VISIBLE_DEFAULT	@"CoopShowOnNetwork"
+static int coopHostTeamAttack;		// Host: "Team attack" 0 Off, 1 Half, 2 On (coop_teamAttack)
+#define COOP_TEAM_ATTACK_DEFAULT	@"CoopTeamAttack"
 static NSString *coopJoinAddress;	// Connect: the host's "address:port"
 #define COOP_NAME_DEFAULT	@"CoopPlayerName"
 #define COOP_SEX_DEFAULT	@"CoopGuestMunro"		// @"male" / @"female"
@@ -1264,6 +1271,7 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	NSSegmentedControl *sexControl;
 	NSPopUpButton *lookPopup;		// "Character": Munro, then coop_characters.h (each item's representedObject: its id)
 	NSButton *showLanCheck;			// Host: "Show this game on my network"
+	NSSegmentedControl *teamAttackControl;	// Host: "Team attack" Off / Half / On
 	NSTableView *gamesTable;		// "Games on your network"
 	NSArray<NSDictionary *> *lanGames;	// its rows (CoopLanScan)
 	NSTextField *gamesStatus;
@@ -1359,6 +1367,14 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	}
 	[showLanCheck setToolTip: @"Friends on the same network see it under “Games on your network”. Off: only someone who "
 		@"types this Mac’s address finds it"];
+	teamAttackControl = [NSSegmentedControl segmentedControlWithLabels: @[ @"Off", @"Half", @"On" ]
+		trackingMode: NSSegmentSwitchTrackingSelectOne target: nil action: nil];
+	{
+		NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey: COOP_TEAM_ATTACK_DEFAULT];
+		[teamAttackControl setSelectedSegment: ( saved >= 0 && saved <= 2 ) ? saved : 0];
+	}
+	[teamAttackControl setToolTip: @"Whether you and player 2 can hurt each other with your shots and grenades: "
+		@"not at all, half the damage, or full damage"];
 	hostButton = [NSButton buttonWithTitle: @"Host" target: self action: @selector(host:)];
 	[hostButton setEnabled: canPlay];
 	[hostButton setToolTip: canPlay ? @"Play single player with co-op on" : @"Add the game files first"];
@@ -1368,6 +1384,8 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	[[hostPassword widthAnchor] constraintEqualToConstant: 160].active = YES;
 	col = CoopStack( @[ intro, list,
 		CoopStack( @[ VSP_Label( @"Password (optional)", [NSFont systemFontOfSize: 12], nil ), hostPassword ],
+			NSUserInterfaceLayoutOrientationHorizontal, 8 ),
+		CoopStack( @[ VSP_Label( @"Team attack", [NSFont systemFontOfSize: 12], nil ), teamAttackControl ],
 			NSUserInterfaceLayoutOrientationHorizontal, 8 ),
 		backgroundCheck, showLanCheck, _internetCheck, internetStatus, inviteButton,
 		note ], NSUserInterfaceLayoutOrientationVertical, 8 );
@@ -1930,11 +1948,16 @@ static NSString *CoopDescribe( NSDictionary *info )
 	[[NSUserDefaults standardUserDefaults] setBool: coopHostBackground forKey: COOP_BACKGROUND_DEFAULT];
 	coopHostLanVisible = [showLanCheck state] == NSControlStateValueOn;
 	[[NSUserDefaults standardUserDefaults] setBool: coopHostLanVisible forKey: COOP_LAN_VISIBLE_DEFAULT];
+	coopHostTeamAttack = (int)[teamAttackControl selectedSegment];
+	if( coopHostTeamAttack < 0 || coopHostTeamAttack > 2 )
+		coopHostTeamAttack = 0;
+	[[NSUserDefaults standardUserDefaults] setInteger: coopHostTeamAttack forKey: COOP_TEAM_ATTACK_DEFAULT];
 	[self takeName];
 	Sys_CoopSetLaunchPassword( [[hostPassword stringValue] UTF8String] );
-	LLog( @"Co-op: hosting (single player with sp_coop 1) as %@%@%@", coopPlayerName,
+	LLog( @"Co-op: hosting (single player with sp_coop 1) as %@%@%@%@", coopPlayerName,
 		[[hostPassword stringValue] length] ? @", with a password" : @"",
-		coopHostLanVisible ? @"" : @", not shown on the network" );
+		coopHostLanVisible ? @"" : @", not shown on the network",
+		coopHostTeamAttack == 2 ? @", team attack on" : coopHostTeamAttack == 1 ? @", team attack half" : @"" );
 	[l selectMode: 0];
 	[l play: nil];
 }
@@ -2157,6 +2180,8 @@ void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch )
 		[args appendFormat: @"+set sp_coop 1 +set coop_backgroundPlay %d ", coopHostBackground ? 1 : 0];
 		if( !coopHostLanVisible )
 			[args appendString: @"+set coop_lanVisible 0 "];
+		if( coopHostTeamAttack == 1 || coopHostTeamAttack == 2 )
+			[args appendFormat: @"+set coop_teamAttack %d ", coopHostTeamAttack];
 	}
 	else if( [coopJoinAddress length] )
 	{
