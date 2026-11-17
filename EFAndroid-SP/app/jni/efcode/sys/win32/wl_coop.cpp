@@ -429,7 +429,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	const char *mu = lc_store_get( st, LC_KEY_COOP_MUNRO ); SendMessageW( mg, SEG_SETSEL, mu && !strcmp( mu, "female" ) ? 1 : 0, 0 );
 	setTooltip( d.hwnd, mg, "How player 2 looks on both screens. The story still speaks to the host\xE2\x80\x99s Munro." );
 	jy += 22 + 10;
-	/* Character: Munro, then the crew and the Hazard Team (coop_characters.h, via lc_coop_character) */
+	/* Character: Munro, then the crew, the Hazard Team and Experimental (coop_characters.h, via lc_coop_character) */
 	d.label( tx, jy + 3, 66, 16, "Character", 12, 400, R_TEXT, DT_SINGLELINE );
 	HWND lk = d.combo( tx + 66, jy, 220, CoopDlg::ID_LOOK, 12 );
 	{
@@ -441,7 +441,8 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 			lc_coop_character( i, &id, &name, &g );
 			if ( strcmp( g, group ) ) {
 				group = g;
-				SendMessageW( lk, CB_ADDSTRING, 0, (LPARAM)( !strcmp( g, "crew" ) ? L"\u2014 Voyager crew \u2014" : L"\u2014 Hazard Team \u2014" ) );
+				SendMessageW( lk, CB_ADDSTRING, 0, (LPARAM)( !strcmp( g, "crew" ) ? L"\u2014 Voyager crew \u2014" :
+					!strcmp( g, "hazard" ) ? L"\u2014 Hazard Team \u2014" : L"\u2014 Experimental \u2014" ) );
 				d.lookIds.push_back( "\x01" );
 			}
 			SendMessageW( lk, CB_ADDSTRING, 0, (LPARAM)W( fmt( "    %s", name ) ).c_str( ) );

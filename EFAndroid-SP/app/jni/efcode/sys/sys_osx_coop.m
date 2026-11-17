@@ -1405,8 +1405,8 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	return VSP_Group( @"HOST", row );
 }
 
-// "Character": the default Munro (the sex above), then the crew and the Hazard Team from the
-// game's own paks (coop_characters.h); remembered as the id
+// "Character": the default Munro (the sex above), then the crew, the Hazard Team and the
+// experimental Holomatch models from the game's own paks (coop_characters.h); remembered as the id
 - (NSPopUpButton *)lookPopup
 {
 	NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey: COOP_LOOK_DEFAULT];
@@ -1427,7 +1427,8 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 		{
 			group = c->group;
 			[menu addItem: [NSMenuItem separatorItem]];
-			item = [[NSMenuItem alloc] initWithTitle: !strcmp( group, "crew" ) ? @"Voyager crew" : @"Hazard Team"
+			item = [[NSMenuItem alloc] initWithTitle: !strcmp( group, "crew" ) ? @"Voyager crew" :
+				!strcmp( group, "hazard" ) ? @"Hazard Team" : @"Experimental"
 				action: NULL keyEquivalent: @""];
 			[item setEnabled: NO];
 			[menu addItem: item];

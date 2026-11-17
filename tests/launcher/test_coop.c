@@ -397,6 +397,8 @@ static void test_characters( void )
 	CHECK( lc_coop_character_count( ) > 10 );
 	CHECK( lc_coop_character( 0, &id, &name, &group ) && !strcmp( id, "janeway" ) && !strcmp( group, "crew" ) );
 	CHECK( !lc_coop_character( lc_coop_character_count( ), &id, &name, &group ) );
+	CHECK( lc_coop_character_valid( "gowron" ) );		/* the experimental Holomatch model, last */
+	CHECK( lc_coop_character( lc_coop_character_count( ) - 1, &id, &name, &group ) && !strcmp( id, "gowron" ) && !strcmp( group, "experimental" ) );
 	CHECK( lc_coop_character_valid( "telsia" ) && !lc_coop_character_valid( "" ) && !lc_coop_character_valid( NULL ) && !lc_coop_character_valid( "../x" ) );
 	/* the launch arguments carry it after the sex, as the Mac's */
 	memset( &o, 0, sizeof( o ) );

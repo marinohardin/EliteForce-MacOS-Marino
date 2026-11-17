@@ -102,7 +102,7 @@ void lc_coop_check_paks( lc_coop_query *q, const char *dataFolder );
 
 /* ---- player 2's character (efgame/src/game/coop_characters.h, the table the game checks) ---- */
 int lc_coop_character_count( void );
-/* i-th character: id (what coop_look carries), name (for people), group ("crew" or "hazard");
+/* i-th character: id (what coop_look carries), name (for people), group ("crew", "hazard" or "experimental");
    0 when i is out of range */
 int lc_coop_character( int i, const char **id, const char **name, const char **group );
 /* 1 when id is one of them ("" and NULL are Munro: 0) */
