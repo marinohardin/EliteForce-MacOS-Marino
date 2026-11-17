@@ -13,7 +13,7 @@
 // "position shift" and "instant weapons" modules): keep a short history of positions, shift the
 // other players back to the shooter's time for the weapon's traces only, and cap how far back. This
 // is our own code for the single-player game; the shooter is only player 2, player 1's shots (the
-// host's own) are not shifted. Player 2's projectiles start at the view time instead (see
+// host's own) are not shifted. Player 2's projectiles catch up to the view time instead (see
 // LC_ShiftMissiles), and the spread of its scavenger rifle and tetrion shots is drawn from a
 // sequence the guest's cgame repeats (COOP_SeedShot), so the guest can show them as it fires.
 //
@@ -312,12 +312,20 @@ Player 2's projectiles
 
 The guest draws a projectile of player 2 from the moment it fires (coop_predict.cpp), flying from the
 host time its screen showed then (the shot's view time). The host's own projectile starts when the
-command arrives, a round trip later on the guest's screen; it is started as if fired at the view
-time instead (its first frame's move traces the whole way from the muzzle, so nothing is skipped),
-and the guest's drawn one hands over to it where they meet. At most coop_lagcomp_max back, as for
-the traces. Player 1 sees player 2's projectiles start that far along.
+command arrives, a round trip later on the guest's screen. It is owed that time, at most
+coop_lagcomp_max: it leaves player 2's muzzle on the host like any other shot (player 1 sees it fly
+from player 2's weapon), and is paid what it is owed at double speed along the same path, one frame's
+worth each frame (COOP_LagCatchUp: its start time moves back by the frame's length), so after as long as
+it was owed it flies exactly where it would if it had been fired at the view time. Each frame's move
+traces the whole way from where it was, so nothing is skipped.
+(Starting it at the view time at once put it that far along before player 1 ever saw it: up to 400
+ms of a scavenger rifle bolt is 600 units, so in most rooms the bolt hit the far wall in its first
+frame and player 1 saw no shot at all, only the impact.)
+s.time2 holds the start time it is owed (the view time) until it is paid; the guest's cgame draws it
+on that path (COOP_MissileLerp), as it was drawn before, so the guest sees nothing of the catching up.
 */
 static byte			lc_hadMissile[MAX_GENTITIES];	// player 2's projectiles that were there before this shot
+static int			lc_setTime[MAX_GENTITIES];		// the start time COOP_LagCatchUp gave it last
 
 static qboolean LC_P2Missile( const gentity_t *m, const gentity_t *shooter )
 {
@@ -353,12 +361,48 @@ static void LC_ShiftMissiles( gentity_t *shooter )
 		{
 			continue;		// (the arc welder's burst doesn't fly)
 		}
-		m->s.pos.trTime = viewTime;
+		m->s.time2 = viewTime;
+		lc_setTime[i] = m->s.pos.trTime;
 		if ( lc_debug->integer )
 		{
-			gi.Printf( "co-op lagcomp: player 2's projectile %d (weapon %d) started %d ms back\n", i, m->s.weapon,
+			gi.Printf( "co-op lagcomp: player 2's projectile %d (weapon %d) is owed %d ms\n", i, m->s.weapon,
 				level.time - viewTime );
 		}
+	}
+}
+
+/*
+COOP_LagCatchUp
+
+The start of each game frame, before anything moves: each of player 2's projectiles that is still
+owed time (s.time2) takes up to this frame's length of it, so this frame moves it two frames' worth.
+One the game started anew meanwhile (a bounce, a seeker turning) keeps its new path and is owed
+nothing more.
+*/
+void COOP_LagCatchUp( void )
+{
+	int msec = level.time - level.previousTime;
+
+	for ( int i = MAX_CLIENTS; i < globals.num_entities; i++ )
+	{
+		gentity_t *m = &g_entities[i];
+
+		if ( !m->inuse || !m->s.time2 || m->s.eType != ET_MISSILE )
+		{
+			continue;
+		}
+		if ( m->s.pos.trTime != lc_setTime[i] || ( m->s.pos.trType != TR_LINEAR && m->s.pos.trType != TR_GRAVITY ) )
+		{
+			m->s.time2 = 0;
+			continue;
+		}
+		int t = m->s.pos.trTime - ( msec > 0 ? msec : 0 );
+		if ( t <= m->s.time2 )
+		{
+			t = m->s.time2;
+			m->s.time2 = 0;		// paid: on the view time's path from now on
+		}
+		m->s.pos.trTime = lc_setTime[i] = t;
 	}
 }
 
