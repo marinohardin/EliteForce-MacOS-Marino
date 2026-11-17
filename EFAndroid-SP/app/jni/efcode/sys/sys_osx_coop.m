@@ -103,6 +103,9 @@ Test hooks (environment variables; the launcher's are in sys_osx_launcher.m):
                                 logged), then snapshot as above;
                                 VOYAGERSP_TEST_COOP_LAN=pick also clicks the
                                 first row and waits for its Check
+  VOYAGERSP_TEST_COOP_FOCUS=1   before the snapshot, move the focus from the
+                                host's address to the host's password (as a
+                                click into another field does)
   VOYAGERSP_TEST_COOP_SCAN_PORTS=<n>[,<n>...]  search these UDP ports instead
                                 of the co-op port (test hosts on other ports)
   VOYAGERSP_TEST_COOP_PORT=<n>  host on UDP port n instead of the co-op
@@ -926,6 +929,8 @@ static NSString *CoopMacName( void )
 - (void)stopSearching;
 - (void)pickRow: (NSInteger)row;
 - (NSString *)connectTitle;		// tests
+- (NSTextField *)hostPasswordField;	// tests
+- (NSString *)statusTitle;		// tests
 - (BOOL)canConnect;
 @end
 
@@ -1456,6 +1461,9 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	[_address setPlaceholderString: [NSString stringWithFormat: @"192.168.1.20, or address:port (default %d)", VSP_COOP_PORT]];
 	[_address setTarget: self];
 	[_address setAction: @selector(check:)];
+	// Return checks; leaving the field doesn't (it has the focus when the sheet opens, so the first
+	// click into another field would check an empty address), as on Windows and Linux
+	[[_address cell] setSendsActionOnEndEditing: NO];
 	[[_address widthAnchor] constraintGreaterThanOrEqualToConstant: 260].active = YES;
 	checkButton = [NSButton buttonWithTitle: @"Check" target: self action: @selector(check:)];
 	[checkButton setToolTip: @"Ask that address whether a co-op game runs there"];
@@ -2007,6 +2015,8 @@ static NSString *CoopDescribe( NSDictionary *info )
 }
 
 - (NSString *)connectTitle	{ return [connectButton title]; }
+- (NSTextField *)hostPasswordField	{ return hostPassword; }
+- (NSString *)statusTitle	{ return [resultTitle stringValue]; }
 - (BOOL)canConnect			{ return [connectButton isEnabled]; }
 
 @end
@@ -2063,6 +2073,12 @@ static NSString *CoopDescribe( NSDictionary *info )
 	finish = ^{
 		NSWindow *p = [c panel];
 		double hold = getenv( "VOYAGERSP_TEST_COOP_HOLD" ) ? atof( getenv( "VOYAGERSP_TEST_COOP_HOLD" ) ) : 0;
+		if( getenv( "VOYAGERSP_TEST_COOP_FOCUS" ) )
+		{
+			BOOL moved = [p makeFirstResponder: [c hostPasswordField]];
+			LLog( @"[test] co-op focus: %@ the host's password, status \"%@\"", moved ? @"moved to" : @"couldn't move to",
+				[c statusTitle] );
+		}
 		if( sheet )
 			VSP_SnapshotWindow( p, sheet );
 		LLog( @"[test] co-op sheet: window %ld, launcher window %ld, holding %.0f s", (long)[p windowNumber],
