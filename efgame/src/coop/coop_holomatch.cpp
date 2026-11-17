@@ -74,6 +74,7 @@ static const holoRule_t coop_holoRules[] =
 	{ "BOTH_STANDTOWALK1",	HM_LEGS_WALK,	HM_TORSO_STAND },
 	{ "BOTH_CRAWLBACK1",	HM_LEGS_WALKCR,	HM_TORSO_STAND,	qtrue },
 	{ "BOTH_CROUCH1WALK",	HM_LEGS_WALKCR,	HM_TORSO_STAND },
+	{ "BOTH_RUNINJURED1",	HM_LEGS_RUN,	HM_TORSO_STAND },	// (a limping run, not lying "INJURED")
 	// getting up from the ground or a seat: crouched
 	{ "TOSTAND",			HM_LEGS_IDLECR,	HM_TORSO_STAND },
 	{ "GETUP",				HM_LEGS_IDLECR,	HM_TORSO_STAND },
@@ -142,11 +143,22 @@ static void COOP_HoloMap( void )
 
 	for ( int i = 0; i < MAX_ANIMATIONS; i++ )
 	{
-		const char	*name = animTable[i].name;
+		coop_holoLegs[i] = HM_LEGS_IDLE;
+		coop_holoTorso[i] = HM_TORSO_STAND;
+		coop_holoReverse[i] = 0;
+	}
+	// (animTable isn't in animation order: each entry carries its number)
+	for ( int t = 0; t < MAX_ANIMATIONS && animTable[t].name; t++ )
+	{
+		const char	*name = animTable[t].name;
+		int			i = animTable[t].id;
 		int			legs = HM_LEGS_IDLE, torso = HM_TORSO_STAND;
 
-		coop_holoReverse[i] = 0;
-		for ( int r = 0; name && r < (int)( sizeof( coop_holoRules ) / sizeof( coop_holoRules[0] ) ); r++ )
+		if ( i < 0 || i >= MAX_ANIMATIONS )
+		{
+			continue;
+		}
+		for ( int r = 0; r < (int)( sizeof( coop_holoRules ) / sizeof( coop_holoRules[0] ) ); r++ )
 		{
 			if ( strstr( name, coop_holoRules[r].text ) )
 			{
