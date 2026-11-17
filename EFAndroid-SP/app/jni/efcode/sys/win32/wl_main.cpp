@@ -259,7 +259,7 @@ struct Launcher : Wnd {
 		int by = y + chh - 11 - 22;
 		if ( lc_coop_ui_enabled( ) ) {
 			button( MX + 14, by, 72, 22, "Co-op\xE2\x80\xA6", IDC_COOP, false, 12 );
-			setTooltip( hwnd, ctl( IDC_COOP ), "Play the campaign with a friend: host a co-op game, or check for one to join (experimental)" );
+			setTooltip( hwnd, ctl( IDC_COOP ), "Play the campaign with a friend: host a co-op game, or check for one to join" );
 		}
 		button( MX + ( cw + 10 ) + 14, by, 76, 22, "Browse\xE2\x80\xA6", IDC_BROWSE, false, 12 );
 		setTooltip( hwnd, ctl( IDC_BROWSE ), "See the games on your network and the internet, and join one" );

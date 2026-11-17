@@ -38,7 +38,6 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 	/* heading */
 	QHBoxLayout *hd = new QHBoxLayout;
 	hd->addWidget( label( "Co-op", 17, QFont::Bold ) );
-	hd->addWidget( label( "EXPERIMENTAL", 10, QFont::DemiBold, orange() ), 0, Qt::AlignBottom );
 	hd->addStretch( 1 );
 	root->addLayout( hd );
 	root->addSpacing( -px( 8 ) );

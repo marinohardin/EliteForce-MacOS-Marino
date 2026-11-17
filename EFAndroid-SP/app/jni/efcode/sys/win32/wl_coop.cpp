@@ -361,7 +361,6 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 		SetWindowPos( d.hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED );
 	}
 	d.label( 20, y, 70, 24, "Co-op", 17, 700, R_TEXT, DT_SINGLELINE );
-	d.label( 100, y + 6, 120, 14, "EXPERIMENTAL", 10, 600, R_ORANGE, DT_SINGLELINE );
 	y += 24 + 4;
 	d.label( 20, y, 520, 34, "Play the campaign with a friend. The host is player 1 and plays the story; the friend joins as player 2.", 12, 400, R_TEXT2 ); y += 36 + 6;
 	/* name */

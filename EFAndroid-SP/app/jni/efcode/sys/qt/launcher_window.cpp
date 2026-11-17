@@ -271,7 +271,7 @@ QWidget *LauncherWindow::buildCards()
 	const bool coop = lc_coop_ui_enabled() != 0;
 	if ( coop ) {
 		m_coopButton = button( QString::fromUtf8( "Co-op\xe2\x80\xa6" ),
-			"Play the campaign with a friend: host a co-op game, or check for one to join (experimental)" );
+			"Play the campaign with a friend: host a co-op game, or check for one to join" );
 		connect( m_coopButton, &QPushButton::clicked, this, [this]() { openCoop(); } );
 	}
 	m_browseButton = button( QString::fromUtf8( "Browse\xe2\x80\xa6" ),
