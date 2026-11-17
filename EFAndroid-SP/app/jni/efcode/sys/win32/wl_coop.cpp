@@ -111,12 +111,21 @@ struct CoopDlg : Wnd {
 		lc_coop_check_paks( &r->q, r->dataFolder );
 		if ( r->d->hwnd ) PostMessageW( r->d->hwnd, WM_QUERY, 0, (LPARAM)r ); else delete r;
 	}
+	/* Connect is enabled and the default button (accent border, Enter) only while a Check found a game. This window
+	   isn't a dialog class, so Enter arrives as IDOK (see onCommand) rather than through DM_SETDEFID. */
+	void setConnectable( bool on )
+	{
+		HWND c = ctl( ID_CONNECT );
+		EnableWindow( c, on );
+		SendMessageW( c, BM_SETSTYLE, on ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON, TRUE );
+		InvalidateRect( c, 0, TRUE );
+	}
 	void doCheck( )
 	{
 		if ( checking ) return;
 		str a = getText( ctl( ID_ADDR ) ); lc_trim( &a[0] ); a = a.c_str( );
 		checking = true; EnableWindow( ctl( ID_CHECK ), FALSE );
-		found = false; EnableWindow( ctl( ID_CONNECT ), FALSE ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" );
+		found = false; setConnectable( false ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" );
 		showResult( -1, R_TEXT, fmt( "Checking %s\xE2\x80\xA6", a.empty( ) ? "the address" : a.c_str( ) ), "", true );
 		QRes *r = new QRes; r->d = this; memset( &r->q, 0, sizeof r->q ); lc_strlcpy( r->q.address, a.c_str( ), sizeof r->q.address );
 		lc_strlcpy( r->dataFolder, dataFolder.c_str( ), sizeof r->dataFolder );
@@ -155,7 +164,7 @@ struct CoopDlg : Wnd {
 		} else if ( !strcmp( q.status, "bad" ) ) showResult( G_EXCL_CIRCLE, R_RED, "This address can\xE2\x80\x99t be used", q.error );
 		else showResult( G_X_CIRCLE, R_TEXT2, fmt( "No co-op game found at %s", q.address ),
 			q.error[0] ? str( q.error ) : str( "Nothing answered within 2 seconds. Check the address, that the host pressed Host and is running co-op, and that both PCs are on the same network." ) );
-		EnableWindow( ctl( ID_CONNECT ), found && canPlay );
+		setConnectable( found && canPlay );
 		setText( ctl( ID_CONNECT ), found && q.warning[0] ? "Join Anyway" : "Connect" );
 		setTooltip( hwnd, ctl( ID_CONNECT ), found ? fmt( "Join %s as player 2", foundAddr.c_str( ) ).c_str( ) : "Check the address first" );
 		delete r;
@@ -308,7 +317,7 @@ struct CoopDlg : Wnd {
 			if ( link[0] ) { copyToClipboard( hwnd, link ); setText( ctl( ID_INET ), fmt( "Copied %s. Your friend opens it (Elite Force with co-op, on Windows, Mac or Linux) to check your game and join.", link ) ); setRole( ctl( ID_INET ), R_TEXT2 ); lc_log( "Co-op: invite %s", link ); }
 			break; }
 		case ID_CHECK: doCheck( ); break;
-		case ID_ADDR: if ( code == EN_CHANGE && found ) { found = false; EnableWindow( ctl( ID_CONNECT ), FALSE ); setText( ctl( ID_CONNECT ), "Connect" ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" ); } break;
+		case ID_ADDR: if ( code == EN_CHANGE && found ) { found = false; setConnectable( false ); setText( ctl( ID_CONNECT ), "Connect" ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" ); } break;
 		case ID_LOOK:
 			if ( code == CBN_SELCHANGE ) {		/* a group heading isn't a choice: move on past it */
 				int row = (int)SendMessageW( ctl( ID_LOOK ), CB_GETCURSEL, 0, 0 );
@@ -322,7 +331,9 @@ struct CoopDlg : Wnd {
 		case ID_CONNECT: doConnect( ); break;
 		case ID_GAMES: if ( code == LBN_SELCHANGE ) pickGame( ); break;
 		case ID_GAMES_REFRESH: doScan( ); break;
-		case IDOK: if ( GetFocus( ) == ctl( ID_ADDR ) ) doCheck( ); break;
+		/* Enter: Connect when the Check found a game (any edit of the address since clears found), otherwise
+		   Check when the focus is in the host's address */
+		case IDOK: if ( found && canPlay ) doConnect( ); else if ( GetFocus( ) == ctl( ID_ADDR ) ) doCheck( ); break;
 		case IDCANCEL: coopNatRelease( ); end( IDCANCEL ); break;
 		}
 	}

@@ -12,9 +12,10 @@
 //   guest draw it from a sequence seeded with the shot's view time (COOP_SeedShot), so both agree.
 //   The host's temp entities of player 2's shots name it (otherEntityNum2) and are left out.
 // - projectiles (scavenger rifle, stasis weapon, grenade launcher, tetrion alt, quantum burst): drawn
-//   from the moment the guest fires. The host starts its own as if fired at the time the guest's
-//   screen showed (coop_lagcomp.cpp), so when it arrives it is about where the drawn one is; the drawn
-//   one hands over to it and the gap left (mostly where the muzzle is on each side) is eased out.
+//   from the moment the guest fires. The host's own is owed the time back to when the guest's screen
+//   showed (coop_lagcomp.cpp) and is drawn here on the path it flies once that is paid, so when it
+//   arrives it is about where the drawn one is; the drawn one hands over to it and the gap left
+//   (mostly where the muzzle is on each side) is eased out.
 //   Impacts and explosions stay the host's.
 // - the view weapon's firing animation: run from the guest's own shots instead of from player 2's
 //   torso animation, which the host sends a round trip later.
@@ -164,6 +165,17 @@ static qboolean CP_HostMissile( int num )
 	return g->inuse && g->s.eType == ET_MISSILE && g->owner && g->owner->s.number == COOP_ViewClientNum();
 }
 
+// the path a host projectile of player 2 is drawn on: while the host's game still owes it time
+// (coop_lagcomp.cpp, s.time2), the one it flies once that is paid, as if fired at the view time
+static void CP_HostPath( const gentity_t *g, trajectory_t *tr )
+{
+	*tr = g->s.pos;
+	if ( g->s.time2 && g->s.time2 < tr->trTime )
+	{
+		tr->trTime = g->s.time2;
+	}
+}
+
 // the host's projectile a drawn one hands over to: one of player 2's, of the same weapon and fire
 // mode, that came in after it was drawn and that no other took; the closest start time first, then
 // the closest direction (the stasis weapon fires three at once)
@@ -183,9 +195,15 @@ static int CP_FindHostMissile( const cpMissile_t *m )
 		{
 			continue;
 		}
-		VectorNormalize2( g->s.pos.trDelta, dir );
+		trajectory_t path;
+		CP_HostPath( g, &path );
+		if ( path.trTime < m->gent.s.pos.trTime - 50 )
+		{
+			continue;	// an earlier shot's, still in flight (a drawn one of that shot hit something first)
+		}
+		VectorNormalize2( path.trDelta, dir );
 		float	dot = DotProduct( dir, m->dir );
-		int		dt = abs( g->s.pos.trTime - m->gent.s.pos.trTime );
+		int		dt = abs( path.trTime - m->gent.s.pos.trTime );
 		if ( dot < 0.7f )
 		{
 			continue;
@@ -272,7 +290,9 @@ void COOP_AddPredictedMissiles( void )
 		num = CP_FindHostMissile( m );
 		if ( num >= 0 )
 		{
-			EvaluateTrajectory( &g_entities[num].s.pos, cg.time, hostPos );
+			trajectory_t path;
+			CP_HostPath( &g_entities[num], &path );
+			EvaluateTrajectory( &path, cg.time, hostPos );
 			VectorSubtract( pos, hostPos, cp_easeOffset[num] );
 			cp_easeStart[num] = cg.time;
 			cp_taken[num] = cp_firstSeen[num];
@@ -302,21 +322,46 @@ void COOP_AddPredictedMissiles( void )
 	}
 }
 
-// CG_Missile: a host projectile a drawn one handed over to starts where that one was
-void COOP_MissileLerp( centity_t *cent )
+/*
+COOP_MissileLerp
+
+CG_Missile on the guest: a host projectile of player 2 is drawn on the path it flies once the host's
+game has paid the time it owes it (CP_HostPath); one that would be past a wall there already is left
+out (the host's will reach that wall a moment later and explode). One a drawn one handed over to
+starts where that one was. qfalse: don't draw it.
+*/
+qboolean COOP_MissileLerp( centity_t *cent )
 {
 	if ( !COOP_IsReplica() || cent < cg_entities || cent >= cg_entities + MAX_GENTITIES )
 	{
-		return;
+		return qtrue;
 	}
 	int num = cent - cg_entities;
+
+	if ( CP_HostMissile( num ) && g_entities[num].s.time2 )
+	{
+		trajectory_t	path;
+		vec3_t			pos;
+		trace_t			tr;
+
+		CP_HostPath( &g_entities[num], &path );
+		EvaluateTrajectory( &path, cg.time, pos );
+		CG_Trace( &tr, cent->lerpOrigin, NULL, NULL, pos, COOP_ViewClientNum(), MASK_SHOT );
+		if ( tr.fraction < 1.0f || tr.startsolid )
+		{
+			return qfalse;
+		}
+		VectorCopy( pos, cent->lerpOrigin );
+	}
+
 	int age = cg.time - cp_easeStart[num];
 
 	if ( !cp_taken[num] || cp_taken[num] != cp_firstSeen[num] || age < 0 || age >= CP_EASE )
 	{
-		return;
+		return qtrue;
 	}
 	VectorMA( cent->lerpOrigin, 1.0f - (float)age / CP_EASE, cp_easeOffset[num], cent->lerpOrigin );
+	return qtrue;
 }
 
 /*

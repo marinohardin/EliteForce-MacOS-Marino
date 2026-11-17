@@ -124,6 +124,7 @@ Console:
 #define COOP_INPUT_STALE		500		// older guest input doesn't steer player 2
 #define COOP_INPUT_BACKUP		4		// commands per input packet
 #define COOP_CMD_QUEUE			3		// the host's queue of guest commands (one is applied per game frame)
+#define COOP_INPUT_REPEAT		5		// game frames (250 ms) in a row the newest command's movement is kept when none came
 
 // Replica frames: once a game frame the host's world as slots of bytes (the game's entity and
 // globals images, the configstrings, the newest server commands), sent as the changes against
@@ -980,6 +981,7 @@ static struct {
 	coopCmd_t			queue[COOP_CMD_QUEUE];	// not applied yet, oldest first
 	int					queued;
 	int					appliedSeq;		// the newest command the game applied (the frames' ackCmd)
+	int					starved;		// game frames in a row with no command waiting
 	int					heldButtons;	// buttons of commands dropped from a full queue
 	int					viewTime;		// the applied command's (CoopNet_GuestViewTime)
 
@@ -1049,6 +1051,7 @@ static void CoopHostDrop( int sock, const char *reason, qboolean tell )
 	coopHost.heldButtons = 0;
 	coopHost.queued = 0;
 	coopHost.appliedSeq = 0;
+	coopHost.starved = 0;
 	coopHost.viewTime = 0;
 	coopHost.textSeq = 0;
 	coopHost.textQueued = 0;
@@ -1159,6 +1162,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	coopHost.heldButtons = 0;
 	coopHost.queued = 0;
 	coopHost.appliedSeq = 0;
+	coopHost.starved = 0;
 	coopHost.viewTime = 0;
 	coopHost.textSeq = 0;
 	coopHost.textQueued = 0;
@@ -1381,7 +1385,11 @@ The game's co-op code, once a game frame on the host (through sp/sp_bridge.cpp):
 guest's next command. The guest makes one command per host frame it gets (each 50 ms
 of its play), so the game applies them one a frame, in order, and every replica frame
 says which was the last (ackCmd): the guest's prediction replays the ones after it.
-With none waiting this frame, player 2 stands with the newest command's angles. Returns
+With none waiting this frame (a command a little late, network jitter), player 2 keeps
+the newest command's angles and, for COOP_INPUT_REPEAT frames, its movement, without its
+buttons: a held crouch stays held (zeroed, player 2 stood up for a frame and its legs
+played the standing animation, a pop the guest saw on its own body) and a walk doesn't
+stall into the "sliding" standing legs; after that it stands still. Returns
 0 when there is no guest or its input is older than COOP_INPUT_STALE ms; player 2 then
 holds still (or, with no guest, follows player 1).
 =================
@@ -1404,12 +1412,14 @@ int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *for
 		coopHost.queued--;
 		coopHost.appliedSeq = c.seq;
 		coopHost.viewTime = c.viewTime;
+		coopHost.starved = 0;
 	}
 	else
 	{
 		c = coopHost.cmd;
 		c.buttons = 0;
-		c.forwardmove = c.rightmove = c.upmove = 0;
+		if ( ++coopHost.starved > COOP_INPUT_REPEAT )
+			c.forwardmove = c.rightmove = c.upmove = 0;
 	}
 	angles[0] = c.angles[0];
 	angles[1] = c.angles[1];

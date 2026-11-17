@@ -875,6 +875,7 @@ void COOP_RunFrame( void )
 		return;
 	}
 	coop_p2.levelFrames++;
+	COOP_LagCatchUp();		// player 2's projectiles still owed time (before anything moves)
 	COOP_PublishInfo();
 	if ( !coop_p2.haveP1StartArmor && g_entities[0].inuse && g_entities[0].client && g_entities[0].health > 0 )
 	{
