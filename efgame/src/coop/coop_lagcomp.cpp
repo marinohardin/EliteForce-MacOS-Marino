@@ -313,8 +313,8 @@ Player 2's projectiles
 The guest draws a projectile of player 2 from the moment it fires (coop_predict.cpp), flying from the
 host time its screen showed then (the shot's view time). The host's own projectile starts when the
 command arrives, a round trip later on the guest's screen. It is owed that time, at most
-coop_lagcomp_max: it leaves player 2's muzzle on the host like any other shot (player 1 sees it fly
-from player 2's weapon), and is paid what it is owed at double speed along the same path, one frame's
+coop_lagcomp_max: it leaves player 2's muzzle on the host like any other shot (by the eye, as
+player 1's own shots), and is paid what it is owed at double speed along the same path, one frame's
 worth each frame (COOP_LagCatchUp: its start time moves back by the frame's length), so after as long as
 it was owed it flies exactly where it would if it had been fired at the view time. Each frame's move
 traces the whole way from where it was, so nothing is skipped.

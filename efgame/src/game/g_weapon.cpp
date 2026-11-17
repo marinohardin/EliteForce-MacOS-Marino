@@ -2905,7 +2905,10 @@ void CalcMuzzlePoint( gentity_t *ent, vec3_t forward, vec3_t right, vec3_t up, v
 {
 	if((ent->client->ps.weapon != WP_BORG_ASSIMILATOR) && (!lead_in)) //&& ent->s.number != 0 
 	{//Not players or melee
-		if( ent->client )
+		// co-op player 2: the host only has the third-person model's gun, at the hip and well below
+		// the eye, so its shots would fly under the crosshair (and into ledges); fire from the eye
+		// like player 1's view weapon (and where player 2's own screen expects the shot)
+		if( ent->client && !( COOP_IsP2( ent ) && ent->s.weapon != WP_PHASER ) )
 		{
 			if ( ent->client->renderInfo.mPCalcTime >= level.time - FRAMETIME*2 )
 			{//Our muzz point was calced no more than 2 frames ago
