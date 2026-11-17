@@ -7387,6 +7387,9 @@ static void Q3_RemoveEnt( gentity_t *victim )
 	}
 	else
 	{
+		// as for clients above: nothing may find it by name in the 100 ms before it's freed (on
+		// _brig, a spawner the world script removed was still used and spawned its NPC)
+		victim->targetname = NULL;
 		victim->e_ThinkFunc = thinkF_G_FreeEntity;
 		victim->nextthink = level.time + 100;
 	}
