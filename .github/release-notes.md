@@ -1,4 +1,4 @@
-**Elite Force (Marino's Build) @VERSION@**. *Star Trek: Voyager – Elite Force*, single player, Holomatch multiplayer and experimental co-op. A native app for Apple Silicon Macs, plus experimental builds for Windows and Linux.
+**Elite Force (Marino's Build) @VERSION@**. *Star Trek: Voyager – Elite Force*, single player, Holomatch multiplayer and co-op. A native app for Apple Silicon Macs, plus experimental builds for Windows and Linux.
 
 > **No game data is included.** You need your own copy of the game (GOG, Steam, or CD + 1.2 patch).
 

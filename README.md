@@ -21,7 +21,7 @@ simplifying hosting servers compared to the original game.
 New in 1.4.0, both **experimental**:
 
 - **Co-op for the single-player campaign.** A friend joins your game as a second Hazard Team
-  member, on your network or over the internet. See [Co-op (experimental)](#co-op-experimental).
+  member, on your network or over the internet. See [Co-op](#co-op).
   Since 1.5.0 the Windows and Linux builds have it too.
 - **Windows and Linux (including Steam Deck) builds** of the same game, with their own
   launchers. See [Windows and Linux (experimental)](#windows-and-linux-experimental).
@@ -67,10 +67,10 @@ New in 1.4.0, both **experimental**:
   prediction on servers that offer it (see [cMod's game modules](#cmods-game-modules)).
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection, except when you use co-op.
-- **Co-op (experimental).** Play the single-player campaign with a friend: the
+- **Co-op.** Play the single-player campaign with a friend: the
   launcher's **Co-op…** button hosts a game or joins one, on your network or over the
   internet, with revives instead of instant death. See
-  [Co-op (experimental)](#co-op-experimental).
+  [Co-op](#co-op).
 - **Dedicated server.** **Host a Server** runs a standalone server with a status window
   (players with Kick, console, map and bot controls), **Play on This Mac**, and automatic
   router port opening (NAT-PMP / UPnP). See [Hosting a server](#hosting-a-server).
@@ -162,12 +162,12 @@ After a death, pressing Attack goes back to the save you loaded last, or to the 
 if one was made after that load (the original game always went back to the autosave, which could
 be on another map).
 
-## Co-op (experimental)
+## Co-op
 
 Play the single-player campaign with a friend. One computer **hosts**: it plays the story as
 usual, as player 1. The other **joins** as player 2, a second Hazard Team member in the host's
-game. Co-op is new and experimental. It is in the Mac app and, since 1.5.0, in the Windows and
-Linux builds too, with the same Co-op sheet (the steps below say "Mac"; on Windows it's your PC).
+game. It is in the Mac app and, since 1.5.0, in the Windows and Linux builds too, with the same
+Co-op sheet (the steps below say "Mac"; on Windows it's your PC).
 A Mac, a Windows PC and a Linux computer use the same co-op protocol, so they should be able to
 play together as long as they run the same version.
 
@@ -391,7 +391,7 @@ app copied), then drag the app to the Trash.
 
 There are also **experimental** builds for Windows and Linux, with the same engine, fixes and
 cMod game modules as the Mac app: single player, Holomatch and, since 1.5.0, co-op (the same
-**Co-op…** button and sheet; see [Co-op (experimental)](#co-op-experimental)). They've had little
+**Co-op…** button and sheet; see [Co-op](#co-op)). They've had little
 testing on real Windows PCs and Linux distributions so far, so please [report](#reporting-issues)
 what you find. Allow Elite Force through the Windows firewall (or open UDP 29760 on Linux) when you
 host a co-op game. On Linux, a firewall that is on (ufw, firewalld) may also drop the answers to the
@@ -528,9 +528,8 @@ Technical background on the port is in
 - The Mac app is Apple Silicon only.
 - **Holomatch is new.** Mac-to-Mac games over LAN and online are tested. The internet
   server browser depends on community master servers being online (see **Servers…**).
-- **Co-op is experimental.** Host and guest need the same app version and the same
-  single-player game files. It has been tested with two copies on one Mac, not yet between two
-  Macs, over the internet, or on Windows and Linux. See [Known limits](#known-limits) for the rest.
+- **Co-op:** host and guest need the same app version and the same single-player game files.
+  See [Known limits](#known-limits) for the rest.
 - **Windows and Linux are experimental.** The Windows build is unsigned (SmartScreen warning), and
   both have had little testing on real PCs and Linux distributions.
 - Lip sync uses a simpler mouth cycle when the OpenAL sound backend is selected.

@@ -1085,7 +1085,7 @@ attached; `C:1327-1343`). Sheet window, content width 560, title "Co-op",
 insets 18/20/20/20, vertical spacing 12 (4 after the heading, 18 after the Join
 group). Initial focus: the Join address field.
 
-1. Heading row: "Co-op" (17 pt bold) + "EXPERIMENTAL" (10 pt semibold, orange).
+1. Heading row: "Co-op" (17 pt bold).
 2. Intro (12 pt secondary, wrap 520): "Play the campaign with a friend. The host is player 1 and plays the story; the friend joins as player 2."
 3. **Name row** (`C:895-918`): "Your name" (12 pt) | text field width 220 | hint
    "up to 31 letters" (11 pt secondary). Initial: `CoopSafeName(saved

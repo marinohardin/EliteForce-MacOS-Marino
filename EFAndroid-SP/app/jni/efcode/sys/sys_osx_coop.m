@@ -1,6 +1,6 @@
 /*
 ===========================================================================
-macOS app bundle: single-player co-op in the launcher (experimental).
+macOS app bundle: single-player co-op in the launcher.
 
 This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 It is compiled with ARC, and only in EF_COOP builds (see the macOS
@@ -1552,7 +1552,6 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	NSStackView *root, *footer, *head, *middle;
 	NSView *document;
 	NSButton *cancel;
-	NSTextField *badge;
 
 	_panel = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 560, 420 )
 		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO];
@@ -1560,8 +1559,7 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	VSP_ApplyTestAppearance( _panel );
 	content = [_panel contentView];
 
-	badge = VSP_Label( @"EXPERIMENTAL", [NSFont systemFontOfSize: 10 weight: NSFontWeightSemibold], [NSColor systemOrangeColor] );
-	head = CoopStack( @[ VSP_Label( @"Co-op", [NSFont systemFontOfSize: 17 weight: NSFontWeightBold], nil ), badge ],
+	head = CoopStack( @[ VSP_Label( @"Co-op", [NSFont systemFontOfSize: 17 weight: NSFontWeightBold], nil ) ],
 		NSUserInterfaceLayoutOrientationHorizontal, 8 );
 	[head setAlignment: NSLayoutAttributeFirstBaseline];
 	cancel = [NSButton buttonWithTitle: @"Cancel" target: self action: @selector(cancel:)];
@@ -2159,7 +2157,7 @@ NSButton *VSP_CoopButton( id launcher )
 	b = [NSButton buttonWithTitle: @"Co-op…" target: target action: @selector(openCoop:)];
 	[b setControlSize: NSControlSizeSmall];
 	[b setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
-	[b setToolTip: @"Play the campaign with a friend: host a co-op game, or check for one to join (experimental)"];
+	[b setToolTip: @"Play the campaign with a friend: host a co-op game, or check for one to join"];
 
 	if( getenv( "VOYAGERSP_TEST_COOP_SHEET" ) || getenv( "VOYAGERSP_TEST_COOP_HOST" ) ||
 		getenv( "VOYAGERSP_TEST_COOP_QUERY" ) || getenv( "VOYAGERSP_TEST_COOP_INTERNET" ) || getenv( "VOYAGERSP_TEST_COOP_LAN" ) )
