@@ -315,8 +315,14 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 	connect( m_gamesRefresh, &QPushButton::clicked, this, &CoopDialog::doScan );
 	m_lanTimer = new QTimer( this );
 	m_lanTimer->setInterval( 5000 );
-	connect( m_lanTimer, &QTimer::timeout, this, &CoopDialog::doScan );
+	// 3 searches by itself (now, +5 s, +10 s), then only on Refresh, so the sheet stops changing
+	connect( m_lanTimer, &QTimer::timeout, this, [this]() {
+		if ( ++m_lanAutoScans >= 3 )
+			m_lanTimer->stop();
+		doScan();
+	} );
 	m_lanTimer->start();
+	m_lanAutoScans = 1;
 	QTimer::singleShot( 0, this, &CoopDialog::doScan );
 	showInternet();
 	m_address->setFocus();
@@ -570,7 +576,7 @@ void CoopDialog::doScan()
 		return;
 	m_scanning = true;
 	m_gamesRefresh->setEnabled( false );
-	if ( m_games->count() == 0 ) {
+	if ( !m_lanSearched ) {
 		m_gamesStatus->setText( QString::fromUtf8( "Looking for co-op games on your network\xe2\x80\xa6" ) );
 		setColor( m_gamesStatus, secondary() );
 	}
@@ -589,6 +595,7 @@ void CoopDialog::doScan()
 void CoopDialog::onScanned( const lc_coop_lan_result *r )
 {
 	m_scanning = false;
+	m_lanSearched = true;
 	m_gamesRefresh->setEnabled( true );
 	const QString selAddr = m_games->currentItem() ? m_games->currentItem()->data( Qt::UserRole ).toString() : QString();
 	QSignalBlocker block( m_games );
@@ -632,8 +639,7 @@ void CoopDialog::onScanned( const lc_coop_lan_result *r )
 		m_gamesStatus->setText( U( r->error ) );
 		setColor( m_gamesStatus, orange() );
 	} else if ( r->count == 0 ) {
-		m_gamesStatus->setText( QString::fromUtf8( "None found yet. The host presses Host with \xe2\x80\x9cShow this game on my network\xe2\x80\x9d on; "
-			"or type the host\xe2\x80\x99s address below." ) );
+		m_gamesStatus->setText( QString::fromUtf8( "None found yet. Have host show, or enter address manually below." ) );
 		setColor( m_gamesStatus, secondary() );
 	} else {
 		m_gamesStatus->setText( "Click a game to check it." );

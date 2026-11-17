@@ -32,6 +32,8 @@ struct CoopDlg : Wnd {
 	/* Games on your network */
 	std::vector<lc_coop_lan_game> games;
 	bool scanning = false;
+	bool lanSearched = false;	// a search has finished: keep its text while the next one runs
+	int lanAutoScans = 0;		// searches the sheet ran by itself: 3 (now, +5 s, +10 s), then only Refresh
 	int contentH = 0, clientH = 0;			/* the sheet scrolls when the screen is shorter than it */
 	struct NatRes { CoopDlg *d; lc_nat_result r; char ip[64]; int ext, err; };
 	struct QRes { CoopDlg *d; lc_coop_query q; char dataFolder[LC_MAX_PATH]; };
@@ -175,11 +177,11 @@ struct CoopDlg : Wnd {
 		if ( !t ) { delete l; return; }
 		lc_thread_detach( t );
 		scanning = true; EnableWindow( ctl( ID_GAMES_REFRESH ), FALSE );
-		if ( games.empty( ) ) { setText( ctl( ID_GAMES_STATUS ), "Looking for co-op games on your network\xE2\x80\xA6" ); setRole( ctl( ID_GAMES_STATUS ), R_TEXT2 ); }
+		if ( !lanSearched ) { setText( ctl( ID_GAMES_STATUS ), "Looking for co-op games on your network\xE2\x80\xA6" ); setRole( ctl( ID_GAMES_STATUS ), R_TEXT2 ); }
 	}
 	void onLan( LRes *l )
 	{
-		scanning = false; EnableWindow( ctl( ID_GAMES_REFRESH ), TRUE );
+		scanning = false; lanSearched = true; EnableWindow( ctl( ID_GAMES_REFRESH ), TRUE );
 		HWND lb = ctl( ID_GAMES );
 		int sel = (int)SendMessageW( lb, LB_GETCURSEL, 0, 0 );
 		str selAddr = sel >= 0 && sel < (int)games.size( ) ? games[sel].address : "";
@@ -194,7 +196,7 @@ struct CoopDlg : Wnd {
 		SendMessageW( lb, LB_SETCURSEL, sel, 0 );
 		SendMessageW( lb, WM_SETREDRAW, TRUE, 0 ); InvalidateRect( lb, 0, TRUE );
 		if ( l->r.error[0] ) { setText( ctl( ID_GAMES_STATUS ), l->r.error ); setRole( ctl( ID_GAMES_STATUS ), R_ORANGE ); }
-		else if ( games.empty( ) ) { setText( ctl( ID_GAMES_STATUS ), "None found yet. The host presses Host with \xE2\x80\x9CShow this game on my network\xE2\x80\x9D on; or type the host\xE2\x80\x99s address below." ); setRole( ctl( ID_GAMES_STATUS ), R_TEXT2 ); }
+		else if ( games.empty( ) ) { setText( ctl( ID_GAMES_STATUS ), "None found yet. Have host show, or enter address manually below." ); setRole( ctl( ID_GAMES_STATUS ), R_TEXT2 ); }
 		else { setText( ctl( ID_GAMES_STATUS ), "Click a game to check it." ); setRole( ctl( ID_GAMES_STATUS ), R_TEXT2 ); }
 		delete l;
 	}
@@ -321,7 +323,7 @@ struct CoopDlg : Wnd {
 		}
 	}
 	bool onClose( ) override { coopNatRelease( ); end( IDCANCEL ); return true; }
-	void onTimer( int id ) override { if ( id == 2 ) { doScan( ); return; } if ( id == 1 && natState == 1 ) natFail( "Your router didn\xE2\x80\x99t answer the request to open the port: it may not support automatic port opening (NAT-PMP / UPnP), or has it turned off." ); }
+	void onTimer( int id ) override { if ( id == 2 ) { if ( ++lanAutoScans >= 3 ) KillTimer( hwnd, 2 ); doScan( ); return; } if ( id == 1 && natState == 1 ) natFail( "Your router didn\xE2\x80\x99t answer the request to open the port: it may not support automatic port opening (NAT-PMP / UPnP), or has it turned off." ); }
 	void onUser( UINT m, WPARAM, LPARAM l ) override { if ( m == WM_NAT ) onNat( (NatRes *)l ); else if ( m == WM_QUERY ) onQuery( (QRes *)l ); else if ( m == WM_LAN ) onLan( (LRes *)l ); }
 	void paintOver( HDC dc ) override
 	{
@@ -454,6 +456,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	d.button( W0 - 20 - 80, H - 20 - 28, 80, 28, "Cancel", IDCANCEL );
 	d.showInternet( );
 	d.doScan( );
+	d.lanAutoScans = 1;
 	SetTimer( d.hwnd, 2, 5000, 0 );
 	if ( !prefillAddress.empty( ) ) SetWindowTextW( ae, W( prefillAddress ).c_str( ) );
 	SetFocus( ae );

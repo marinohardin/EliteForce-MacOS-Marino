@@ -63,6 +63,8 @@ private:
 	QPushButton *m_gamesRefresh;
 	QTimer *m_lanTimer;
 	bool m_scanning = false;
+	bool m_lanSearched = false;	// a search has finished: keep its text while the next one runs
+	int m_lanAutoScans = 0;		// searches the sheet ran by itself (3, then only Refresh)
 	QLabel *m_internetStatus, *m_resultIcon, *m_resultTitle, *m_resultText, *m_connectNote, *m_lanLabel;
 	QPushButton *m_copyInvite, *m_check, *m_connect, *m_host;
 	Ui::Segmented *m_munro;

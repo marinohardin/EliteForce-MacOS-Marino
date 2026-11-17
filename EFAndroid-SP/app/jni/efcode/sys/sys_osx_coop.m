@@ -1268,7 +1268,9 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	NSArray<NSDictionary *> *lanGames;	// its rows (CoopLanScan)
 	NSTextField *gamesStatus;
 	NSButton *gamesRefresh;
-	NSTimer *lanTimer;				// a new search every 5 s while the sheet is open
+	NSTimer *lanTimer;				// a new search every 5 s, 3 searches in all (then Refresh)
+	int lanAutoScans;				// searches the sheet ran by itself
+	BOOL lanSearched;				// a search has finished: keep its text while the next one runs
 	BOOL scanning;
 }
 
@@ -1618,8 +1620,15 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	__weak VSPCoopController *weakSelf = self;
 
 	[self scan: nil];
+	lanAutoScans = 1;
 	[lanTimer invalidate];
-	lanTimer = [NSTimer timerWithTimeInterval: 5 repeats: YES block: ^( NSTimer *t ) { [weakSelf scan: nil]; }];
+	// 3 searches by itself (now, +5 s, +10 s), then only on Refresh, so the sheet stops changing
+	lanTimer = [NSTimer timerWithTimeInterval: 5 repeats: YES block: ^( NSTimer *t ) {
+		VSPCoopController *me = weakSelf;
+		if( !me || ++me->lanAutoScans >= 3 )
+			[t invalidate];
+		[me scan: nil];
+	}];
 	[[NSRunLoop currentRunLoop] addTimer: lanTimer forMode: NSRunLoopCommonModes];
 }
 
@@ -1643,7 +1652,7 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 		return;
 	scanning = YES;
 	[gamesRefresh setEnabled: NO];
-	if( ![lanGames count] )
+	if( !lanSearched )
 		[self showGamesStatus: @"Looking for co-op games on your network…" color: [NSColor secondaryLabelColor]];
 	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
 		NSDictionary *r = CoopLanScan( 1.5, dataFolder );
@@ -1657,6 +1666,7 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	NSString *selAddress = sel >= 0 && sel < (NSInteger)[lanGames count] ? lanGames[sel][@"address"] : nil;
 
 	scanning = NO;
+	lanSearched = YES;
 	[gamesRefresh setEnabled: YES];
 	lanGames = r[@"games"];
 	[gamesTable reloadData];
@@ -1667,8 +1677,7 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	if( r[@"error"] )
 		[self showGamesStatus: r[@"error"] color: [NSColor systemOrangeColor]];
 	else if( ![lanGames count] )
-		[self showGamesStatus: @"None found yet. The host presses Host with “Show this game on my network” on; or type the "
-			@"host’s address below." color: [NSColor secondaryLabelColor]];
+		[self showGamesStatus: @"None found yet. Have host show, or enter address manually below." color: [NSColor secondaryLabelColor]];
 	else
 		[self showGamesStatus: @"Click a game to check it." color: [NSColor secondaryLabelColor]];
 	if( getenv( "VOYAGERSP_TEST_COOP_LAN" ) )
