@@ -187,11 +187,11 @@ Click **Co-op…** on the launcher's Single Player card. The sheet has:
   **Show this game on my network** (on by default) lets friends on the same network find the game
   without typing anything; untick it and only someone who types your address finds it.
 - **Join**: **Games on your network** lists the co-op games hosted on your network (it looks
-  again every few seconds, or click **Refresh**): who hosts, the level, a lock when the host set a
-  password, and greyed with the reason when you can't join (another app version, different game
-  files, or a friend already plays player 2). Click a game to check it, or type the host's address
-  (such as `192.168.1.20`) and click **Check**, which asks whether a co-op game runs there and
-  shows what the host is playing. Then click **Connect**.
+  three times in the first 10 seconds; click **Refresh** to look again): who hosts, the level, a
+  lock when the host set a password, and greyed with the reason when you can't join (another app
+  version, different game files, or a friend already plays player 2). Click a game to check it,
+  or type the host's address (such as `192.168.1.20`) and click **Check**, which asks whether a
+  co-op game runs there and shows what the host is playing. Then click **Connect**.
   Choose whether you play a **male or female Munro** (how player 2 looks and sounds on both
   screens; the story still talks to the host's Munro), and optionally a **Character**: a member of
   Voyager's crew or the Hazard Team to look like instead (from the game's own files, so the host has
