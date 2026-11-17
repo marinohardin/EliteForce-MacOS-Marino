@@ -77,7 +77,9 @@ Configstrings and server commands travel as slots instead, so they need no relia
 - The guest makes one command for every host frame it takes in (the latest angles and moves, with
   every button pressed since the last one), numbers it, keeps it, and sends it at once with the few
   before it. The host queues them (at most 3; a full queue drops the oldest but keeps its buttons)
-  and applies one per game frame; with none waiting P2 stands with the newest angles. Each replica
+  and applies one per game frame; with none waiting (a late command) P2 keeps the newest angles
+  and, for 5 frames (250 ms) in a row, its moves (forward, side, up; no buttons), then stands still. Zeroed
+  moves made a crouching P2 stand up for a frame with standing legs, a pop the guest saw. Each replica
   frame names the last command applied (`ackCmd`).
 - The guest's snapshot stamps `cmdNum` with that ack and `ps.commandTime` with ack * 50 ms; command
   n has `serverTime` n * 50 ms, and the one being made now n * 50 + the time since the last one. So
