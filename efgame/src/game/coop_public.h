@@ -56,7 +56,7 @@
 #define COOP_WeaponCrandom()		crandom()
 #define COOP_WeaponIrand(a,b)		Q_irand( (a), (b) )
 #define COOP_AddPredictedMissiles()	((void)0)
-#define COOP_MissileLerp(c)			((void)0)
+#define COOP_MissileLerp(c)			qtrue
 #define COOP_PredictShot(c,a)		((void)0)
 #define COOP_SkipHostShot(s,e)		0
 #define COOP_NoteViewMuzzle(o)		((void)0)
@@ -166,7 +166,7 @@ void		COOP_NoteViewMuzzle( const vec3_t origin );
 // (CG_AddPacketEntities), the host's then eased onto the drawn path (CG_Missile), and the view
 // weapon's firing animation run from the guest's own shots (CG_AddViewWeapon)
 void		COOP_AddPredictedMissiles( void );
-void		COOP_MissileLerp( centity_t *cent );
+qboolean	COOP_MissileLerp( centity_t *cent );
 void		COOP_ViewWeaponFrames( clientInfo_t *ci, centity_t *cent, int *frame, int *oldframe, float *backlerp );
 // a replica's player events: the ones its own moves make come from its prediction, the rest from the host
 void		COOP_PredictingEvents( qboolean predicting );

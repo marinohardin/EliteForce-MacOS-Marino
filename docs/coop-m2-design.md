@@ -124,10 +124,15 @@ trace only, put them back.
   the dreadnought's primary, the stasis alt), `gi.trace` is swapped for one that moves the recorded
   entities to their interpolated place at `viewTime`, traces and restores them. At most `coop_lagcomp_max`
   (400 ms) back. Player 2 itself isn't moved. Player 1's shots never go through it.
-- Player 2's projectiles (1.5.0): a missile `FireWeapon` makes for player 2 starts its flight at
-  `viewTime` (its trajectory time is moved back, by at most `coop_lagcomp_max`), so it is where the
-  guest's own copy of it is; `G_RunMissile` traces from where it was to where it is now, so the first
-  host frame covers the skipped part. The random spread of player 2's shots (scavenger, tetrion) comes
+- Player 2's projectiles (1.5.0): a missile `FireWeapon` makes for player 2 is owed the time back to
+  `viewTime` (at most `coop_lagcomp_max`, kept in `entityState_t.time2`, unused before). It leaves player
+  2's muzzle on the host like any shot, and `COOP_LagCatchUp` (start of each host frame) moves its
+  trajectory time back by the frame's length until the debt is paid: the same path at double speed, after
+  which it is where the guest's own copy of it is. `G_RunMissile` traces from where it was to where it is
+  now, so nothing is skipped. The guest's cgame draws it on the paid path at once (`COOP_MissileLerp`;
+  one already past a wall there is left out), as before. (Until 1.5.0's fix it started at `viewTime` at
+  once: in a room smaller than the shot's lead, a scavenger bolt hit the far wall in its first frame and
+  player 1 never saw player 2's shot.) The random spread of player 2's shots (scavenger, tetrion) comes
   from a sequence seeded with `viewTime` (`COOP_SeedShot`), which the guest seeds the same way, so both
   copies fire the same spread.
 - Cvars (host): `coop_lagcomp` (1), `coop_lagcomp_max` (400), `coop_lagcomp_debug` (prints each shifted

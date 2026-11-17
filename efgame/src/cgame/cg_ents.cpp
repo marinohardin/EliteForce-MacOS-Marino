@@ -513,7 +513,10 @@ static void CG_Missile( centity_t *cent ) {
 	if ( !cent->gent->inuse )
 		return;
 #ifdef EF_COOP
-	COOP_MissileLerp( cent );	// a co-op guest's own projectile: eased onto the path it drew
+	if ( !COOP_MissileLerp( cent ) )	// a co-op guest: player 2's projectile on the path it drew
+	{
+		return;		// (already past a wall there)
+	}
 #endif
 
 	s1 = &cent->currentState;

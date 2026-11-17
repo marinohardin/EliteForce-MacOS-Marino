@@ -75,6 +75,7 @@ qboolean	COOP_GuestConnected( void );
 int			COOP_GuestViewTime( void );
 int			COOP_TakeShotTime( void );					// coop_predict.cpp
 void		COOP_LagRecord( void );						// coop_lagcomp.cpp
+void		COOP_LagCatchUp( void );					// coop_lagcomp.cpp
 void		COOP_TestTargetFrame( void );
 qboolean	COOP_TestTargetCommand( void );
 void		COOP_AIInit( void );						// coop_ai.cpp
