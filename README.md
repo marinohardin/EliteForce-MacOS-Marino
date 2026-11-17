@@ -202,9 +202,10 @@ Click **Co-op…** on the launcher's Single Player card. The sheet has:
   Choose whether you play a **male or female Munro** (how player 2 looks and sounds on both
   screens; the story still talks to the host's Munro), and optionally a **Character**: a member of
   Voyager's crew or the Hazard Team to look like instead (from the game's own files, so the host has
-  them too; the voice stays the Munro you chose). The **Experimental** group has Gowron, a
-  Holomatch player model: it has only Holomatch's few animations, so player 2 plays the nearest
-  one for each single-player move (no pain, ladder or crawl animations of its own). Type the
+  them too; the voice stays the Munro you chose). The **Experimental** group has 24
+  Holomatch player models (Gowron, Kahless, Sela, the Borg Queen, Captain Proton and more): they
+  have only Holomatch's few animations, so player 2 plays the nearest one for each single-player
+  move (no pain, ladder or crawl animations of its own). Type the
   password if the host set one.
 
 As the guest you see the host's world live from player 2's eyes: enemies, doors, lifts,
