@@ -25,7 +25,7 @@ Run:
 LAN parties: everyone picks Holomatch. One person hosts (Host a Server in the launcher,
 or Servers > Create Server in the game); the others find it under Servers > Local.
 
-Co-op (experimental): play the single-player campaign with a friend. Click Co-op... on the
+Co-op: play the single-player campaign with a friend. Click Co-op... on the
 Single Player card. One computer hosts (Host, then New Game or Load as usual); the friend clicks
 the game under "Games on your network" (or types the host's address and clicks Check), then
 Connect, and plays player 2. The host can untick "Show this game on my network" to stay off that

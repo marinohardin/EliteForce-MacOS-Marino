@@ -18,13 +18,14 @@ It also supports running a **dedicated multiplayer server**, with automatic port
 (NAT-PMP / UPnP) and a check that the server is listed on the internet, dramatically
 simplifying hosting servers compared to the original game.
 
-New in 1.4.0, both **experimental**:
+Also:
 
 - **Co-op for the single-player campaign.** A friend joins your game as a second Hazard Team
-  member, on your network or over the internet. See [Co-op](#co-op).
-  Since 1.5.0 the Windows and Linux builds have it too.
+  member, on your network or over the internet. See [Co-op](#co-op). New in 1.4.0 on the Mac;
+  since 1.5.0 the Windows and Linux builds have it too.
 - **Windows and Linux (including Steam Deck) builds** of the same game, with their own
-  launchers. See [Windows and Linux (experimental)](#windows-and-linux-experimental).
+  launchers (**experimental**, since 1.4.0). See
+  [Windows and Linux (experimental)](#windows-and-linux-experimental).
 
 
 **No game data is included.** You need your own copy of the retail game. (Even the icon is intentionally not using copyrighted symbols.)
