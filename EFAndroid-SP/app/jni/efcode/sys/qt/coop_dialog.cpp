@@ -202,7 +202,7 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 	r2->addStretch( 1 );
 	jl->addLayout( r2 );
 
-	/* player 2's character (coop_characters.h): Munro, or one of the crew / the Hazard Team */
+	/* player 2's character (coop_characters.h): Munro, or one of the crew / the Hazard Team / Experimental */
 	QHBoxLayout *lr = new QHBoxLayout;
 	lr->addWidget( label( "Character", 12 ) );
 	m_look = new QComboBox;
@@ -221,7 +221,8 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 			if ( strcmp( group, lastGroup ) ) {
 				lastGroup = group;
 				m_look->insertSeparator( m_look->count() );
-				m_look->addItem( QString::fromUtf8( strcmp( group, "crew" ) ? "Hazard Team" : "Voyager crew" ) );
+				m_look->addItem( QString::fromUtf8( !strcmp( group, "crew" ) ? "Voyager crew" :
+					!strcmp( group, "hazard" ) ? "Hazard Team" : "Experimental" ) );
 				if ( QStandardItemModel *m = qobject_cast<QStandardItemModel *>( m_look->model() ) )
 					if ( QStandardItem *it = m->item( m_look->count() - 1 ) )
 						it->setFlags( it->flags() & ~( Qt::ItemIsSelectable | Qt::ItemIsEnabled ) );

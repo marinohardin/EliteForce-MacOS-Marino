@@ -4,7 +4,8 @@
 // the launcher (coop_sex, sent when it connects): P2 then wears P1's outfit in that sex, with its
 // voice (pain, death, jump sounds). The guest may also choose a crew member or Hazard Team
 // member (coop_look, an id from game/coop_characters.h): P2 then wears that character's head,
-// body and skins, still with the chosen sex's voice and the player's box. The host takes only a
+// body and skins, still with the chosen sex's voice and the player's box. An "experimental"
+// character is a Holomatch model (coop_holomatch.cpp: its files and the animations it plays). The host takes only a
 // listed character whose files all come from its own pak0-pak2; anything else is the default
 // Munro. The guest's replica registers the same models from P2's replicated model names
 // (coop_replica.cpp), so both screens agree.
@@ -67,12 +68,20 @@ static void COOP_OtherSexModel( char *out, int size, const char *p1Model, qboole
 }
 
 // "dir/skin" (or "dir": the default skin) -> each file the cgame loads for that part, all from
-// pak0-pak2; part: "head", "upper" or "lower" (the legs also bring the animation file)
+// pak0-pak2; part: "head", "upper" or "lower" (the legs also bring the animation file). A
+// Holomatch model ("players2:dir/skin") is in models/players2/.
 static qboolean COOP_CorePart( const char *model, const char *part )
 {
 	char		dir[MAX_QPATH], skin[MAX_QPATH];
-	const char	*slash = strchr( model, '/' );
+	const char	*base = "models/players";
+	const char	*slash;
 
+	if ( !Q_stricmpn( model, COOP_HOLOMATCH_PREFIX, COOP_HOLOMATCH_PREFIX_LEN ) )
+	{
+		model += COOP_HOLOMATCH_PREFIX_LEN;
+		base = "models/players2";
+	}
+	slash = strchr( model, '/' );
 	Q_strncpyz( dir, model, sizeof( dir ) );
 	if ( slash && slash - model < (int)sizeof( dir ) )
 	{
@@ -83,12 +92,12 @@ static qboolean COOP_CorePart( const char *model, const char *part )
 	{
 		Q_strncpyz( skin, "default", sizeof( skin ) );
 	}
-	if ( !COOP_CorePakFile( va( "models/players/%s/%s.%s", dir, part, part[0] == 'h' ? "md3" : "mdr" ) ) ||
-		!COOP_CorePakFile( va( "models/players/%s/%s_%s.skin", dir, part, skin ) ) )
+	if ( !COOP_CorePakFile( va( "%s/%s/%s.%s", base, dir, part, part[0] == 'h' ? "md3" : "mdr" ) ) ||
+		!COOP_CorePakFile( va( "%s/%s/%s_%s.skin", base, dir, part, skin ) ) )
 	{
 		return qfalse;
 	}
-	return ( part[0] != 'l' || COOP_CorePakFile( va( "models/players/%s/animation.cfg", dir ) ) ) ? qtrue : qfalse;
+	return ( part[0] != 'l' || COOP_CorePakFile( va( "%s/%s/animation.cfg", base, dir ) ) ) ? qtrue : qfalse;
 }
 
 /*

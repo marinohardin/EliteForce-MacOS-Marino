@@ -168,6 +168,13 @@ void		COOP_NoteViewMuzzle( const vec3_t origin );
 void		COOP_AddPredictedMissiles( void );
 qboolean	COOP_MissileLerp( centity_t *cent );
 void		COOP_ViewWeaponFrames( clientInfo_t *ci, centity_t *cent, int *frame, int *oldframe, float *backlerp );
+// player 2 in a Holomatch model (coop_holomatch.cpp): its models registered from models/players2/
+// (CG_RegisterClientModelname; -1: not one, the cgame's own way), and the nearest Holomatch
+// animation's frames drawn in place of Munro's (CG_Player, after CG_PlayerAnimation)
+int			COOP_RegisterHoloModels( clientInfo_t *ci, const char *headModel, const char *headSkin,
+				const char *torsoModel, const char *torsoSkin, const char *legsModel, const char *legsSkin );
+void		COOP_HoloFrames( centity_t *cent, int *legsOld, int *legs, float *legsBackLerp,
+				int *torsoOld, int *torso, float *torsoBackLerp );
 // a replica's player events: the ones its own moves make come from its prediction, the rest from the host
 void		COOP_PredictingEvents( qboolean predicting );
 qboolean	COOP_SkipPlayerstateEvent( int event );
