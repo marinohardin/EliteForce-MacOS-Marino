@@ -1220,6 +1220,17 @@ void G_SpawnEntitiesFromString( const char *entityString ) {
 			// SV_Frame cadence masks this race; our bridge advances by variable wall-clock delta.
 			// (FIX B.1 — covers level-load entities; mid-level USE-triggered targets need FIX B.4.)
 			script_runner->nextthink = level.time + 500;
+			// _brig: the world script (_brig/remove) deletes the spawners of all but one randomly
+			// picked visitor; the player start's script (_brig/pickanumber) then spawns whoever is
+			// left. The level needs the first to finish (it waits 100 ms) before the player spawns,
+			// after the three settle frames at 1000/1100/1200. With the delay above it ran too late:
+			// all 14 visitors spawned, and each one's spawnscript (_brig/poormunro) restarted the
+			// opening camera shot about every 4 s. Starting it on the first frame finishes it at 1200.
+			// Its targets are plain spawners, not ICARUS entities, so the race above can't hit it.
+			if ( !Q_stricmp( level.mapname, "_brig" ) )
+			{
+				script_runner->nextthink = level.time;
+			}
 
 			if ( ICARUS_ValidEnt( script_runner ) )
 			{
