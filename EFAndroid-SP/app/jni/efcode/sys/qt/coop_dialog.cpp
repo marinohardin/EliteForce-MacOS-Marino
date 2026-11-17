@@ -304,7 +304,12 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 	resize( sh.width() + px( 20 ), qMin( sh.height() + px( 60 ), avail.height() - px( 60 ) ) );
 
 	connect( m_check, &QPushButton::clicked, this, &CoopDialog::doCheck );
-	connect( m_address, &QLineEdit::returnPressed, this, &CoopDialog::doCheck );
+	/* Return in the host's address checks it, unless a Check found a game there and it wasn't edited since: then
+	   Connect is the default button, and the dialog presses it (QLineEdit passes Return on to the dialog) */
+	connect( m_address, &QLineEdit::returnPressed, this, [this]() {
+		if ( !( m_connect->isDefault() && m_connect->isEnabled() ) )
+			doCheck();
+	} );
 	connect( m_address, &QLineEdit::textEdited, this, [this]() {
 		m_status.clear();
 		updateConnect();
@@ -503,6 +508,7 @@ void CoopDialog::updateConnect()
 {
 	const bool ok = m_status == "ok" && m_canPlay;
 	m_connect->setEnabled( ok );
+	m_connect->setDefault( ok );		/* Connect is the default button (Return) only while a Check found a game */
 	m_connect->setText( ok && !m_warning.isEmpty() ? "Join Anyway" : "Connect" );
 	m_connect->setToolTip( ok ? QString( "Join %1 as player 2" ).arg( m_foundAddress ) : QString( "Check the address first" ) );
 }

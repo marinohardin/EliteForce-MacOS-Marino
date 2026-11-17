@@ -932,6 +932,8 @@ static NSString *CoopMacName( void )
 - (NSTextField *)hostPasswordField;	// tests
 - (NSString *)statusTitle;		// tests
 - (BOOL)canConnect;
+- (BOOL)connectIsDefault;		// tests
+- (void)setConnectable: (BOOL)can;
 @end
 
 static NSStackView *CoopStack( NSArray<NSView *> *views, NSUserInterfaceLayoutOrientation o, CGFloat spacing )
@@ -1761,7 +1763,7 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 	[_address setStringValue: lanGames[row][@"address"]];
 	foundAddress = nil;		// (a new address: as if typed)
 	foundInfo = nil;
-	[connectButton setEnabled: NO];
+	[self setConnectable: NO];
 	[self check: nil];
 }
 
@@ -1876,6 +1878,13 @@ static NSString *CoopDescribe( NSDictionary *info )
 	return [lines componentsJoinedByString: @"\n"];
 }
 
+// Connect is enabled and the default button (blue, Return) only while a Check found a game
+- (void)setConnectable: (BOOL)can
+{
+	[connectButton setEnabled: can];
+	[connectButton setKeyEquivalent: can ? @"\r" : @""];
+}
+
 - (void)showResult: (NSDictionary *)r
 {
 	NSString *status = r[@"status"], *where = r[@"address"] ? r[@"address"] : @"";
@@ -1887,7 +1896,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 
 	foundAddress = found ? r[@"address"] : nil;
 	foundInfo = found ? info : nil;
-	[connectButton setEnabled: found && [_launcher canPlay]];
+	[self setConnectable: found && [_launcher canPlay]];
 	[connectButton setTitle: warning ? @"Join Anyway" : @"Connect"];
 	[connectButton setToolTip: found ? [NSString stringWithFormat: @"Join %@ as player 2", r[@"address"]] :
 		@"Check the address first"];
@@ -1975,9 +1984,19 @@ static NSString *CoopDescribe( NSDictionary *info )
 		return;
 	foundAddress = nil;
 	foundInfo = nil;
-	[connectButton setEnabled: NO];
+	[self setConnectable: NO];
 	[connectButton setTitle: @"Connect"];
 	[connectButton setToolTip: @"Check the address first"];
+}
+
+// Return in the host's address: Connect when the Check found a game at it and it hasn't been edited
+// since (Connect is the default button then), otherwise Check it (the field's action)
+- (BOOL)control: (NSControl *)control textView: (NSTextView *)textView doCommandBySelector: (SEL)command
+{
+	if( control != _address || command != @selector(insertNewline:) || !foundAddress || ![connectButton isEnabled] )
+		return NO;
+	[self connect: nil];
+	return YES;
 }
 
 - (void)connect: (id)sender
@@ -2018,6 +2037,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 - (NSTextField *)hostPasswordField	{ return hostPassword; }
 - (NSString *)statusTitle	{ return [resultTitle stringValue]; }
 - (BOOL)canConnect			{ return [connectButton isEnabled]; }
+- (BOOL)connectIsDefault	{ return [[connectButton keyEquivalent] isEqualToString: @"\r"]; }
 
 @end
 
@@ -2079,6 +2099,8 @@ static NSString *CoopDescribe( NSDictionary *info )
 			LLog( @"[test] co-op focus: %@ the host's password, status \"%@\"", moved ? @"moved to" : @"couldn't move to",
 				[c statusTitle] );
 		}
+		LLog( @"[test] co-op connect: %s, %s", [c canConnect] ? "enabled" : "disabled",
+			[c connectIsDefault] ? "default button" : "not default" );
 		if( sheet )
 			VSP_SnapshotWindow( p, sheet );
 		LLog( @"[test] co-op sheet: window %ld, launcher window %ld, holding %.0f s", (long)[p windowNumber],
