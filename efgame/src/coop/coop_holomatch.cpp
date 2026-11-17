@@ -1,7 +1,7 @@
 // coop_holomatch.cpp -- single-player co-op: player 2 in a Holomatch player model.
 //
 // coop_characters.h's "experimental" characters are Holomatch models (models/players2/<name>/ in
-// the game's pak0), named "players2:<name>/<skin>" in P2's renderInfo. Their files are read as
+// the game's pak0 or pak2), named "players2:<name>/<skin>" in P2's renderInfo. Their files are read as
 // they are: upper.mdr, lower.mdr, head.md3, the skins, and the Holomatch animation.cfg, a plain list
 // of 25 frame ranges in the Holomatch animation order (below) after a few keys (sex, soundpath).
 //
@@ -191,7 +191,7 @@ int COOP_HoloAnimFor( int anim, qboolean legs )
 The models: registered from models/players2/, their animation lists kept here
 ==============================================================================
 */
-#define COOP_MAX_HOLO_MODELS	4
+#define COOP_MAX_HOLO_MODELS	COOP_NUM_CHARACTERS	// at most every experimental character
 
 typedef struct
 {

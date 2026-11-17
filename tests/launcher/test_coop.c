@@ -113,7 +113,7 @@ static void test_choice( void )
 	lc_coop_choose_join( "host.example.com", "male", "janeway", "Zed", "" );		/* only 0-9 . : on the command line */
 	lc_coop_launch_fields( &f );
 	CHECK( !f.coopConnect && !f.coopSex && !f.coopLook );
-	lc_coop_choose_join( "10.0.0.1", "weird", "borgqueen", "A name that is far too long to be used as a name 123456789", "" );
+	lc_coop_choose_join( "10.0.0.1", "weird", "satan", "A name that is far too long to be used as a name 123456789", "" );
 	lc_coop_launch_fields( &f );
 	CHECK_STR( f.coopSex, "male" );
 	CHECK( !f.coopLook );							/* not one of coop_characters.h: Munro */
@@ -397,8 +397,8 @@ static void test_characters( void )
 	CHECK( lc_coop_character_count( ) > 10 );
 	CHECK( lc_coop_character( 0, &id, &name, &group ) && !strcmp( id, "janeway" ) && !strcmp( group, "crew" ) );
 	CHECK( !lc_coop_character( lc_coop_character_count( ), &id, &name, &group ) );
-	CHECK( lc_coop_character_valid( "gowron" ) );		/* the experimental Holomatch model, last */
-	CHECK( lc_coop_character( lc_coop_character_count( ) - 1, &id, &name, &group ) && !strcmp( id, "gowron" ) && !strcmp( group, "experimental" ) );
+	CHECK( lc_coop_character_valid( "gowron" ) && lc_coop_character_valid( "borg_janeway" ) );	/* experimental Holomatch models, last */
+	CHECK( lc_coop_character( lc_coop_character_count( ) - 1, &id, &name, &group ) && !strcmp( group, "experimental" ) );
 	CHECK( lc_coop_character_valid( "telsia" ) && !lc_coop_character_valid( "" ) && !lc_coop_character_valid( NULL ) && !lc_coop_character_valid( "../x" ) );
 	/* the launch arguments carry it after the sex, as the Mac's */
 	memset( &o, 0, sizeof( o ) );

@@ -12,7 +12,7 @@
 // sets), bots, and the disguises. Player 2 keeps
 // the player's box, eye height and hit box whichever it wears, and the voice of the chosen sex.
 //
-// "experimental": Holomatch player models (models/players2/<name>/ in pak0), named with the
+// "experimental": Holomatch player models (models/players2/<name>/ in pak0 or pak2), named with the
 // COOP_HOLOMATCH_PREFIX below. Their files are read as they are; a Holomatch model has only the
 // two dozen Holomatch animations, so player 2 plays the nearest of them for each single-player
 // animation (coop/coop_holomatch.cpp), with Munro's timing.
@@ -65,8 +65,39 @@ static const coopCharacter_t coop_characters[] =
 	{ "oviedo",			"Perfecto Oviedo",				"hazard",	"oviedo_h/default",		"hazard/default",		"hazard/default" },
 	{ "csatlos",		"Mitch Csatlos",				"hazard",	"oviedo_h/jaworski",	"hazard/default",		"hazard/default" },
 	{ "jaworski",		"Michael Jaworski",				"hazard",	"oviedo_h/csatlos",		"hazard/default",		"hazard/default" },
-	// experimental: Holomatch models
-	{ "gowron",			"Gowron",						"experimental",	"players2:gowron/default",	"players2:gowron/default",	"players2:gowron/default" },
+	// experimental: Holomatch models, grouped by species
+	// Klingons
+	{ "gowron",		"Gowron",						"experimental",	"players2:gowron/default",	"players2:gowron/default",	"players2:gowron/default" },
+	{ "kahless",		"Kahless",						"experimental",	"players2:kahless/default",	"players2:kahless/default",	"players2:kahless/default" },
+	{ "kehlyr",		"K'Ehleyr",						"experimental",	"players2:kehlyr/default",	"players2:kehlyr/default",	"players2:kehlyr/default" },
+	{ "katarah",		"Katarah",						"experimental",	"players2:katarah/default",	"players2:katarah/default",	"players2:katarah/default" },
+	// Romulans
+	{ "sela",			"Sela",							"experimental",	"players2:sela/default",	"players2:sela/default",	"players2:sela/default" },
+	{ "tolek",		"Tolek",						"experimental",	"players2:tolek/default",	"players2:tolek/default",	"players2:tolek/default" },
+	{ "tlar",			"T'Lar",						"experimental",	"players2:tlar/default",	"players2:tlar/default",	"players2:tlar/default" },
+	{ "seklom",		"Seklom",						"experimental",	"players2:seklom/default",	"players2:seklom/default",	"players2:seklom/default" },
+	// a Ferengi
+	{ "ferengi",		"Ferengi",						"experimental",	"players2:ferengi/default",	"players2:ferengi/default",	"players2:ferengi/default" },
+	// the Borg
+	{ "borgqueen",	"Borg Queen",					"experimental",	"players2:borgqueen/default",	"players2:borgqueen/default",	"players2:borgqueen/default" },
+	{ "1_of_12",		"One of Twelve",				"experimental",	"players2:1_of_12/default",	"players2:1_of_12/default",	"players2:1_of_12/default" },
+	{ "3_of_6",		"Three of Six",					"experimental",	"players2:3_of_6/default",	"players2:3_of_6/default",	"players2:3_of_6/default" },
+	{ "5_of_9",		"Five of Nine",					"experimental",	"players2:5_of_9/default",	"players2:5_of_9/default",	"players2:5_of_9/default" },
+	// assimilated crew
+	{ "borg_janeway",	"Borg Janeway",					"experimental",	"players2:borg-janeway/default",	"players2:borg-janeway/default",	"players2:borg-janeway/default" },
+	{ "borg_torres",	"Borg Torres",					"experimental",	"players2:borg-torres/default",	"players2:borg-torres/default",	"players2:borg-torres/default" },
+	{ "borg_tuvok",	"Borg Tuvok",					"experimental",	"players2:borg-tuvok/default",	"players2:borg-tuvok/default",	"players2:borg-tuvok/default" },
+	// the Captain Proton holodeck program
+	{ "proton",		"Captain Proton",				"experimental",	"players2:proton/default",	"players2:proton/default",	"players2:proton/default" },
+	{ "chaotica",		"Chaotica",						"experimental",	"players2:chaotica/default",	"players2:chaotica/default",	"players2:chaotica/default" },
+	{ "arachnia",		"Arachnia",						"experimental",	"players2:arachnia/default",	"players2:arachnia/default",	"players2:arachnia/default" },
+	{ "buster",		"Buster Kincaid",				"experimental",	"players2:buster/default",	"players2:buster/default",	"players2:buster/default" },
+	// Hirogen
+	{ "beta",			"Beta (Hirogen)",				"experimental",	"players2:beta/default",	"players2:beta/default",	"players2:beta/default" },
+	{ "gamma",		"Gamma (Hirogen)",				"experimental",	"players2:gamma/default",	"players2:gamma/default",	"players2:gamma/default" },
+	// holodeck characters
+	{ "desperado",	"Desperado",					"experimental",	"players2:desperado/default",	"players2:desperado/default",	"players2:desperado/default" },
+	{ "paladin",		"Paladin",						"experimental",	"players2:paladin/default",	"players2:paladin/default",	"players2:paladin/default" },
 };
 
 #define COOP_NUM_CHARACTERS		( (int)( sizeof( coop_characters ) / sizeof( coop_characters[0] ) ) )
