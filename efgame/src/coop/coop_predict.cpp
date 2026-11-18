@@ -487,8 +487,8 @@ The shot
 ==============================================================================
 */
 
-// where the host's game fires player 2's weapon from when it has no muzzle point of the model's
-// (CalcMuzzlePoint, g_weapon.cpp); the host mostly has one, a few units off this
+// where the host's game fires player 2's weapon from (CalcMuzzlePoint, g_weapon.cpp: by the eye,
+// not the model's gun, for all but the phaser)
 static void CP_HostMuzzle( const playerState_t *ps, int weapon, const vec3_t forward, const vec3_t right, vec3_t muzzle )
 {
 	VectorCopy( ps->origin, muzzle );
