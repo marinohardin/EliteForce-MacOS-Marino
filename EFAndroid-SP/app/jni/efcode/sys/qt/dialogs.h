@@ -43,6 +43,7 @@ private slots:
 	void doHost();
 	void doConnect();
 	void natToggled( bool on );
+	void startNat();
 	void copyInvite();
 	void doScan();
 	void pickGame( QListWidgetItem *item );

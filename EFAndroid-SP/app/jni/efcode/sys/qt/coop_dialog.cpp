@@ -343,6 +343,10 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 	m_lanTimer->start();
 	m_lanAutoScans = 1;
 	QTimer::singleShot( 0, this, &CoopDialog::doScan );
+	/* "Open the port on my router" is on by default (remembered when unticked): ask the router as the window
+	   opens; test runs only with a pretend router */
+	if ( lc_store_get_bool( st, LC_KEY_COOP_ROUTER, 1 ) && !( lc_test_env( "VOYAGERSP_TEST_BACKGROUND" ) && !lc_env( "VOYAGERSP_TEST_NAT" ) ) )
+		startNat();
 	showInternet();
 	m_address->setFocus();
 	if ( !address.isEmpty() ) {
@@ -404,11 +408,20 @@ void CoopDialog::showInternet()
 
 void CoopDialog::natToggled( bool on )
 {
-	if ( !on ) {
+	lc_store *st = lc_store_shared();
+	lc_store_set_int( st, LC_KEY_COOP_ROUTER, on ? 1 : 0 );
+	lc_store_save( st );
+	if ( on )
+		startNat();
+	else {
 		releaseNat();
 		showInternet();
-		return;
 	}
+}
+
+void CoopDialog::startNat()
+{
+	releaseNat();
 	m_natState = NatAsking;
 	m_natReason.clear();
 	m_natPublic.clear();

@@ -1102,7 +1102,7 @@ group). Initial focus: the Join address field.
    - "Password (optional)" (12 pt) + secure field width 160, placeholder "none"
    - "Team attack" (12 pt) + segmented control Off | Half | On, select one (like Join's Munro Male | Female; initial from `CoopTeamAttack`, default Off); tooltip "Whether you and player 2 can hurt each other with your shots and grenades: not at all, half the damage, or full damage"
    - checkbox "Keep playing in the background" (initial from `CoopKeepPlayingInBackground`, default on); tooltip "The game goes on while its window isn’t in front, e.g. while you click into a second copy on this Mac (keys and the mouse still go only to the window in front)"
-   - checkbox "Open the port on my router (for a friend on the internet)" (state mirrors the NAT mapping: on while asking or mapped)
+   - checkbox "Open the port on my router (for a friend on the internet)" (state mirrors the NAT mapping: on while asking or mapped). On by default: when the sheet opens and `CoopOpenRouterPort` (launcher store `coopopenrouterport`) is absent or on, it asks the router (not in test runs, unless `VOYAGERSP_TEST_NAT` pretends a router); ticking or unticking saves the setting
    - internet status (11 pt, wrap 400, selectable), see below
    - "Copy Invite" (small) — tooltip "Copy a stvef://coop/ link for your friend: opening it shows Co-op with your address filled in"; enabled iff an invite link exists and the router isn't being asked
    - note (11 pt secondary): "Co-op uses UDP port 29760. macOS may ask whether Elite Force can find devices on your local network: allow it. Player 2 follows you until your friend joins; then your friend plays player 2 and sees your game from player 2’s eyes."

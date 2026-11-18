@@ -872,6 +872,7 @@ static BOOL coopHostLanVisible = YES;	// Host: "Show this game on my network" (c
 #define COOP_LAN_VISIBLE_DEFAULT	@"CoopShowOnNetwork"
 static int coopHostTeamAttack;		// Host: "Team attack" 0 Off, 1 Half, 2 On (coop_teamAttack)
 #define COOP_TEAM_ATTACK_DEFAULT	@"CoopTeamAttack"
+#define COOP_ROUTER_DEFAULT	@"CoopOpenRouterPort"	// "Open the port on my router": on unless unticked
 static NSString *coopJoinAddress;	// Connect: the host's "address:port"
 #define COOP_NAME_DEFAULT	@"CoopPlayerName"
 #define COOP_SEX_DEFAULT	@"CoopGuestMunro"		// @"male" / @"female"
@@ -1400,6 +1401,14 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 		__weak VSPCoopController *weakSelf = self;
 		coopNatChanged = ^{ [weakSelf showInternet]; };
 	}
+	// on by default (and remembered when unticked): ask the router as the sheet opens (Cancel closes
+	// the port again); test runs only with a pretend router
+	{
+		id saved = [[NSUserDefaults standardUserDefaults] objectForKey: COOP_ROUTER_DEFAULT];
+		BOOL test = getenv( "VOYAGERSP_TEST_BACKGROUND" ) && !getenv( "VOYAGERSP_TEST_NAT" );
+		if( ( !saved || [saved boolValue] ) && !test )
+			CoopNatOpen();		// (does nothing while it's already asking or open)
+	}
 	[self showInternet];
 	row = CoopStack( @[ col, hostButton ], NSUserInterfaceLayoutOrientationHorizontal, 16 );
 	[row setAlignment: NSLayoutAttributeTop];
@@ -1804,6 +1813,9 @@ static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
 
 - (void)internet: (id)sender
 {
+	if( sender )
+		[[NSUserDefaults standardUserDefaults] setBool: [_internetCheck state] == NSControlStateValueOn
+			forKey: COOP_ROUTER_DEFAULT];
 	if( [_internetCheck state] == NSControlStateValueOn )
 		CoopNatOpen();
 	else

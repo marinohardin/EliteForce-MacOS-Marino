@@ -34,8 +34,8 @@ game under "Games on your network" (or types the host's address and clicks Check
 and plays player 2. The host can untick "Show this game on my network" to stay off that list.
 Both need the same version of Elite Force (Marino's Build) and the game's own pak0.pk3-pak2.pk3;
 a Mac or Linux player of the same version should be able to join too. Co-op uses UDP port 29760:
-allow access when Windows Defender Firewall asks on the host. For a friend on the internet, tick
-"Open the port on my router" and send them the Copy Invite link. Co-op hasn't been tested on
+allow access when Windows Defender Firewall asks on the host. For a friend on the internet,
+"Open the port on my router" (on by default) opens it, then send them the Copy Invite link. Co-op hasn't been tested on
 Windows yet.
 
 Without the launcher (shortcuts, scripts):
