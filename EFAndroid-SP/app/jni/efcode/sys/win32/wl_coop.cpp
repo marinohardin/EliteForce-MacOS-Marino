@@ -78,6 +78,12 @@ struct CoopDlg : Wnd {
 	void routerToggle( )
 	{
 		bool on = SendMessageW( ctl( ID_ROUTER ), BM_GETCHECK, 0, 0 ) == BST_CHECKED;
+		lc_store *st = lc_store_shared( ); lc_store_set_int( st, LC_KEY_COOP_ROUTER, on ); lc_store_save( st );
+		openRouter( on );
+	}
+	/* "Open the port on my router": the box's own state is natState (asking or mapped = ticked) */
+	void openRouter( bool on )
+	{
 		if ( on ) {
 			coopNatRelease( );
 			natState = 1; natWhy.clear( ); natPublic.clear( );
@@ -474,6 +480,9 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	EnableWindow( cn, FALSE ); setTooltip( d.hwnd, cn, "Check the address first" );
 	d.label( tx + 92, jy, W0 - 40 - 14 - 92 - 16, 46, "Connect starts single player and joins the host\xE2\x80\x99s game as player 2: you see it from player 2\xE2\x80\x99s eyes and play player 2 while the host plays the story.", 11, 400, R_TEXT2 );
 	d.button( W0 - 20 - 80, H - 20 - 28, 80, 28, "Cancel", IDCANCEL );
+	/* on by default (remembered when unticked): ask the router as the window opens; test runs only with a pretend router */
+	if ( lc_store_get_bool( st, LC_KEY_COOP_ROUTER, 1 ) && !( lc_test_env( "VOYAGERSP_TEST_BACKGROUND" ) && !lc_env( "VOYAGERSP_TEST_NAT" ) ) )
+		d.openRouter( true );
 	d.showInternet( );
 	d.doScan( );
 	d.lanAutoScans = 1;

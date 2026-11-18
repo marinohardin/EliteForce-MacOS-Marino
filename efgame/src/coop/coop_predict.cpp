@@ -432,6 +432,46 @@ static void CP_StartAttackAnim( int weapon )
 }
 
 /*
+COOP_ViewBobCycle
+
+CG_CalcViewValues on the guest. The host's pmove steps player 2's bobCycle by its speed each frame
+(PM_Footsteps); the guest's prediction runs pmove without an entity, which leaves PM_Footsteps out, so the
+bob the view and its weapon move by only changed with each host frame (20 a second, where player 1's
+changes every drawn frame). It is drawn moving from the host's previous bob to its newest over the time
+one host frame takes, a frame behind (which nobody sees in a bob; a step would be). A bob that goes
+back (the host restarts it at 0 when player 2 stands) is taken at once.
+*/
+float COOP_ViewBobCycle( const playerState_t *ps )
+{
+	static int		hostTime, arrived, from, to, span;
+
+	if ( !COOP_IsReplica() || !cg.snap )
+	{
+		return -1.0f;
+	}
+	const playerState_t	*host = &cg.snap->ps;
+
+	if ( host->commandTime != hostTime || cg.time < arrived )
+	{
+		int	dt = host->commandTime - hostTime;
+		int	d = ( host->bobCycle - to ) & 255;
+
+		from = ( dt <= 0 || dt > 200 || d >= 128 || !host->bobCycle ) ? host->bobCycle : to;
+		to = host->bobCycle;
+		span = ( dt > 0 && dt <= 200 ) ? dt : 50;
+		hostTime = host->commandTime;
+		arrived = cg.time;
+	}
+	float	f = (float)( cg.time - arrived ) / span;
+
+	if ( f > 1.0f )
+	{
+		f = 1.0f;
+	}
+	return fmodf( from + ( ( to - from ) & 255 ) * f, 256.0f );
+}
+
+/*
 COOP_ViewWeaponFrames
 
 CG_AddViewWeapon on the guest, after it mapped player 2's torso animation to the view weapon's frames:

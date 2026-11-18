@@ -237,8 +237,9 @@ autosave if one was made after that load (the same as in single player).
 Co-op uses **UDP port 29760**. On your home network nothing else is needed (allow it when macOS
 asks whether Elite Force may find devices on your local network). For a friend on the internet:
 
-- The host ticks **Open the port on my router** in the Host section. The app asks your router
-  (NAT-PMP / UPnP) to forward the port and shows your public address, or why the router said no.
+- **Open the port on my router** in the Host section is on by default (untick it for your own
+  network only; it stays unticked). The app asks your router (NAT-PMP / UPnP) to forward the port
+  and shows your public address, or why the router said no.
   If it can't, forward UDP 29760 to the host's Mac by hand, or use a private network like
   [Tailscale](https://tailscale.com).
 - **Copy Invite** copies an invite link (`stvef://coop/…`). Your friend opens it and the Co-op

@@ -33,8 +33,8 @@ list. Both need the same version of Elite Force (Marino's Build) and the game's 
 pak0.pk3-pak2.pk3; a Mac or Windows player of the same version should be able to join too. Co-op
 uses UDP port 29760: if the host runs a firewall (ufw, firewalld), allow UDP 29760; a firewall
 on the friend's computer may hide the host from "Games on your network" (typing the address
-still works). For a friend on the internet, tick "Open the port on my router" and send them the
-Copy Invite link. Co-op hasn't been tested on Linux yet.
+still works). For a friend on the internet, "Open the port on my router" (on by default) opens
+it, then send them the Copy Invite link. Co-op hasn't been tested on Linux yet.
 
 Without the launcher (Steam, scripts), the AppImage takes these options:
      --sp            single player

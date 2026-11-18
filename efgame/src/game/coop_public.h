@@ -168,6 +168,9 @@ void		COOP_NoteViewMuzzle( const vec3_t origin );
 void		COOP_AddPredictedMissiles( void );
 qboolean	COOP_MissileLerp( centity_t *cent );
 void		COOP_ViewWeaponFrames( clientInfo_t *ci, centity_t *cent, int *frame, int *oldframe, float *backlerp );
+// player 2's view bob on the guest (CG_CalcViewValues): its predicted moves don't step the bob (that
+// pmove has no entity), so it moves smoothly between the host's frames, one behind; -1 elsewhere
+float	COOP_ViewBobCycle( const playerState_t *ps );
 // player 2 in a Holomatch model (coop_holomatch.cpp): its models registered from models/players2/
 // (CG_RegisterClientModelname; -1: not one, the cgame's own way), and the nearest Holomatch
 // animation's frames drawn in place of Munro's (CG_Player, after CG_PlayerAnimation)

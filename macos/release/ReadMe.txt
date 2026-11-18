@@ -20,8 +20,8 @@ Co-op (EXPERIMENTAL, new in this version, Mac only): play the single-player camp
 friend. Click Co-op... on the launcher's Single Player card: one Mac clicks Host, the other types
 the host's address and clicks Check, then Connect, to join as player 2. Both need this same
 version and the game's own pak0.pk3-pak2.pk3 (other packs don't matter; a different Expansion
-Pack only gives a warning, "Join Anyway"). Co-op uses UDP port 29760; for a friend on the internet, tick
-"Open the port on my router" and send them the link from Copy Invite. Only the host saves. It is
+Pack only gives a warning, "Join Anyway"). Co-op uses UDP port 29760; for a friend on the internet,
+"Open the port on my router" (on by default) opens it, then send them the link from Copy Invite. Only the host saves. It is
 new and lightly tested: please report glitches on the GitHub page above.
 
 Cmd+W and the game window's close button now ask before quitting; Cmd+Q quits at once.
