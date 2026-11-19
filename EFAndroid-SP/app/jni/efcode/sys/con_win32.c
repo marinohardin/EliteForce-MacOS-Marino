@@ -295,7 +295,12 @@ static void CON_Show( void )
 	if( qconsole_pipe )
 		return;
 
-	GetConsoleScreenBufferInfo( qconsole_hout, &binfo );
+	// No console (the game started from Explorer or a shortcut has NULL std
+	// handles): binfo would stay uninitialized stack, and a negative
+	// srWindow.Right below would point the write past the end of the stack,
+	// which crashed the launcher's co-op Host in WriteConsoleOutput.
+	if( !GetConsoleScreenBufferInfo( qconsole_hout, &binfo ) )
+		return;
 
 	// if we're in the middle of printf, don't bother writing the buffer
 	if( !qconsole_drawinput )
@@ -452,7 +457,8 @@ void CON_Init( void )
 
 	FlushConsoleInputBuffer( qconsole_hin ); 
 
-	GetConsoleScreenBufferInfo( qconsole_hout, &info );
+	if( !GetConsoleScreenBufferInfo( qconsole_hout, &info ) )
+		info.wAttributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;	// no console
 	qconsole_attrib = info.wAttributes;
 	qconsole_backgroundAttrib = qconsole_attrib & (BACKGROUND_BLUE|BACKGROUND_GREEN|BACKGROUND_RED|BACKGROUND_INTENSITY);
 
