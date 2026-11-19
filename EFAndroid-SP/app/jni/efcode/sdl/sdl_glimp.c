@@ -38,8 +38,14 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #ifdef EF_DESKTOP
 // the window title names the mode the app was launched in
 #undef CLIENT_WINDOW_TITLE
+#if defined( __linux__ ) && !defined( __ANDROID__ )
+// a plain hyphen on Linux: the Steam Deck's desktop showed the em dash's UTF-8 as "\u00e2"
+#define CLIENT_WINDOW_TITLE ( ri.Cvar_VariableIntegerValue( "com_holomatch" ) ? \
+	"Elite Force - Holomatch" : "Elite Force - Single Player" )
+#else
 #define CLIENT_WINDOW_TITLE ( ri.Cvar_VariableIntegerValue( "com_holomatch" ) ? \
 	"Elite Force \u2014 Holomatch" : "Elite Force \u2014 Single Player" )
+#endif
 #endif
 
 typedef enum
