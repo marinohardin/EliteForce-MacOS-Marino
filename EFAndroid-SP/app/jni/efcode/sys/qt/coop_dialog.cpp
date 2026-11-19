@@ -21,11 +21,22 @@ int coopPort()
 	return p.isEmpty() ? LC_COOP_PORT : p.toInt();
 }
 
+/* The open sheet, for the router's answer. The mapping outlives the sheet (Host keeps it) and the sheet is a stack
+   local, so the worker's callback reaches the sheet only while it is open and only for its latest request. Never hold
+   g_natLock while calling lc_nat_release: that joins the worker, which may be waiting for the lock. */
+QMutex g_natLock;
+CoopDialog *g_natSheet = nullptr;
+int g_natGen = 0;
+
 }
 
 CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, const QString &dataFolder )
 	: QDialog( parent ), m_canPlay( canPlay ), m_dataFolder( dataFolder )
 {
+	{
+		QMutexLocker l( &g_natLock );
+		g_natSheet = this;
+	}
 	setWindowTitle( "Co-op" );
 	setModal( true );
 	const QString thisNoun = nounLc();
@@ -357,7 +368,10 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, c
 
 CoopDialog::~CoopDialog()
 {
-	/* the NAT mapping is released by Cancel / Connect; Host keeps it */
+	/* the NAT mapping is released by Cancel / Connect; Host keeps it, so its answer may still come: drop it from now on */
+	QMutexLocker l( &g_natLock );
+	if ( g_natSheet == this )
+		g_natSheet = nullptr;
 }
 
 /* ---- internet / NAT ------------------------------------------------------------------------------------------ */
@@ -425,9 +439,16 @@ void CoopDialog::startNat()
 	m_natState = NatAsking;
 	m_natReason.clear();
 	m_natPublic.clear();
+	int gen;
+	{
+		QMutexLocker l( &g_natLock );
+		gen = ++g_natGen;
+	}
 	m_nat = lc_nat_map_udp( coopPort(), []( lc_nat_result r, const char *ip, int ext, int err, void *u ) {
-		emit static_cast<CoopDialog *>( u )->natResultSignal( int( r ), U( ip ), ext, err );
-	}, this );
+		QMutexLocker l( &g_natLock );
+		if ( g_natSheet && int( intptr_t( u ) ) == g_natGen )
+			emit g_natSheet->natResultSignal( int( r ), U( ip ), ext, err );	/* queued: dropped if the sheet goes first */
+	}, reinterpret_cast<void *>( intptr_t( gen ) ) );
 	m_natTimer->start( 15000 );
 	showInternet();
 }
