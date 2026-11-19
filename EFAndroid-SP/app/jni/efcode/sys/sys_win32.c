@@ -656,14 +656,37 @@ DIRECTORY SCANNING
 ==============================================================
 */
 
-#define MAX_FOUND_FILES 0x1000
+/*
+The lists grow as needed (a BaseEF can hold thousands of .pk3 files: a fixed
+limit would leave some out, pak0.pk3 among them); only the returned copy
+lives in the zone, as before.
+*/
+typedef struct {
+	char	**list;
+	int		num, cap;
+} sysFileList_t;
+
+static void Sys_AddToFileList( sysFileList_t *l, const char *name )
+{
+	if ( l->num + 1 >= l->cap ) {
+		int		cap = l->cap ? l->cap * 2 : 256;
+		char	**list = realloc( l->list, cap * sizeof( *list ) );
+
+		if ( !list ) {
+			Com_Error( ERR_FATAL, "Sys_ListFiles: out of memory listing %d files", l->num );
+		}
+		l->list = list;
+		l->cap = cap;
+	}
+	l->list[ l->num++ ] = CopyString( name );
+}
 
 /*
 ==============
 Sys_ListFilteredFiles
 ==============
 */
-void Sys_ListFilteredFiles( const char *basedir, char *subdirs, char *filter, char **list, int *numfiles )
+static void Sys_ListFilteredFiles( const char *basedir, char *subdirs, char *filter, sysFileList_t *list )
 {
 	char		search[MAX_OSPATH], newsubdirs[MAX_OSPATH];
 #ifdef UNICODE
@@ -676,10 +699,6 @@ void Sys_ListFilteredFiles( const char *basedir, char *subdirs, char *filter, ch
 #else
 	struct _finddata_t findinfo;
 #endif
-
-	if ( *numfiles >= MAX_FOUND_FILES - 1 ) {
-		return;
-	}
 
 	if ( basedir[0] == '\0' ) {
 		return;
@@ -724,17 +743,13 @@ void Sys_ListFilteredFiles( const char *basedir, char *subdirs, char *filter, ch
 				else {
 					Com_sprintf( newsubdirs, sizeof(newsubdirs), "%s", findinfo_name);
 				}
-				Sys_ListFilteredFiles( basedir, newsubdirs, filter, list, numfiles );
+				Sys_ListFilteredFiles( basedir, newsubdirs, filter, list );
 			}
-		}
-		if ( *numfiles >= MAX_FOUND_FILES - 1 ) {
-			break;
 		}
 		Com_sprintf( filename, sizeof(filename), "%s\\%s", subdirs, findinfo_name );
 		if (!Com_FilterPath( filter, filename, qfalse ))
 			continue;
-		list[ *numfiles ] = CopyString( filename );
-		(*numfiles)++;
+		Sys_AddToFileList( list, filename );
 	}
 #ifdef UNICODE
 	while ( _wfindnext (findhandle, &findinfo) != -1 );
@@ -785,7 +800,7 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 #endif
 	int			nfiles;
 	char		**listCopy;
-	char		*list[MAX_FOUND_FILES];
+	sysFileList_t	list = { NULL, 0, 0 };
 #ifdef UNICODE
 	struct _wfinddata_t findinfo;
 #else
@@ -798,10 +813,8 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 
 	if (filter) {
 
-		nfiles = 0;
-		Sys_ListFilteredFiles( directory, "", filter, list, &nfiles );
-
-		list[ nfiles ] = 0;
+		Sys_ListFilteredFiles( directory, "", filter, &list );
+		nfiles = list.num;
 		*numfiles = nfiles;
 
 		if (!nfiles)
@@ -809,9 +822,10 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 
 		listCopy = Z_Malloc( ( nfiles + 1 ) * sizeof( *listCopy ) );
 		for ( i = 0 ; i < nfiles ; i++ ) {
-			listCopy[i] = list[i];
+			listCopy[i] = list.list[i];
 		}
 		listCopy[i] = NULL;
+		free( list.list );
 
 		return listCopy;
 	}
@@ -838,8 +852,6 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 	Com_sprintf( search, sizeof(search), "%s\\*%s", directory, extension );
 
 	// search
-	nfiles = 0;
-
 #ifdef UNICODE
 	if ( !Sys_UTF8ToWide( wsearch, search, ARRAY_LEN( wsearch ) ) ) {
 		return NULL;
@@ -874,11 +886,7 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 					continue; // didn't match
 				}
 			}
-			if ( nfiles == MAX_FOUND_FILES - 1 ) {
-				break;
-			}
-			list[ nfiles ] = CopyString( findinfo_name );
-			nfiles++;
+			Sys_AddToFileList( &list, findinfo_name );
 		}
 	}
 #ifdef UNICODE
@@ -887,22 +895,23 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 	while ( _findnext (findhandle, &findinfo) != -1 );
 #endif
 
-	list[ nfiles ] = 0;
-
 	_findclose (findhandle);
 
 	// return a copy of the list
+	nfiles = list.num;
 	*numfiles = nfiles;
 
 	if ( !nfiles ) {
+		free( list.list );
 		return NULL;
 	}
 
 	listCopy = Z_Malloc( ( nfiles + 1 ) * sizeof( *listCopy ) );
 	for ( i = 0 ; i < nfiles ; i++ ) {
-		listCopy[i] = list[i];
+		listCopy[i] = list.list[i];
 	}
 	listCopy[i] = NULL;
+	free( list.list );
 
 	do {
 		flag = 0;
@@ -1211,8 +1220,10 @@ void Sys_PlatformInit( void )
 		timerResolution = 0;
 #endif
 
-	// increase maximum open files
-	if ( _getmaxstdio() < 2048 ) {
+	// increase maximum open files: every loaded .pk3 stays open, and a
+	// BaseEF can hold thousands of them (8192 is the most the UCRT allows,
+	// the older msvcrt.dll stops at 2048)
+	if ( _getmaxstdio() < 8192 && _setmaxstdio( 8192 ) == -1 && _getmaxstdio() < 2048 ) {
 		_setmaxstdio( 2048 );
 	}
 }

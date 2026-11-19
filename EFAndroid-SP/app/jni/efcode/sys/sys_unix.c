@@ -393,24 +393,61 @@ DIRECTORY SCANNING
 ==============================================================
 */
 
-#define MAX_FOUND_FILES 0x1000
+/*
+The lists grow as needed (a BaseEF can hold thousands of .pk3 files: a fixed
+limit would leave some out, pak0.pk3 among them); only the returned copy
+lives in the zone, as before.
+*/
+typedef struct {
+	char	**list;
+	int		num, cap;
+} sysFileList_t;
+
+static void Sys_AddToFileList( sysFileList_t *l, const char *name )
+{
+	if ( l->num + 1 >= l->cap ) {
+		int		cap = l->cap ? l->cap * 2 : 256;
+		char	**list = realloc( l->list, cap * sizeof( *list ) );
+
+		if ( !list ) {
+			Com_Error( ERR_FATAL, "Sys_ListFiles: out of memory listing %d files", l->num );
+		}
+		l->list = list;
+		l->cap = cap;
+	}
+	l->list[ l->num++ ] = CopyString( name );
+}
+
+// the zone copy Sys_ListFiles returns (NULL when empty); frees l's array
+static char **Sys_FinishFileList( sysFileList_t *l, int *numfiles )
+{
+	char	**listCopy = NULL;
+	int		i;
+
+	*numfiles = l->num;
+	if ( l->num ) {
+		listCopy = Z_Malloc( ( l->num + 1 ) * sizeof( *listCopy ) );
+		for ( i = 0 ; i < l->num ; i++ ) {
+			listCopy[i] = l->list[i];
+		}
+		listCopy[i] = NULL;
+	}
+	free( l->list );
+	return listCopy;
+}
 
 /*
 ==================
 Sys_ListFilteredFiles
 ==================
 */
-void Sys_ListFilteredFiles( const char *basedir, char *subdirs, char *filter, char **list, int *numfiles )
+static void Sys_ListFilteredFiles( const char *basedir, char *subdirs, char *filter, sysFileList_t *list )
 {
 	char          search[MAX_OSPATH], newsubdirs[MAX_OSPATH];
 	char          filename[MAX_OSPATH];
 	DIR           *fdir;
 	struct dirent *d;
 	struct stat   st;
-
-	if ( *numfiles >= MAX_FOUND_FILES - 1 ) {
-		return;
-	}
 
 	if ( basedir[0] == '\0' ) {
 		return;
@@ -440,17 +477,13 @@ void Sys_ListFilteredFiles( const char *basedir, char *subdirs, char *filter, ch
 				else {
 					Com_sprintf( newsubdirs, sizeof(newsubdirs), "%s", d->d_name);
 				}
-				Sys_ListFilteredFiles( basedir, newsubdirs, filter, list, numfiles );
+				Sys_ListFilteredFiles( basedir, newsubdirs, filter, list );
 			}
-		}
-		if ( *numfiles >= MAX_FOUND_FILES - 1 ) {
-			break;
 		}
 		Com_sprintf( filename, sizeof(filename), "%s/%s", subdirs, d->d_name );
 		if (!Com_FilterPath( filter, filename, qfalse ))
 			continue;
-		list[ *numfiles ] = CopyString( filename );
-		(*numfiles)++;
+		Sys_AddToFileList( list, filename );
 	}
 
 	closedir(fdir);
@@ -467,32 +500,14 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 	DIR           *fdir;
 	qboolean      dironly = wantsubs;
 	char          search[MAX_OSPATH];
-	int           nfiles;
-	char          **listCopy;
-	char          *list[MAX_FOUND_FILES];
-	int           i;
+	sysFileList_t list = { NULL, 0, 0 };
 	struct stat   st;
 
 	int           extLen;
 
 	if (filter) {
-
-		nfiles = 0;
-		Sys_ListFilteredFiles( directory, "", filter, list, &nfiles );
-
-		list[ nfiles ] = NULL;
-		*numfiles = nfiles;
-
-		if (!nfiles)
-			return NULL;
-
-		listCopy = Z_Malloc( ( nfiles + 1 ) * sizeof( *listCopy ) );
-		for ( i = 0 ; i < nfiles ; i++ ) {
-			listCopy[i] = list[i];
-		}
-		listCopy[i] = NULL;
-
-		return listCopy;
+		Sys_ListFilteredFiles( directory, "", filter, &list );
+		return Sys_FinishFileList( &list, numfiles );
 	}
 
 	if ( directory[0] == '\0' ) {
@@ -511,8 +526,6 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 	extLen = strlen( extension );
 
 	// search
-	nfiles = 0;
-
 	if ((fdir = opendir(directory)) == NULL) {
 		*numfiles = 0;
 		return NULL;
@@ -535,30 +548,13 @@ char **Sys_ListFiles( const char *directory, const char *extension, char *filter
 			}
 		}
 
-		if ( nfiles == MAX_FOUND_FILES - 1 )
-			break;
-		list[ nfiles ] = CopyString( d->d_name );
-		nfiles++;
+		Sys_AddToFileList( &list, d->d_name );
 	}
-
-	list[ nfiles ] = NULL;
 
 	closedir(fdir);
 
 	// return a copy of the list
-	*numfiles = nfiles;
-
-	if ( !nfiles ) {
-		return NULL;
-	}
-
-	listCopy = Z_Malloc( ( nfiles + 1 ) * sizeof( *listCopy ) );
-	for ( i = 0 ; i < nfiles ; i++ ) {
-		listCopy[i] = list[i];
-	}
-	listCopy[i] = NULL;
-
-	return listCopy;
+	return Sys_FinishFileList( &list, numfiles );
 }
 
 /*
@@ -1062,11 +1058,20 @@ void Sys_PlatformInit( void )
 	stdinIsATTY = isatty( STDIN_FILENO ) &&
 		!( term && ( !strcmp( term, "raw" ) || !strcmp( term, "dumb" ) ) );
 
-	// increase maximum open files
-	if ( getrlimit( RLIMIT_NOFILE, &nofile ) == 0 && nofile.rlim_cur < 2048 ) {
-		nofile.rlim_cur = MIN( 2048, nofile.rlim_max );
+	// increase maximum open files: every loaded .pk3 stays open, and a
+	// BaseEF can hold thousands of them (macOS refuses more than OPEN_MAX,
+	// so try smaller limits until one is accepted)
+	if ( getrlimit( RLIMIT_NOFILE, &nofile ) == 0 ) {
+		static const rlim_t wanted[] = { 0x10000, 10240, 2048 };
+		rlim_t	cur = nofile.rlim_cur;
+		int		i;
 
-		setrlimit( RLIMIT_NOFILE, &nofile );
+		for ( i = 0; i < ARRAY_LEN( wanted ); i++ ) {
+			nofile.rlim_cur = MIN( wanted[i], nofile.rlim_max );
+			if ( nofile.rlim_cur <= cur || setrlimit( RLIMIT_NOFILE, &nofile ) == 0 ) {
+				break;
+			}
+		}
 	}
 }
 
