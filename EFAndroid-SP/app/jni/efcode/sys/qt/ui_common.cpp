@@ -606,14 +606,15 @@ int alert( QWidget *parent, AlertStyle style, const QString &message, const QStr
 void async( QObject *ctx, std::function<void()> work, std::function<void()> done )
 {
 	QPointer<QObject> guard( ctx );
+	/* the worker posts to the application, never to ctx: ctx may be deleted on the UI thread between a check here and
+	   the post. The guard is then tested on the UI thread, where ctx is deleted. */
 	QThread *t = QThread::create( [work, done, guard]() {
 		work();
-		if ( guard ) {
-			QMetaObject::invokeMethod( guard.data(), [done, guard]() {
+		if ( QCoreApplication *app = QCoreApplication::instance() )
+			QMetaObject::invokeMethod( app, [done, guard]() {
 				if ( guard )
 					done();
 			}, Qt::QueuedConnection );
-		}
 	} );
 	QObject::connect( t, &QThread::finished, t, &QObject::deleteLater );
 	t->start();
