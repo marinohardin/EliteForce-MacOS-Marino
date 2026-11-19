@@ -14,6 +14,9 @@
 // health, armor and ammo as they are), so loading it brings both back standing. Player 2 goes to the
 // .coop file that way (coop_inventory.cpp); player 1 is put in the .sav as revived for the moment of
 // writing it and back down after (COOP_SaveP1Revived), so the game goes on as before the save.
+//
+// The reviver can stand on (in) the body, which is not solid; a revive there leaves the two inside
+// each other until they have walked apart, not solid to each other (COOP_SeparateFrame).
 
 #include "g_local.h"
 #include "g_functions.h"
@@ -54,10 +57,12 @@ static qboolean		coop_gameOver;
 static int			coop_downLastTime;
 static cvar_t		*coop_bleedout;
 static cvar_t		*coop_revivetime;
+static int			coop_separate = -1;	// a revive left this player inside someone: not solid until out (-1: none)
 
 void COOP_DownInit( void )
 {
 	memset( coop_down, 0, sizeof( coop_down ) );
+	coop_separate = -1;
 	coop_gameOver = qfalse;
 	coop_downLastTime = 0;
 	coop_bleedout = gi.cvar( "coop_bleedout", "30", 0 );
@@ -405,6 +410,114 @@ int COOP_ReviveHealth( const gentity_t *ent )
 	return health < 1 ? 1 : health;
 }
 
+/*
+COOP_SeparateFrame
+
+The body isn't solid, so the reviver can stand right on it (in it); revived there, both would be
+solid inside each other and neither could move (crouching or jumping got them out only sometimes).
+So a revived player that is inside someone stays out of the way until they are apart: corpse contents
+(shots still hit it) and passing through people, and the partner it is inside is a corpse too for
+that time. The partner has to be as well: a guest predicts player 2's moves against the host's
+entities as they are solid there, so a solid player 1 would still hold player 2 on the guest's
+screen. Both are solid again as soon as the revived player is inside nobody, or when either of them
+goes down, dies or is hidden.
+*/
+// a player's box in the world
+static void COOP_AbsBox( const gentity_t *ent, vec3_t mins, vec3_t maxs )
+{
+	VectorAdd( ent->currentOrigin, ent->mins, mins );
+	VectorAdd( ent->currentOrigin, ent->maxs, maxs );
+}
+
+static qboolean COOP_BoxesOverlap( const gentity_t *a, const gentity_t *b )
+{
+	vec3_t amins, amaxs, bmins, bmaxs;
+
+	COOP_AbsBox( a, amins, amaxs );
+	COOP_AbsBox( b, bmins, bmaxs );
+	for ( int i = 0; i < 3; i++ )
+	{
+		// boxes that only touch don't hold each other
+		if ( amins[i] >= bmaxs[i] - 0.5f || bmins[i] >= amaxs[i] - 0.5f )
+		{
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+// idx is inside the partner, or inside someone solid (an NPC standing over the body)
+static qboolean COOP_InsideSomeone( int idx, qboolean *inPartner )
+{
+	gentity_t	*ent = COOP_DownPlayer( idx );
+	gentity_t	*pent = COOP_DownPlayer( idx ^ 1 );
+	trace_t		tr;
+
+	*inPartner = (qboolean)( pent && pent->inuse && pent->client && COOP_PlayerUp( idx ^ 1 ) && COOP_BoxesOverlap( ent, pent ) );
+	if ( *inPartner )
+	{
+		return qtrue;
+	}
+	gi.trace( &tr, ent->currentOrigin, ent->mins, ent->maxs, ent->currentOrigin, ent->s.number, CONTENTS_BODY );
+	return (qboolean)( tr.startsolid || tr.allsolid );
+}
+
+// solid again (player 2's contents stay the scripted scene's while one holds it: COOP_UpdatePassable)
+static void COOP_MakeSolid( int idx )
+{
+	gentity_t *ent = COOP_DownPlayer( idx );
+
+	if ( !ent || !ent->inuse || !COOP_PlayerUp( idx ) || ent->contents != CONTENTS_CORPSE || ( idx == 1 && coop_p2.passable ) )
+	{
+		return;	// down, dead, hidden or respawned since: that code set the contents
+	}
+	ent->contents = CONTENTS_BODY;
+	ent->clipmask = MASK_PLAYERSOLID;
+	gi.linkentity( ent );
+}
+
+static void COOP_StartSeparate( int idx )
+{
+	gentity_t	*ent = COOP_DownPlayer( idx );
+	gentity_t	*pent = COOP_DownPlayer( idx ^ 1 );
+	qboolean	inPartner;
+
+	if ( !COOP_InsideSomeone( idx, &inPartner ) )
+	{
+		return;
+	}
+	coop_separate = idx;
+	ent->contents = CONTENTS_CORPSE;
+	ent->clipmask = MASK_PLAYERSOLID & ~CONTENTS_BODY;
+	gi.linkentity( ent );
+	if ( inPartner && pent->contents == CONTENTS_BODY )
+	{
+		pent->contents = CONTENTS_CORPSE;
+		gi.linkentity( pent );
+	}
+	gi.Printf( "co-op: player %d was revived inside %s: not solid until they are apart\n", idx + 1,
+		inPartner ? ( idx ? "player 1" : "player 2" ) : "someone" );
+}
+
+static void COOP_SeparateFrame( void )
+{
+	int			idx = coop_separate;
+	qboolean	inPartner;
+
+	if ( idx < 0 )
+	{
+		return;
+	}
+	if ( COOP_PlayerUp( idx ) && COOP_InsideSomeone( idx, &inPartner ) )
+	{
+		return;
+	}
+	coop_separate = -1;
+	COOP_MakeSolid( 0 );
+	COOP_MakeSolid( 1 );
+	gi.Printf( "co-op: player %d is out: solid again\n", idx + 1 );
+}
+
 static void COOP_Revive( int idx )
 {
 	gentity_t	*ent = COOP_DownPlayer( idx );
@@ -425,6 +538,7 @@ static void COOP_Revive( int idx )
 		ent->flags = coop_p2.notarget ? ( ent->flags | FL_NOTARGET ) : ( ent->flags & ~FL_NOTARGET );	// (the cheat may have changed meanwhile)
 	}
 	ent->contents = CONTENTS_BODY;
+	ent->clipmask = MASK_PLAYERSOLID;
 	VectorCopy( playerMins, ent->mins );
 	VectorCopy( playerMaxs, ent->maxs );
 	cl->ps.pm_type = PM_NORMAL;
@@ -435,6 +549,7 @@ static void COOP_Revive( int idx )
 	COOP_Tell( idx, "" );
 	COOP_Tell( idx ^ 1, "" );
 	gi.Printf( "co-op: player %d revived (health %d)\n", idx + 1, ent->health );
+	COOP_StartSeparate( idx );
 }
 
 /*
@@ -454,6 +569,8 @@ static struct
 	qboolean	takedamage;
 	int			legsAnim, torsoAnim, legsAnimTimer, torsoAnimTimer, sLegsAnim, sTorsoAnim;
 	vec3_t		mins, maxs;		// a frozen player's box is empty (the load would put them in the floor)
+	qboolean	separating;		// up, but not solid while a revive's two players walk apart (COOP_SeparateFrame)
+	int			sepContents, sepClipmask;
 } coop_saveP1;
 
 void COOP_SaveP1Revived( qboolean revived )
@@ -463,6 +580,12 @@ void COOP_SaveP1Revived( qboolean revived )
 
 	if ( !revived )
 	{
+		if ( coop_saveP1.separating )
+		{
+			ent->contents = coop_saveP1.sepContents;
+			ent->clipmask = coop_saveP1.sepClipmask;
+			coop_saveP1.separating = qfalse;
+		}
 		if ( coop_saveP1.active && cl )
 		{
 			ent->health = coop_saveP1.health;
@@ -484,6 +607,19 @@ void COOP_SaveP1Revived( qboolean revived )
 		return;
 	}
 	coop_saveP1.active = qfalse;
+	coop_saveP1.separating = qfalse;
+	if ( coop_enabled && coop_separate >= 0 && !coop_down[0].down && cl )
+	{
+		// the load starts the co-op state afresh: player 1 must be written solid
+		coop_saveP1.separating = qtrue;
+		coop_saveP1.sepContents = ent->contents;
+		coop_saveP1.sepClipmask = ent->clipmask;
+		if ( ent->contents == CONTENTS_CORPSE )
+		{
+			ent->contents = CONTENTS_BODY;
+		}
+		ent->clipmask = MASK_PLAYERSOLID;
+	}
 	if ( !coop_enabled || !coop_down[0].down || !cl || coop_gameOver )
 	{
 		return;
@@ -644,6 +780,7 @@ void COOP_DownFrame( void )
 	{
 		return;
 	}
+	COOP_SeparateFrame();
 	elapsed = coop_downLastTime ? level.time - coop_downLastTime : 0;
 	coop_downLastTime = level.time;
 
