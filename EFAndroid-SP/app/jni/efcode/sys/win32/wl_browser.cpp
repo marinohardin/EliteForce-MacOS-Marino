@@ -105,12 +105,13 @@ struct BrowserDlg : Wnd {
 	}
 
 	/* ---------------- players panel (8.6) ---------------- */
-	struct StRes { BrowserDlg *d; str addr; int ok; lc_server_status st; };
+	/* detached workers hold the window, not the dialog: the dialog is a local of showBrowser and may be gone when they finish */
+	struct StRes { HWND hwnd; str addr; int ok; lc_server_status st; };
 	static void statusWorker( void *u )
 	{
 		StRes *r = (StRes *)u;
 		r->ok = lc_query_status( r->addr.c_str( ), &r->st );
-		if ( r->d->hwnd ) PostMessageW( r->d->hwnd, WM_STATUS, 0, (LPARAM)r );
+		if ( !IsWindow( r->hwnd ) || !PostMessageW( r->hwnd, WM_STATUS, 0, (LPARAM)r ) ) delete r;
 	}
 	void showPlayers( )
 	{
@@ -144,7 +145,7 @@ struct BrowserDlg : Wnd {
 		setText( pnote, "Asking the server\xE2\x80\xA6" ); showCtl( ID_PREFRESH, false ); setPlayers( );
 		if ( asking != r->info.address ) {
 			asking = r->info.address;
-			StRes *res = new StRes{ this, asking, 0, {} };
+			StRes *res = new StRes{ hwnd, asking, 0, {} };
 			lc_thread *t = lc_thread_start( statusWorker, res );
 			if ( t ) lc_thread_detach( t ); else { delete res; asking.clear( ); }
 		}
@@ -164,7 +165,7 @@ struct BrowserDlg : Wnd {
 	}
 	int ctlY = 0;
 	/* ---------------- 3D lookup ---------------- */
-	struct DRes { BrowserDlg *d; str map, url; int state; };	/* state: 1 found, 0 none, -1 error */
+	struct DRes { HWND hwnd; str map, url; int state; };	/* state: 1 found, 0 none, -1 error */
 	static void worker3D( void *u )
 	{
 		DRes *r = (DRes *)u;
@@ -174,7 +175,7 @@ struct BrowserDlg : Wnd {
 		if ( rc == LC_HTTP_OK && body ) { char out[512]; r->state = lc_efservers_parse_3d( body, out, sizeof out ) ? 1 : 0; if ( r->state ) r->url = out; }
 		else r->state = -1;
 		free( body );
-		if ( r->d->hwnd ) PostMessageW( r->d->hwnd, WM_3D, 0, (LPARAM)r );
+		if ( !IsWindow( r->hwnd ) || !PostMessageW( r->hwnd, WM_3D, 0, (LPARAM)r ) ) delete r;
 	}
 	void show3D( const str &map )
 	{
@@ -187,7 +188,7 @@ struct BrowserDlg : Wnd {
 		}
 		if ( checking3D == map || fail3D.count( map ) ) return;
 		checking3D = map;
-		DRes *r = new DRes{ this, map, "", 0 };
+		DRes *r = new DRes{ hwnd, map, "", 0 };
 		lc_thread *t = lc_thread_start( worker3D, r );
 		if ( t ) lc_thread_detach( t ); else { delete r; checking3D.clear( ); }
 	}
