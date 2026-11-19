@@ -15,6 +15,9 @@ namespace wl {
 
 static lc_nat *g_coopNat = 0;			/* process-wide: kept when Host is pressed (the game opens its socket on the same port) */
 static void coopNatRelease( ) { if ( g_coopNat ) { lc_nat_release( g_coopNat ); g_coopNat = 0; } }
+/* The open Co-op sheet, for g_coopNat's answers. Host keeps g_coopNat (and its callback) alive after the sheet,
+   a local of showCoopSheet, is gone: the callback only posts here, and only while the sheet is open. */
+static HWND volatile g_coopSheet = 0;
 
 struct CoopDlg : Wnd {
 	bool canPlay = false, playNow = false;
@@ -35,17 +38,18 @@ struct CoopDlg : Wnd {
 	bool lanSearched = false;	// a search has finished: keep its text while the next one runs
 	int lanAutoScans = 0;		// searches the sheet ran by itself: 3 (now, +5 s, +10 s), then only Refresh
 	int contentH = 0, clientH = 0;			/* the sheet scrolls when the screen is shorter than it */
-	struct NatRes { CoopDlg *d; lc_nat_result r; char ip[64]; int ext, err; };
-	struct QRes { CoopDlg *d; lc_coop_query q; char dataFolder[LC_MAX_PATH]; };
+	struct NatRes { lc_nat_result r; char ip[64]; int ext, err; };
+	struct QRes { HWND hwnd; lc_coop_query q; char dataFolder[LC_MAX_PATH]; };
 	struct LRes { HWND hwnd; lc_coop_lan_result r; char dataFolder[LC_MAX_PATH]; };
 	static const int WM_NAT = WM_APP + 40, WM_QUERY = WM_APP + 41, WM_LAN = WM_APP + 42;
 
 	static void natCb( lc_nat_result r, const char *ip, int ext, int err, void *u )
 	{
-		CoopDlg *d = (CoopDlg *)u;
-		NatRes *n = new NatRes{ d, r, "", ext, err };
+		(void)u;
+		HWND h = g_coopSheet;
+		NatRes *n = new NatRes{ r, "", ext, err };
 		if ( ip ) lc_strlcpy( n->ip, ip, sizeof n->ip );
-		if ( d->hwnd ) PostMessageW( d->hwnd, WM_NAT, 0, (LPARAM)n ); else delete n;
+		if ( !h || !PostMessageW( h, WM_NAT, 0, (LPARAM)n ) ) delete n;
 	}
 	void natFail( const str &why )
 	{
@@ -87,7 +91,8 @@ struct CoopDlg : Wnd {
 		if ( on ) {
 			coopNatRelease( );
 			natState = 1; natWhy.clear( ); natPublic.clear( );
-			g_coopNat = lc_nat_map_udp( LC_COOP_PORT, natCb, this );
+			g_coopSheet = hwnd;
+			g_coopNat = lc_nat_map_udp( LC_COOP_PORT, natCb, 0 );
 			SetTimer( hwnd, 1, 15000, 0 );
 			if ( !g_coopNat ) natFail( "The router didn\xE2\x80\x99t open the port (error 0)." );
 		} else {
@@ -115,7 +120,7 @@ struct CoopDlg : Wnd {
 		QRes *r = (QRes *)u;
 		lc_coop_query_run( r->q.address, 2.0, &r->q );
 		lc_coop_check_paks( &r->q, r->dataFolder );
-		if ( r->d->hwnd ) PostMessageW( r->d->hwnd, WM_QUERY, 0, (LPARAM)r ); else delete r;
+		if ( !IsWindow( r->hwnd ) || !PostMessageW( r->hwnd, WM_QUERY, 0, (LPARAM)r ) ) delete r;	/* the sheet may be gone (Host or Cancel during the Check) */
 	}
 	/* Connect is enabled and the default button (accent border, Enter) only while a Check found a game. This window
 	   isn't a dialog class, so Enter arrives as IDOK (see onCommand) rather than through DM_SETDEFID. */
@@ -133,7 +138,7 @@ struct CoopDlg : Wnd {
 		checking = true; EnableWindow( ctl( ID_CHECK ), FALSE );
 		found = false; setConnectable( false ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" );
 		showResult( -1, R_TEXT, fmt( "Checking %s\xE2\x80\xA6", a.empty( ) ? "the address" : a.c_str( ) ), "", true );
-		QRes *r = new QRes; r->d = this; memset( &r->q, 0, sizeof r->q ); lc_strlcpy( r->q.address, a.c_str( ), sizeof r->q.address );
+		QRes *r = new QRes; r->hwnd = hwnd; memset( &r->q, 0, sizeof r->q ); lc_strlcpy( r->q.address, a.c_str( ), sizeof r->q.address );
 		lc_strlcpy( r->dataFolder, dataFolder.c_str( ), sizeof r->dataFolder );
 		lc_thread *t = lc_thread_start( queryWorker, r );
 		if ( t ) lc_thread_detach( t ); else { delete r; checking = false; EnableWindow( ctl( ID_CHECK ), TRUE ); }
@@ -491,6 +496,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	SetFocus( ae );
 	if ( autoCheck ) PostMessageW( d.hwnd, WM_COMMAND, MAKEWPARAM( CoopDlg::ID_CHECK, BN_CLICKED ), (LPARAM)cb );
 	d.runModal( );
+	g_coopSheet = 0;
 	if ( playNow ) *playNow = d.playNow;
 }
 

@@ -76,6 +76,7 @@ void lc_log( const char *fmt, ... )
 	va_start( ap, fmt );
 	vsnprintf( line, sizeof( line ), fmt, ap );
 	va_end( ap );
+	line[ sizeof( line ) - 1 ] = '\0';	/* as in lc_snprintf: msvcrt may not terminate a truncated line */
 	if ( logSink )
 		logSink( line, logUser );
 	else

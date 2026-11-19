@@ -236,7 +236,7 @@ struct Launcher : Wnd {
 		label( 98, y + 16, 330, 30, "Elite Force", 24, 700, R_TEXT, DT_SINGLELINE );
 		label( 98, y + 46, 330, 17, "Choose how you want to play.", 13, 400, R_TEXT2, DT_SINGLELINE );
 		HWND gear = mkIconButton( hwnd, 620 - MX - 28, y + 17, 28, 26, IDC_GEAR, G_MORE, "More: About, Check for Updates\xE2\x80\xA6" );
-		(void)gear;
+		ids[IDC_GEAR] = gear;		/* gearMenu places the menu under it (ctl( IDC_GEAR )) */
 		/* update badge: built hidden */
 		gBadge = addGroup( 620 - MX - 28 - 8 - 260, y + 8, 260, 46, "", 9 );
 		groups[gBadge].kind = 1; groups[gBadge].visible = false;

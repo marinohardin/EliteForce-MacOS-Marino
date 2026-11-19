@@ -45,19 +45,19 @@ struct MastersDlg : Wnd {
 	int editing = -1; str editingWas;
 	bool dragging = false; int dragRow = -1; POINT dragStart = {};
 	enum { ID_LIST = 10, ID_ADD, ID_REMOVE, ID_UP, ID_DOWN, ID_CHECK, ID_RECOMMENDED, ID_ORIGINAL, ID_CAPTION, ID_EDIT };
-	struct Res { MastersDlg *d; str addr; int n; };
+	struct Res { HWND hwnd; str addr; int n; };	/* the HWND, not the sheet: the sheet may close before the answer */
 
 	static void worker( void *u )
 	{
 		Res *r = (Res *)u;
 		r->n = lc_query_master_count( r->addr.c_str( ) );
-		PostMessageW( r->d->hwnd, WM_APP + 20, 0, (LPARAM)r );
+		if ( !IsWindow( r->hwnd ) || !PostMessageW( r->hwnd, WM_APP + 20, 0, (LPARAM)r ) ) delete r;
 	}
 	void check( const str &m )
 	{
 		if ( m.empty( ) || checking.count( m ) ) return;
 		checking.insert( m ); answers.erase( m ); reloadRow( m );
-		Res *r = new Res{ this, m, 0 };
+		Res *r = new Res{ hwnd, m, 0 };
 		lc_thread *t = lc_thread_start( worker, r );
 		if ( t ) lc_thread_detach( t ); else { checking.erase( m ); delete r; }
 	}

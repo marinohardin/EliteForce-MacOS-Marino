@@ -469,11 +469,12 @@ struct SrvWin : Wnd {
 	void doKick( int row )
 	{
 		if ( !hasChild || row < 0 || row >= (int)plist.size( ) ) return;
-		const lc_srv_player &p = plist[row];
-		if ( !p.bot ) {
-			if ( Alert( hwnd, fmt( "Kick %s?", p.name ), "They're disconnected from the server, but can join again.", { "Kick", "Cancel" }, 1, 1 ) != 0 ) return;
+		/* copies: the Alert below pumps messages, and a status update can replace plist (freeing this row) meanwhile */
+		const str num = plist[row].num; const bool bot = plist[row].bot != 0; const str name = plist[row].name;
+		if ( !bot ) {
+			if ( Alert( hwnd, fmt( "Kick %s?", name.c_str( ) ), "They're disconnected from the server, but can join again.", { "Kick", "Cancel" }, 1, 1 ) != 0 ) return;
 		}
-		lc_srv_kick( srv, p.num );
+		lc_srv_kick( srv, num.c_str( ) );
 	}
 	void doMessage( )
 	{

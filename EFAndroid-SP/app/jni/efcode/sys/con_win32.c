@@ -560,15 +560,18 @@ char *CON_Input( void )
 		{
 			field_t f;
 
+			// complete in f itself: under UNICODE f was never filled, so completion ran
+			// strlen on stack garbage and wrote into it, and its result was dropped
+			Field_Clear( &f );
 #ifdef UNICODE
-			Sys_WideToUTF8( utf8line, qconsole_line, sizeof( utf8line ) );
+			Sys_WideToUTF8( f.buffer, qconsole_line, sizeof( f.buffer ) );
 #else
 			Q_strncpyz( f.buffer, qconsole_line,
 				sizeof( f.buffer ) );
 #endif
 			Field_AutoComplete( &f );
 #ifdef UNICODE
-			Sys_UTF8ToWide( qconsole_line, utf8line, ARRAY_LEN( qconsole_line ) );
+			Sys_UTF8ToWide( qconsole_line, f.buffer, ARRAY_LEN( qconsole_line ) );
 			qconsole_linelen = wcslen( qconsole_line );
 #else
 			Q_strncpyz( qconsole_line, f.buffer,
@@ -579,7 +582,8 @@ char *CON_Input( void )
 			break;
 		}
 
-		if( qconsole_linelen < sizeof( qconsole_line ) - 1 )
+		// a count of characters, not bytes: with UNICODE, TCHAR is 2 bytes and sizeof let the line run 255 past its end
+		if( qconsole_linelen < (int)ARRAY_LEN( qconsole_line ) - 1 )
 		{
 #ifdef UNICODE
 			WCHAR c = buff[ i ].Event.KeyEvent.uChar.UnicodeChar;
@@ -596,7 +600,7 @@ char *CON_Input( void )
 					{
 						memmove( qconsole_line + qconsole_cursor - 1,
 									qconsole_line + qconsole_cursor,
-									qconsole_linelen - qconsole_cursor );
+									( qconsole_linelen - qconsole_cursor ) * sizeof( qconsole_line[ 0 ] ) );
 					}
 
 					qconsole_line[ newlen ] = '\0';
