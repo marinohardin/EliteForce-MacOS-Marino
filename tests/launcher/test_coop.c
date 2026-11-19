@@ -485,7 +485,7 @@ static void test_lan_take( void )
 		CHECK( i < 3 );
 		lc_coop_lan_row( &r.games[i], title, sizeof( title ), detail, sizeof( detail ), &lock );
 		CHECK_STR( title, "Pat on \xe2\x80\x9cPat" MAC_APOS "s PC\xe2\x80\x9d" );
-		CHECK_STR( detail, "\xe2\x80\x9c" "Assimilation\xe2\x80\x9d (borg1) \xc2\xb7 Easy \xc2\xb7 192.168.1.20:29760" );
+		CHECK_STR( detail, "\xe2\x80\x9c" "Assimilation\xe2\x80\x9d (borg1) \xc2\xb7 Easy difficulty \xc2\xb7 192.168.1.20:29760" );
 		CHECK( lock == 1 );
 	}
 	lc_coop_lan_row( &r.games[3], title, sizeof( title ), detail, sizeof( detail ), &lock );

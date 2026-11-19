@@ -526,7 +526,7 @@ void lc_coop_lan_row( const lc_coop_lan_game *g, char *title, size_t titleSize, 
 	} else
 		lc_strlcat( detail, map, detailSize );
 	o = strlen( detail );
-	lc_snprintf( detail + o, detailSize - o, " \xc2\xb7 %s \xc2\xb7 %s", skill_name( atoi( skillRaw ), skillRaw, skillBuf, sizeof( skillBuf ) ),
+	lc_snprintf( detail + o, detailSize - o, " \xc2\xb7 %s difficulty \xc2\xb7 %s", skill_name( atoi( skillRaw ), skillRaw, skillBuf, sizeof( skillBuf ) ),
 		g->address );
 }
 

@@ -684,7 +684,8 @@ void CoopDialog::onScanned( const lc_coop_lan_result *r )
 		QListWidgetItem *it = new QListWidgetItem( m_games );
 		it->setData( Qt::UserRole, U( g->address ) );
 		it->setToolTip( g->usable ? QString( "Check %1" ).arg( U( g->address ) ) : U( g->reason ) );
-		it->setSizeHint( QSize( 0, px( 40 ) ) );
+		/* tall enough for both lines at the screen's scale (a fixed height cut the title off on the Steam Deck) */
+		it->setSizeHint( QSize( 0, qMax( px( 40 ), w->sizeHint().height() ) ) );
 		m_games->setItemWidget( it, w );
 		if ( !selAddr.isEmpty() && selAddr == U( g->address ) )
 			m_games->setCurrentItem( it );

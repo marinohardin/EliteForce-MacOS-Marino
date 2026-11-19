@@ -149,7 +149,9 @@ position. With this on, the pointer stays captured in menus too and the menu
 cursor follows SDL's position for it (the sum of the relative motion, kept
 inside the window), so a menu reads the trackpad the same way play does.
 Touch-screen taps still land where they touch: the click carries the touch
-position. -1 (default) = on only under gamescope, 0 = off, 1 = on.
+position. 0 (default) = off, 1 = on.
+Off by default: on the Steam Deck it made touch-screen drags move the cursor
+proportionally instead of under the finger.
 in_mouseTrace 1 prints every mouse motion and button event SDL delivers.
 */
 #if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
@@ -157,18 +159,9 @@ static cvar_t *in_menuRelativeMouse = NULL;
 
 static qboolean IN_MenuRelativeMouse( void )
 {
-	static int underGamescope = -1;
-
-	if ( !in_menuRelativeMouse || !cl_flexibleDisplay || !cl_flexibleDisplay->integer )
-		return qfalse;
-	if ( in_menuRelativeMouse->integer >= 0 )
-		return in_menuRelativeMouse->integer ? qtrue : qfalse;
-	if ( underGamescope < 0 ) {
-		const char *desktop = getenv( "XDG_CURRENT_DESKTOP" );
-		underGamescope = ( getenv( "GAMESCOPE_WAYLAND_DISPLAY" ) != NULL
-			|| ( desktop && !Q_stricmp( desktop, "gamescope" ) ) ) ? 1 : 0;
-	}
-	return underGamescope ? qtrue : qfalse;
+	// only 1 turns it on: a test build's -1 ("under gamescope") may be in a saved config
+	return ( in_menuRelativeMouse && cl_flexibleDisplay && cl_flexibleDisplay->integer
+		&& in_menuRelativeMouse->integer == 1 ) ? qtrue : qfalse;
 }
 #else
 #define IN_MenuRelativeMouse( ) qfalse
@@ -2556,7 +2549,7 @@ void IN_Init( void *windowData )
 	in_nograb = Cvar_Get( "in_nograb", "0", CVAR_ARCHIVE );
 	in_mouseTrace = Cvar_Get( "in_mouseTrace", "0", CVAR_TEMP );
 #if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
-	in_menuRelativeMouse = Cvar_Get( "in_menuRelativeMouse", "-1", CVAR_ARCHIVE );
+	in_menuRelativeMouse = Cvar_Get( "in_menuRelativeMouse", "0", CVAR_ARCHIVE );
 #endif
 
 #ifdef __ANDROID__

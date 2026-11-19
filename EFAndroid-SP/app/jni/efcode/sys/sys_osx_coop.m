@@ -1093,7 +1093,7 @@ static NSString *CoopLanDetail( NSDictionary *g )
 		where = [NSString stringWithFormat: @"“%@” (%@)", mission, map];
 	else
 		where = map;
-	return [NSString stringWithFormat: @"%@ · %@ · %@", where, CoopSkillName( info[@"skill"] ?: @"" ), g[@"address"]];
+	return [NSString stringWithFormat: @"%@ · %@ difficulty · %@", where, CoopSkillName( info[@"skill"] ?: @"" ), g[@"address"]];
 }
 
 // one answer: a new row, or a newer answer of a host already listed (a host on this Mac answers both
