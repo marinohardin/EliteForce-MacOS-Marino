@@ -367,6 +367,57 @@ We detect prediction errors and allow them to be decayed off over several frames
 to ease the jerk.
 =================
 */
+#ifdef EF_COOP
+/*
+A replica's prediction errors. Q3's check (below) compares last frame's prediction for the newest
+command with this frame's, but a replica's newest command is still being made, so it is left out
+there; this one compares the newest command predicted in full last frame with what the same
+command gives now (the host's newer state underneath it). A difference (the host's game did
+something this guest's didn't foresee) is eased out over cg_errorDecay instead of jumping.
+*/
+static int		cp_errNum;		// last frame's newest command predicted in full (0: none)
+static vec3_t	cp_errOrigin;	// ...and where it left player 2
+
+static void CG_CoopPredictionError( int cmdNum )
+{
+	vec3_t	delta;
+	float	len;
+
+	if ( cmdNum != cp_errNum || !cp_errNum )
+	{
+		return;
+	}
+	cp_errNum = 0;
+	if ( cg.thisFrameTeleport )
+	{
+		VectorClear( cg.predictedError );
+		cg.thisFrameTeleport = qfalse;
+		return;
+	}
+	VectorSubtract( cp_errOrigin, cg.predicted_player_state.origin, delta );
+	len = VectorLength( delta );
+	if ( len <= 0.1f )
+	{
+		return;
+	}
+	if ( len > 64.0f || !cg_errorDecay.integer )
+	{
+		VectorClear( cg.predictedError );	// a jump that far is no prediction error (a teleport, a respawn)
+		return;
+	}
+	int		t = cg.time - cg.predictedErrorTime;
+	float	f = ( cg_errorDecay.value - t ) / cg_errorDecay.value;
+
+	if ( f < 0 || f > 1 )
+	{
+		f = 0;
+	}
+	VectorScale( cg.predictedError, f, cg.predictedError );
+	VectorAdd( delta, cg.predictedError, cg.predictedError );
+	cg.predictedErrorTime = cg.time - 1;	// (CG_CalcViewValues adds it from this frame on)
+}
+#endif
+
 void CG_PredictPlayerState( void ) {
 	int			cmdNum, current;
 	playerState_t	oldPlayerState;
@@ -422,6 +473,14 @@ void CG_PredictPlayerState( void ) {
 
 	// get the most recent information we have
 	cg.predicted_player_state = cg.snap->ps;
+
+#ifdef EF_COOP
+	int coopNewest = 0;	// this frame's newest command predicted in full
+	vec3_t coopNewestOrigin;
+	if ( COOP_IsReplica() ) {
+		CG_CoopPredictionError( cmdNum );
+	}
+#endif
 
 	// we should always be predicting at least one frame
 	if ( cmdNum >= current )	{
@@ -490,11 +549,26 @@ void CG_PredictPlayerState( void ) {
 		cg_pmove.gauntletHit = qfalse;
 
 		Pmove( &cg_pmove );
+#ifdef EF_COOP
+		if ( COOP_IsReplica() && cmdNum < current ) {
+			CG_CoopPredictionError( cmdNum );
+			coopNewest = cmdNum;
+			VectorCopy( cg.predicted_player_state.origin, coopNewestOrigin );
+		}
+#endif
 
 		// add push trigger movement effects
 		CG_TouchTriggerPrediction();
 
 	} while ( cmdNum < current );
+#ifdef EF_COOP
+	if ( COOP_IsReplica() ) {
+		cp_errNum = coopNewest;
+		if ( coopNewest ) {
+			VectorCopy( coopNewestOrigin, cp_errOrigin );
+		}
+	}
+#endif
 
 	// adjust for the movement of the groundentity
 	CG_AdjustPositionForMover( cg.predicted_player_state.origin, 

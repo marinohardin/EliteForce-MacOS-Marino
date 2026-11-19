@@ -192,6 +192,7 @@ static int  g_coopHoldSent = 0;     // ...and the last frame sent meanwhile
 #define COOP_CMDS 64
 static int  g_coopSeq = 0;          // guest: its commands (never reset: the host takes only newer numbers)
 static int  g_coopAck = 0;          // guest: the newest of them the host applied (see SP_CoopMakeCmd)
+static void SP_CoopClockReset( void );   // (the guest's clock, with SP_CoopMakeCmd)
 static int  SP_CoopCurrentCmd( void );
 // Co-op saves. The .sav stays a plain single-player save (player 2 isn't in it, see the game's
 // coop_save.cpp); player 2's health, armor, weapon and ammo go to <name>.coop next to it, which single
@@ -993,6 +994,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
 #ifdef EF_COOP
     g_coopLevelId++;
     g_coopApplied = 0; g_coopCmdSeen = 0;
+    SP_CoopClockReset();
     // a guest's replica level (sp_coop 2, applied by InitGame): no game frames, the host's come instead
     g_coopReplica = ( g_coopRep && Cvar_VariableIntegerValue( "sp_coop" ) == 2 ) ? 1 : 0;
     SP_CoopHoldStart();
@@ -2556,12 +2558,12 @@ static void SP_CoopApplyFrame( int frame, int time ){
     g_coopAppliedAt = Sys_Milliseconds();
     g_levelTime = time;
 }
-// The guest's commands. One is made for every host frame taken in (the host applies one a frame),
-// numbered g_coopSeq and kept here; each frame says the newest the host applied (g_coopAck). The
-// cgame's prediction (cg_predict.cpp, on in a replica) starts from that frame's player 2 and replays
-// the commands after it, then the one being made now. Their times are their numbers * 50 ms, and the
-// snapshot's commandTime is the acked number's (BuildSnapshot), so every replayed command moves
-// player 2 for one host frame, as the host's ClientThink will.
+// The guest's commands. One is made for every host frame, on the guest's clock (below; the host applies
+// one a frame), numbered g_coopSeq and kept here; each frame says the newest the host applied (g_coopAck).
+// The cgame's prediction (cg_predict.cpp, on in a replica) starts from that frame's player 2 and replays
+// the commands after it up to the clock's time (g_coopPredTime), the last one partly. Their times are
+// their numbers * 50 ms, and the snapshot's commandTime is the acked number's (BuildSnapshot), so every
+// replayed command moves player 2 for one host frame, as the host's ClientThink will.
 static int       g_coopBtn = 0;     // buttons pressed since the last command
 static int       g_coopSeqAt = 0;   // when the last command was made (Sys_Milliseconds)
 static int       g_coopHostPaused = 0;  // the host's game isn't going on (CoopNet_GuestHostPaused)
@@ -2573,6 +2575,75 @@ static usercmd_t g_coopCmds[COOP_CMDS];
 // it has gone is aimed in that one).
 static int       g_coopDrawnTime = 0;   // the cgame time of the last drawn frame
 static int       g_coopSentView = 0;    // ...as sent with the last command
+// The guest's clock. Commands used to be made as the host's frames came in, and those come
+// unevenly: Wi-Fi holds them back and hands over several at once, and a frame is only taken in on
+// the next drawn frame. With no command made, the prediction had nothing new to run: player 2's view
+// froze for 70-170 ms, then jumped ahead, walking straight. So the commands are made on this copy's
+// own clock, one every 50 ms of the host's level time as this copy reckons it: Sys_Milliseconds less
+// an offset that follows the earliest the host's frames come in (a late frame hardly moves it, an
+// early one at once; it creeps up after a lasting slowdown), slewed by at most a tenth of the time
+// drawn so the view never runs more than 10% fast or slow. The commands still go one per host frame
+// on average, and the host's queue takes up the rest. The clock runs at most COOP_CLOCK_LEAD past
+// the newest host frame (the host stopped, or holds its level's start: no commands), stands while
+// the host's game is paused, and starts again from the newest frame on a jump of COOP_CLOCK_RESET.
+#define COOP_CLOCK_RESET 1000
+#define COOP_CLOCK_LEAD  300
+#define COOP_CLOCK_MAKE  6      // at most this many commands in one drawn frame (else start again)
+static double    g_coopClockOfs = 0;    // the host's level time is Sys_Milliseconds - this
+static double    g_coopClockAim = 0;    // ...which follows this, the frames' earliest arrival
+static int       g_coopClockSet = 0;    // ...once a frame came (this level)
+static int       g_coopClockAt = 0;     // the last drawn frame's Sys_Milliseconds
+static int       g_coopClockCmd = 0;    // command time - host level time (commands are numbered on their own)
+static int       g_coopHostTime = 0;    // this drawn frame's host level time on that clock
+static int       g_coopPredTime = 0;    // ...in command time: what the prediction runs to
+static void SP_CoopMakeCmd( void );
+static void SP_CoopClockReset( void ){ g_coopClockSet = 0; g_coopHostTime = 0; g_coopPredTime = 0; }
+// a host frame of level time t taken in now (SP_CoopReplicaApply)
+static void SP_CoopClockSample( int t ){
+    double sample = (double)Sys_Milliseconds() - (double)t;
+    if( !g_coopClockSet || fabs( sample - g_coopClockAim ) > COOP_CLOCK_RESET ){
+        g_coopClockOfs = g_coopClockAim = sample;
+        g_coopClockCmd = g_coopSeq * SP_SV_FRAMEMSEC - t;   // the next command is for the frame after t
+        g_coopClockSet = 1;
+        return;
+    }
+    if( sample < g_coopClockAim ) g_coopClockAim = sample;
+    else g_coopClockAim += ( sample - g_coopClockAim ) * 0.02;
+}
+// once a drawn frame, after the host's frames are in: the commands that are due, and g_coopPredTime
+static void SP_CoopClockFrame( int paused ){
+    int now = Sys_Milliseconds(), dt = now - g_coopClockAt;
+    g_coopClockAt = now;
+    if( dt < 0 ) dt = 0; if( dt > 100 ) dt = 100;
+    if( !g_coopClockSet || !g_spActive ) return;
+    if( paused ){
+        g_coopClockOfs += dt; g_coopClockAim += dt;   // held where the pause found it
+    } else {
+        double d = g_coopClockAim - g_coopClockOfs, slew = dt * 0.1;
+        g_coopClockOfs += d > slew ? slew : d < -slew ? -slew : d;
+    }
+    int host = (int)floor( now - g_coopClockOfs + 0.5 );
+    if( host > g_levelTime + COOP_CLOCK_LEAD ) host = g_levelTime + COOP_CLOCK_LEAD;
+    if( host < g_coopHostTime && g_coopHostTime - host < COOP_CLOCK_RESET ) host = g_coopHostTime;   // never backwards
+    g_coopHostTime = host;
+    if( !paused ){
+        int made = 0;
+        while( ( g_coopSeq + 1 ) * SP_SV_FRAMEMSEC - g_coopClockCmd <= host ){
+            if( ++made > COOP_CLOCK_MAKE ){ g_coopClockCmd = g_coopSeq * SP_SV_FRAMEMSEC - host; break; }   // far behind: from here
+            int seq = g_coopSeq;
+            SP_CoopMakeCmd();
+            if( g_coopSeq == seq ){   // no input here now (a menu, the console): none owed for it either
+                g_coopClockCmd = g_coopSeq * SP_SV_FRAMEMSEC - host;
+                break;
+            }
+        }
+    }
+    int t = host + g_coopClockCmd;
+    int lo = g_coopAck * SP_SV_FRAMEMSEC + 1, hi = ( g_coopSeq + 1 ) * SP_SV_FRAMEMSEC;
+    if( t > hi ) t = hi;
+    if( t < lo ) t = lo;
+    g_coopPredTime = t;
+}
 static void SP_CoopMakeCmd( void ){
     usercmd_t c = g_lastcmd;
     c.buttons |= g_coopBtn;
@@ -2589,6 +2660,10 @@ static void SP_CoopMakeCmd( void ){
 }
 static int SP_CoopCurrentCmd( void ){
     if( g_coopSeq - g_coopAck >= COOP_CMDS - 4 ) return g_coopAck;   // too far ahead of the host: no replay
+    if( g_coopClockSet && g_coopPredTime <= g_coopSeq * SP_SV_FRAMEMSEC ){
+        int n = ( g_coopPredTime + SP_SV_FRAMEMSEC - 1 ) / SP_SV_FRAMEMSEC;   // the command the clock is in
+        return n > g_coopAck ? n : g_coopAck + 1;
+    }
     return g_coopSeq + 1;   // + the one being made
 }
 static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd ){
@@ -2597,15 +2672,16 @@ static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd ){
         if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC ) since = SP_SV_FRAMEMSEC;
         if( g_coopHostPaused ) since = g_coopPausedSince;   // held where the pause found it
         *cmd = g_lastcmd;
-        cmd->serverTime = g_coopSeq * SP_SV_FRAMEMSEC + since;
+        cmd->serverTime = g_coopClockSet ? g_coopPredTime : g_coopSeq * SP_SV_FRAMEMSEC + since;
         return qtrue;
     }
     if( n <= 0 || n > g_coopSeq || n <= g_coopSeq - COOP_CMDS ) return qfalse;
     *cmd = g_coopCmds[n & (COOP_CMDS-1)];
+    if( g_coopClockSet && cmd->serverTime > g_coopPredTime ) cmd->serverTime = g_coopPredTime;   // the clock is inside it
     return qtrue;
 }
 // The host's frames that came in since the last call (at most 4, oldest first), each into this level
-// and a snapshot, and a command for each. Returns how many.
+// and a snapshot (the guest's clock takes their times in). Returns how many.
 extern "C" int SP_CoopReplicaApply( void ){
     int newest = CoopNet_GuestNewestFrame(), applied = 0;
     if( !g_coopReplica || !g_coopRep || !newest || newest <= g_coopApplied ) return 0;
@@ -2619,7 +2695,7 @@ extern "C" int SP_CoopReplicaApply( void ){
         if( ack > g_coopAck && ack <= g_coopSeq ) g_coopAck = ack;
         if( g_spActive ) CoopNet_GuestLevelReady( lid );
         if( t == lastTime ) continue;   // the host holds its level's start for this guest: no game time passed
-        if( g_spActive ) SP_CoopMakeCmd();
+        SP_CoopClockSample( t );   // (the commands come from the clock: SP_CoopClockFrame)
         if( g_spActive ){
             g_cmdNum++;
             g_lastcmd.serverTime = g_levelTime;
@@ -2652,7 +2728,9 @@ static void SP_CoopReplicaDrawFrame( int stereo ){
       g_lastcmd.forwardmove=fwd; g_lastcmd.rightmove=side; g_lastcmd.upmove=up; g_lastcmd.buttons=btn;
       g_lastcmd.weapon = (byte)g_weaponSelect; g_coopBtn |= btn; }
     SP_CoopReplicaApply();
-    int since = Sys_Milliseconds() - g_coopAppliedAt;
+    SP_CoopClockFrame( paused );
+    // the world is drawn on the same clock, a host frame behind (between its two newest frames)
+    int since = g_coopClockSet ? g_coopHostTime - g_levelTime : Sys_Milliseconds() - g_coopAppliedAt;
     if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC - 1 ) since = SP_SV_FRAMEMSEC - 1;
     int cgTime = g_levelTime - SP_SV_FRAMEMSEC + since;
     if( cgTime < g_snapBaseTime ) cgTime = g_snapBaseTime;

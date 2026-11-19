@@ -1234,7 +1234,8 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   handler opens as the Co-op… sheet with the address checked.
 - Bandwidth host to guest: borg2 23.8 to 4.3 KB/s, borg1 15.3 to 3.9, voy1 12.5 to 3.0 (host-only
   fields masked from entity images, far entities sent every 10th frame).
-- Test cvars: `coop_simlatency` / `coop_simloss` (simulated link), `coop_netstats 2` (which fields
+- Test cvars: `coop_simlatency` / `coop_simloss` / `coop_simjitter` (0..n ms extra per packet) /
+  `coop_simburst` (now and then hold everything 60-100% of n ms, then send it at once) (simulated link), `coop_netstats 2` (which fields
   change), `coop_p2_target` (a swaying target in front of player 2).
 
 ## Co-op: enemies and both players, downed and revive (2026-11-11, branch `1_4_0/coop-m1` only)
