@@ -46,11 +46,19 @@ Test hooks (environment variables, for automated tests without clicking):
   VOYAGERSP_TEST_BACKGROUND=1  the quiet background mode (sys_osx.m): the panels
                                and alerts here never activate the app
   VOYAGERSP_TEST_CHOOSE=<dir>  use <dir> instead of showing the open panel
-  VOYAGERSP_TEST_INPLACE=1     ...with the "in place" checkbox ticked
+  VOYAGERSP_TEST_INPLACE=1     ...with the "in place" checkbox ticked (also
+                               for VOYAGERSP_TEST_PANEL_PICK)
   VOYAGERSP_TEST_CONFIRM=1     answer confirmation alerts with the first button
   VOYAGERSP_TEST_NOTRASH=1     log instead of moving to the Trash
   VOYAGERSP_TEST_NORELAUNCH=1  log instead of relaunching the app
   VOYAGERSP_TEST_PANEL_TIMEOUT=<s>  log the open panel's size and cancel it after <s> s
+  VOYAGERSP_TEST_PANEL_PICK=<path>[:return]  in the game folder panel, select
+                               <path> (typing its name in its parent folder),
+                               click Choose (or press Return), log the result
+                               and cancel the panel if it's still open after 6 s.
+                               Typing and clicking reach only an in-process
+                               panel: `defaults write <test bundle id>
+                               NSUseRemoteSavePanel -bool NO` first
   VOYAGERSP_TEST_QUIT_ANSWER=quit|cancel  answer the "Quit?" sheet after 2 s
   VOYAGERSP_TEST_QUIT_PRESS=<s>:<what>,...  at <s> s after the first frame, do
                                <what> to the game window: front (make the app
@@ -615,6 +623,7 @@ static int UnpackInstaller( NSString *exe, BOOL onlyNew, NSString *external )
 }
 - (NSView *)view;
 - (BOOL)inPlace;
+- (void)setInPlace: (BOOL)on;
 - (void)toggled: (id)sender;
 @end
 
@@ -673,6 +682,7 @@ static NSTextField *WrappingLabel( NSString *text, NSFont *font )
 - (void)dealloc { [view release]; [super dealloc]; }
 - (NSView *)view { return view; }
 - (BOOL)inPlace { return [check state] == NSControlStateValueOn; }
+- (void)setInPlace: (BOOL)on { [check setState: on ? NSControlStateValueOn : NSControlStateValueOff]; [self toggled: nil]; }
 
 - (void)toggled: (id)sender
 {
@@ -681,6 +691,157 @@ static NSTextField *WrappingLabel( NSString *text, NSFont *font )
 		: @"Files will be copied into the app's data folder (about 600 MB for a standard install)."];
 }
 @end
+
+// Why the chosen folder can't be used, or nil when it can; *outBase is then
+// its BaseEF folder (the folder itself, or the BaseEF inside it).
+static NSString *ChoiceProblem( NSString *chosen, BOOL inPlace, NSString **outBase )
+{
+	NSString *base, *problem = nil;
+
+	// accept the install folder or the BaseEF folder itself
+	if( ( base = BaseIn( chosen ) ) && IsDir( base ) )
+	{
+		if( !Pak0In( base ) )
+			problem = MSG_PAK0_ON_CD;
+	}
+	else if( Pak0In( chosen ) || [[chosen lastPathComponent] caseInsensitiveCompare: @BASEGAME] == NSOrderedSame )
+	{
+		base = chosen;
+		if( !Pak0In( base ) )
+			problem = MSG_PAK0_ON_CD;
+	}
+	else
+		problem = @"This folder has no BaseEF folder. Choose the Elite Force installation folder "
+			"(the one containing BaseEF), or the BaseEF folder itself.";
+
+	if( !problem && inPlace && [[base lastPathComponent] caseInsensitiveCompare: @BASEGAME] != NSOrderedSame )
+		problem = @"To use the files in place the folder must be called BaseEF. "
+			"Rename it, or untick the checkbox to copy the files instead.";
+	*outBase = base;
+	return problem;
+}
+
+// The game folder panel's delegate. The panel has no allowed file types:
+// with them (.exe for GOG's installer) AppKit treats Choose on a selected
+// folder as "open it" and goes into the folder instead of returning it.
+// Instead, files other than .exe are greyed out here, and a folder that
+// can't be used is refused while the panel stays open (AppKit shows the
+// error as a sheet on it). Double-clicking a folder still goes into it.
+@interface VSPChooserDelegate : NSObject <NSOpenSavePanelDelegate>
+{
+@public
+	VSPChooserOptions *opts;
+}
+@end
+
+@implementation VSPChooserDelegate
+- (BOOL)panel: (id)sender shouldEnableURL: (NSURL *)url
+{
+	return IsDir( [url path] ) || IsInstaller( [url path] );
+}
+
+- (BOOL)panel: (id)sender validateURL: (NSURL *)url error: (NSError **)outError
+{
+	NSString *chosen = [url path], *base, *problem;
+
+	if( IsInstaller( chosen ) )
+		return YES;
+	if( !IsDir( chosen ) )
+		problem = @"Choose a folder, or GOG's installer (the setup .exe).";
+	else if( !( problem = ChoiceProblem( chosen, [opts inPlace], &base ) ) )
+		return YES;
+	MacLog( @"Rejected \"%@\" in the open panel: %@", chosen, problem );
+	if( outError )
+		*outError = [NSError errorWithDomain: NSCocoaErrorDomain code: NSFileReadUnknownError userInfo: @{
+			NSLocalizedDescriptionKey: @"That folder can't be used",
+			NSLocalizedRecoverySuggestionErrorKey: [NSString stringWithFormat: @"%@\n\n%@", chosen, problem] }];
+	return NO;
+}
+@end
+
+// VOYAGERSP_TEST_PANEL_PICK=<path>[:return]: open the panel in <path>'s
+// parent folder, select <path> by typing its name, then click Choose (or
+// press Return); log what the panel did and cancel it if it is still open.
+// VOYAGERSP_TEST_INPLACE=1 ticks the "in place" checkbox first.
+static void TestPanelPick( NSOpenPanel *op, VSPChooserOptions *opts )
+{
+	NSString *spec = [NSString stringWithUTF8String: getenv( "VOYAGERSP_TEST_PANEL_PICK" )];
+	BOOL useReturn = [spec hasSuffix: @":return"];
+	NSString *path = useReturn ? [spec substringToIndex: [spec length] - 7] : spec;
+	NSString *name = [path lastPathComponent];
+	NSRunLoop *rl = [NSRunLoop currentRunLoop];
+
+	[op setDirectoryURL: [NSURL fileURLWithPath: [path stringByDeletingLastPathComponent] isDirectory: YES]];
+	[opts setInPlace: TestEnv( "VOYAGERSP_TEST_INPLACE" )];
+	MacLog( @"[test] open panel in \"%@\", will select \"%@\" and %@", [path stringByDeletingLastPathComponent], name,
+		useReturn ? @"press Return" : @"click the default button" );
+
+	// type the name (type-select in the file list)
+	[rl addTimer: [NSTimer timerWithTimeInterval: 2.0 repeats: NO block: ^( NSTimer *t ) {
+		for( NSUInteger i = 0; i < [name length]; i++ )
+		{
+			NSString *c = [name substringWithRange: NSMakeRange( i, 1 )];
+			for( int up = 0; up < 2; up++ )
+				[op sendEvent: [NSEvent keyEventWithType: up ? NSEventTypeKeyUp : NSEventTypeKeyDown location: NSZeroPoint
+					modifierFlags: 0 timestamp: [[NSProcessInfo processInfo] systemUptime] windowNumber: [op windowNumber]
+					context: nil characters: c charactersIgnoringModifiers: c isARepeat: NO keyCode: 0]];
+		}
+		MacLog( @"[test] typed \"%@\" (first responder %@, panel window %ld)", name, [[op firstResponder] className], (long)[op windowNumber] );
+	}] forMode: NSModalPanelRunLoopMode];
+
+	// Choose
+	[rl addTimer: [NSTimer timerWithTimeInterval: 3.5 repeats: NO block: ^( NSTimer *t ) {
+		NSMutableArray *views = [NSMutableArray arrayWithObject: [op contentView]];
+		NSButton *def = nil;
+
+		if( useReturn )
+		{
+			for( int up = 0; up < 2; up++ )
+				[op sendEvent: [NSEvent keyEventWithType: up ? NSEventTypeKeyUp : NSEventTypeKeyDown location: NSZeroPoint
+					modifierFlags: 0 timestamp: [[NSProcessInfo processInfo] systemUptime] windowNumber: [op windowNumber]
+					context: nil characters: @"\r" charactersIgnoringModifiers: @"\r" isARepeat: NO keyCode: 36]];
+			MacLog( @"[test] pressed Return" );
+			return;
+		}
+		while( [views count] && !def )
+		{
+			NSView *v = [views objectAtIndex: 0];
+			[views removeObjectAtIndex: 0];
+			if( [v isKindOfClass: [NSButton class]] && [[(NSButton *)v title] isEqualToString: [op prompt]] )
+				def = (NSButton *)v;
+			[views addObjectsFromArray: [v subviews]];
+		}
+		MacLog( @"[test] in \"%@\", clicking \"%@\" (%@, enabled %d)", [[op directoryURL] path], [def title],
+			def ? @"button found" : @"no button found: the panel runs in another process", def ? [def isEnabled] : -1 );
+		if( def )
+			[def performClick: nil];
+		else
+			[op ok: nil];	// the default button's action
+	}] forMode: NSModalPanelRunLoopMode];
+
+	// still open: say where it is, then cancel
+	[rl addTimer: [NSTimer timerWithTimeInterval: 6.0 repeats: NO block: ^( NSTimer *t ) {
+		NSWindow *sheet = [op attachedSheet];
+		NSMutableArray *texts = [NSMutableArray array];
+
+		if( sheet )
+		{
+			NSMutableArray *views = [NSMutableArray arrayWithObject: [sheet contentView]];
+			while( [views count] )
+			{
+				NSView *v = [views objectAtIndex: 0];
+				[views removeObjectAtIndex: 0];
+				if( [v isKindOfClass: [NSTextField class]] && [[(NSTextField *)v stringValue] length] )
+					[texts addObject: [(NSTextField *)v stringValue]];
+				[views addObjectsFromArray: [v subviews]];
+			}
+			[op endSheet: sheet];
+		}
+		MacLog( @"[test] open panel still open in \"%@\"%@; cancelling", [[op directoryURL] path],
+			sheet ? [NSString stringWithFormat: @", error sheet: %@", [texts componentsJoinedByString: @" | "]] : @"" );
+		[op cancel: nil];
+	}] forMode: NSModalPanelRunLoopMode];
+}
 
 // Ask for the install (or BaseEF) folder until a valid one is chosen.
 // Returns NO on cancel. On success either *outBasepath is set (in place) or
@@ -692,7 +853,7 @@ static BOOL RunChooser( NSString **outBasepath )
 	*outBasepath = nil;
 	for( ;; )
 	{
-		NSString *chosen, *base, *problem = nil;
+		NSString *chosen, *base, *problem;
 		BOOL inPlace;
 
 		if( testChoice )
@@ -705,6 +866,7 @@ static BOOL RunChooser( NSString **outBasepath )
 		{
 			NSOpenPanel *op;
 			VSPChooserOptions *opts;
+			VSPChooserDelegate *delegate;
 			NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
 
 			// Older builds had a one-line message that stretched the panel, and
@@ -718,10 +880,14 @@ static BOOL RunChooser( NSString **outBasepath )
 			}
 			op = [NSOpenPanel openPanel];
 			opts = [[[VSPChooserOptions alloc] init] autorelease];
+			delegate = [[[VSPChooserDelegate alloc] init] autorelease];
+			delegate->opts = opts;
 
 			[op setCanChooseDirectories: YES];
 			[op setCanChooseFiles: YES];		// GOG's installer; folders otherwise
-			[op setAllowedFileTypes: @[ @"exe" ]];
+			// no allowed file types (see VSPChooserDelegate): the delegate
+			// greys out files other than .exe
+			[op setDelegate: delegate];
 			[op setAllowsMultipleSelection: NO];
 			[op setPrompt: @"Choose"];
 			[op setMessage: @"Choose your Elite Force folder, or GOG's installer"];
@@ -741,11 +907,15 @@ static BOOL RunChooser( NSString **outBasepath )
 				}];
 				[[NSRunLoop currentRunLoop] addTimer: t forMode: NSModalPanelRunLoopMode];
 			}
+			if( getenv( "VOYAGERSP_TEST_PANEL_PICK" ) )
+				TestPanelPick( op, opts );
 			if( [op runModal] != NSModalResponseOK || ![[op URLs] count] )
 			{
+				[op setDelegate: nil];
 				MacLog( @"Game folder selection cancelled" );
 				return NO;
 			}
+			[op setDelegate: nil];
 			chosen = [[[op URLs] objectAtIndex: 0] path];
 			inPlace = [opts inPlace];
 			MacLog( @"Chosen game folder \"%@\" (in place: %d)", chosen, inPlace );
@@ -765,25 +935,9 @@ static BOOL RunChooser( NSString **outBasepath )
 			continue;
 		}
 
-		// accept the install folder or the BaseEF folder itself
-		if( ( base = BaseIn( chosen ) ) && IsDir( base ) )
-		{
-			if( !Pak0In( base ) )
-				problem = MSG_PAK0_ON_CD;
-		}
-		else if( Pak0In( chosen ) || [[chosen lastPathComponent] caseInsensitiveCompare: @BASEGAME] == NSOrderedSame )
-		{
-			base = chosen;
-			if( !Pak0In( base ) )
-				problem = MSG_PAK0_ON_CD;
-		}
-		else
-			problem = @"This folder has no BaseEF folder. Choose the Elite Force installation folder "
-				"(the one containing BaseEF), or the BaseEF folder itself.";
-
-		if( !problem && inPlace && [[base lastPathComponent] caseInsensitiveCompare: @BASEGAME] != NSOrderedSame )
-			problem = @"To use the files in place the folder must be called BaseEF. "
-				"Rename it, or untick the checkbox to copy the files instead.";
+		// the install folder or the BaseEF folder itself (the panel's
+		// delegate has checked this already; the test hook hasn't)
+		problem = ChoiceProblem( chosen, inPlace, &base );
 
 		if( !problem && inPlace )
 		{
