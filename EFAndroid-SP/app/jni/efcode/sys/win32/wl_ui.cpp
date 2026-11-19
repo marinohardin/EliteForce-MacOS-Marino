@@ -166,6 +166,7 @@ HFONT F( int px, int weight, bool mono )
 
 int dpiOf( HWND w )
 {
+	if ( const char *t = testEnv( "VOYAGERSP_TEST_LAUNCHER_DPI" ) ) { int d = atoi( t ); if ( d >= 96 ) return d; }	/* layout tests at 125 / 150 % */
 	typedef UINT ( WINAPI *GetDpiForWindowFn )( HWND );
 	static GetDpiForWindowFn fn = (GetDpiForWindowFn)GetProcAddress( GetModuleHandleW( L"user32.dll" ), "GetDpiForWindow" );
 	if ( fn && w ) { UINT d = fn( w ); if ( d ) return (int)d; }
