@@ -2,6 +2,7 @@
 
 #include "b_local.h"
 #include "anims.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern void CGCam_Shake( float intensity, int duration );
 

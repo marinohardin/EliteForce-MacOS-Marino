@@ -8,6 +8,7 @@
 #include "b_local.h"
 #include "objectives.h"
 #include "../cgame/cg_text.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern vmCvar_t cg_thirdPerson;
 

@@ -5,6 +5,7 @@
 #include "b_local.h"
 #include "coop_public.h"
 #include "g_functions.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern void FX_GroundTendrilSpawner( vec3_t start, vec3_t end );
 extern void FX_ChestBeamSpawner( vec3_t origin, float height );

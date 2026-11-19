@@ -1,10 +1,11 @@
 // coop_fx.h -- single-player co-op: effects the game starts in the cgame directly.
 //
 // In single player the game and the cgame are one module, so some game code draws an effect by
-// calling the cgame itself (a breakable's explosion and debris, a turret's laser), with no entity
-// event that a guest's replica would see. Included last in the game files that make such calls, in
-// EF_COOP builds it routes them through the co-op module, which draws them as before and, on a host,
-// keeps them for the guest (coop_fx.cpp). Without EF_COOP it is empty.
+// calling the cgame itself (a breakable's explosion and debris, a turret's laser, the Borg beam-in,
+// a script's camera shake), with no entity event that a guest's replica would see. Included last in
+// the game files that make such calls, in EF_COOP builds it routes them through the co-op module,
+// which draws them as before and, on a host, keeps them for the guest (coop_fx.cpp). Without
+// EF_COOP it is empty.
 
 #ifndef COOP_FX_H
 #define COOP_FX_H
@@ -19,6 +20,13 @@ void	COOP_FxPsychoJism( vec3_t start, vec3_t end, qboolean open );
 void	COOP_FxShimmeryThing_Spawner( vec3_t start, vec3_t end, float radius, qboolean taper, int duration );
 void	COOP_FxFireLaser( vec3_t start, vec3_t end, vec3_t normal, vec4_t laserRGB, qboolean hit_ent );
 void	COOP_FxAimLaser( vec3_t start, vec3_t end, vec3_t normal );
+void	COOP_FxBorgTeleport( vec3_t origin );
+void	COOP_FxBorgHit( vec3_t origin, vec3_t dir );
+void	COOP_FxBorgShield( vec3_t position, vec3_t dir );
+void	COOP_FxStasisCharge( vec3_t origin, vec3_t dir, float perc_done );
+void	COOP_FxGroundTendrilSpawner( vec3_t start, vec3_t end );
+void	COOP_FxVohrsothGroundWarning( vec3_t origin );
+void	COOP_FxCameraShake( float intensity, int duration );
 
 #define CG_SurfaceExplosion			COOP_FxSurfaceExplosion
 #define CG_MiscModelExplosion		COOP_FxMiscModelExplosion
@@ -28,6 +36,13 @@ void	COOP_FxAimLaser( vec3_t start, vec3_t end, vec3_t normal );
 #define CG_ShimmeryThing_Spawner	COOP_FxShimmeryThing_Spawner
 #define CG_FireLaser				COOP_FxFireLaser
 #define CG_AimLaser					COOP_FxAimLaser
+#define FX_BorgTeleport				COOP_FxBorgTeleport
+#define FX_BorgHit					COOP_FxBorgHit
+#define FX_BorgShield				COOP_FxBorgShield
+#define FX_StasisCharge				COOP_FxStasisCharge
+#define FX_GroundTendrilSpawner		COOP_FxGroundTendrilSpawner
+#define FX_Vohrsoth_CreateGroundWarning	COOP_FxVohrsothGroundWarning
+#define CGCam_Shake					COOP_FxCameraShake
 
 #endif	// EF_COOP
 
