@@ -1264,6 +1264,12 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 - Not forwarded: the stasis fliers' and fixits' client think functions (cgame per-frame thinks on
   entities), debug drawing (CG_Cube/CG_Line).
 - Test hook: `coop_p2_damage <n> near` (player 2 damages the nearest breakable).
+- 1.5.0: the same for the cgame calls that are named `FX_*` rather than `CG_*`, missed before: the Borg
+  beam-in (every Borg NPC spawn and the script event `borgteleport`; borg1's I-MOD ambush showed the
+  green beams on the host only), the sparks and green shield flash of shots on Borg (adapting or not),
+  an Etherian's charge and the Vohrsoth's ground tendrils. A camera shake started outside a cutscene
+  (scripts, the warrior bot's steps) now reaches the guest the same way; inside a cutscene the camera's
+  state already carries it.
 
 ## Co-op: nobody stuck at the start of voy4 (2026-11-12, branch `1_4_0/coop-fx` only)
 - voy4 starts with the players held (`player_locked`) in the turbolift while an NPC walks up and

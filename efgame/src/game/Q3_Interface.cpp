@@ -22,6 +22,7 @@
 #include "../cgame/cg_local.h"
 #include "../game/speakers.h"
 #include "../speedrun/sound_skipping.hpp"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern int ICARUS_LinkEntity( int entID, CSequencer *sequencer, CTaskManager *taskManager );
 
