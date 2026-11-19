@@ -241,6 +241,11 @@ static void test_query( void )
 		lc_coop_query_run( padded, 1.5, &q );
 		CHECK_STR( q.status, "ok" );
 	}
+	/* the address may live in the result itself (the Windows sheet passes q.address) */
+	lc_strlcpy( q.address, addr, sizeof( q.address ) );
+	lc_coop_query_run( q.address, 1.5, &q );
+	CHECK_STR( q.status, "ok" );
+	CHECK_STR( q.address, addr );
 	/* other co-op version: mismatch, with the sentence and the info for the description */
 	lc_strlcpy( h->protocol, "5", sizeof( h->protocol ) );
 	lc_coop_query_run( addr, 1.5, &q );
