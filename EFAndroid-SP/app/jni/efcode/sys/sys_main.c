@@ -385,6 +385,9 @@ Sys_Quit
 */
 void Sys_Quit( void )
 {
+#if !defined( __APPLE__ ) && !defined( __ANDROID__ ) && !defined( __EMSCRIPTEN__ )
+	Sys_DataFlushLog( );
+#endif
 	Sys_Exit( 0 );
 }
 
@@ -1031,6 +1034,9 @@ int main( int argc, char **argv )
 		}
 		if ( !sys_headless )
 			Sys_PlatformFrame( );	// macOS: adds the File menu once SDL made the menu bar
+#if !defined( __APPLE__ ) && !defined( __ANDROID__ )
+		Sys_DataFlushLog( );	// Windows/Linux: launcher-core lines from worker threads
+#endif
 	}
 #endif
 
