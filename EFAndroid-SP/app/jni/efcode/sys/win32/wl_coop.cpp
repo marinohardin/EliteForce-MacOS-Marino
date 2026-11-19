@@ -16,6 +16,12 @@ namespace wl {
 static lc_nat *g_coopNat = 0;			/* process-wide: kept when Host is pressed (the game opens its socket on the same port) */
 static void coopNatRelease( ) { if ( g_coopNat ) { lc_nat_release( g_coopNat ); g_coopNat = 0; } }
 
+/* the router texts under "Open the port on my router": shown by the sheet, and the longest ones measured for its layout */
+static str natPrivateWhy( const char *ip ) { return fmt( "Your router opened the port, but its own internet address (%s) is private: your provider or another router puts it behind a second NAT, which nobody outside can get through.", ip ); }
+static const char *const kNatTimeoutWhy = "Your router didn\xE2\x80\x99t answer the request to open the port: it may not support automatic port opening (NAT-PMP / UPnP), or has it turned off.";
+static str natFailText( const str &why, const str &ip ) { return fmt( "Port not opened. %s Forward UDP port %d to this PC (%s) in your router\xE2\x80\x99s settings instead, or use Tailscale (see the README).", why.c_str( ), LC_COOP_PORT, ip.c_str( ) ); }
+static str inviteCopiedText( const char *link ) { return fmt( "Copied %s. Your friend opens it (Elite Force with co-op, on Windows, Mac or Linux) to check your game and join.", link ); }
+
 struct CoopDlg : Wnd {
 	bool canPlay = false, playNow = false;
 	enum { ID_NAME = 10, ID_HOST, ID_PW, ID_BG, ID_ROUTER, ID_INET, ID_INVITE, ID_ADDR, ID_CHECK, ID_JPW, ID_MUNRO, ID_RES_ICON, ID_RES_SPIN, ID_RES_TITLE, ID_RES_TEXT,
@@ -35,6 +41,7 @@ struct CoopDlg : Wnd {
 	bool lanSearched = false;	// a search has finished: keep its text while the next one runs
 	int lanAutoScans = 0;		// searches the sheet ran by itself: 3 (now, +5 s, +10 s), then only Refresh
 	int contentH = 0, clientH = 0;			/* the sheet scrolls when the screen is shorter than it */
+	int resX = 0, resY = 0, resW = 0, resBottom = 0;	/* the Check result's title and text (design px): the text follows the title's lines */
 	struct NatRes { CoopDlg *d; lc_nat_result r; char ip[64]; int ext, err; };
 	struct QRes { CoopDlg *d; lc_coop_query q; char dataFolder[LC_MAX_PATH]; };
 	struct LRes { HWND hwnd; lc_coop_lan_result r; char dataFolder[LC_MAX_PATH]; };
@@ -60,7 +67,7 @@ struct CoopDlg : Wnd {
 			case LC_NAT_OK: {
 				unsigned a, b, c, d; unsigned long ip = 0; if ( sscanf( n->ip, "%u.%u.%u.%u", &a, &b, &c, &d ) == 4 ) ip = ( a << 24 ) | ( b << 16 ) | ( c << 8 ) | d;
 				if ( ip == 0 ) break;			/* no answer yet: the timer gives up */
-				if ( lc_ipv4_private( (unsigned)ip ) ) { natFail( fmt( "Your router opened the port, but its own internet address (%s) is private: your provider or another router puts it behind a second NAT, which nobody outside can get through.", n->ip ) ); break; }
+				if ( lc_ipv4_private( (unsigned)ip ) ) { natFail( natPrivateWhy( n->ip ) ); break; }
 				KillTimer( hwnd, 1 );
 				natState = 2; natPublic = fmt( "%s:%d", n->ip, n->ext ? n->ext : LC_COOP_PORT );
 				lc_log( "Co-op: the router forwards %d to this %s", LC_COOP_PORT, PLATFORM_NOUN );
@@ -68,8 +75,8 @@ struct CoopDlg : Wnd {
 			case LC_NAT_UNSUPPORTED: natFail( "Your router doesn\xE2\x80\x99t support automatic port opening (NAT-PMP / UPnP), or has it turned off." ); break;
 			case LC_NAT_DISABLED: natFail( "Automatic port opening (NAT-PMP / UPnP) is turned off in your router\xE2\x80\x99s settings." ); break;
 			case LC_NAT_DOUBLE: natFail( "Your network has two routers in a row (double NAT), so the outer one still blocks the port." ); break;
-			case LC_NAT_PRIVATE_EXTERNAL: natFail( fmt( "Your router opened the port, but its own internet address (%s) is private: your provider or another router puts it behind a second NAT, which nobody outside can get through.", n->ip ) ); break;
-			case LC_NAT_TIMEOUT: natFail( "Your router didn\xE2\x80\x99t answer the request to open the port: it may not support automatic port opening (NAT-PMP / UPnP), or has it turned off." ); break;
+			case LC_NAT_PRIVATE_EXTERNAL: natFail( natPrivateWhy( n->ip ) ); break;
+			case LC_NAT_TIMEOUT: natFail( kNatTimeoutWhy ); break;
 			default: natFail( fmt( "The router didn\xE2\x80\x99t open the port (error %d).", n->err ) );
 			}
 		}
@@ -101,7 +108,7 @@ struct CoopDlg : Wnd {
 		str ip = lanFirst.empty( ) ? str( "this PC\xE2\x80\x99s address" ) : lanFirst;
 		if ( natState == 2 ) { t = fmt( "Port open: a friend on the internet joins %s. Copy Invite and send it to them. The port stays open while Elite Force runs.", natPublic.c_str( ) ); role = R_GREEN; }
 		else if ( natState == 1 ) t = "Asking your router to open the port\xE2\x80\xA6";
-		else if ( natState == 3 ) { t = fmt( "Port not opened. %s Forward UDP port %d to this PC (%s) in your router\xE2\x80\x99s settings instead, or use Tailscale (see the README).", natWhy.c_str( ), LC_COOP_PORT, ip.c_str( ) ); role = R_ORANGE; }
+		else if ( natState == 3 ) { t = natFailText( natWhy, ip ); role = R_ORANGE; }
 		else t = "Not needed on the same network. Copy Invite gives your friend a link to this PC\xE2\x80\x99s address.";
 		setText( ctl( ID_INET ), t ); setRole( ctl( ID_INET ), role );
 		SendMessageW( ctl( ID_ROUTER ), BM_SETCHECK, natState == 1 || natState == 2 ? BST_CHECKED : BST_UNCHECKED, 0 );
@@ -143,6 +150,11 @@ struct CoopDlg : Wnd {
 		resGlyph = glyph; resRole = role;
 		showCtl( ID_RES_TITLE, true );
 		setText( ctl( ID_RES_TITLE ), title ); setText( ctl( ID_RES_TEXT ), text ); showCtl( ID_RES_TEXT, !text.empty( ) );
+		{
+			int th = max( 18, textHeight( W( title ), resW, F( 13, 600 ) ) * 96 / g_dpi + 2 ), ty = resY + th + 2;
+			SetWindowPos( ctl( ID_RES_TITLE ), 0, S( resX ), S( resY ) - scrollY, S( resW ), S( th ), SWP_NOZORDER | SWP_NOACTIVATE );
+			SetWindowPos( ctl( ID_RES_TEXT ), 0, S( resX ), S( ty ) - scrollY, S( resW ), S( resBottom - ty ), SWP_NOZORDER | SWP_NOACTIVATE );
+		}
 		spinnerRun( ctl( ID_RES_SPIN ), spin );
 		InvalidateRect( hwnd, 0, FALSE );
 	}
@@ -320,7 +332,7 @@ struct CoopDlg : Wnd {
 		case ID_ROUTER: routerToggle( ); break;
 		case ID_INVITE: {
 			char link[256]; lc_coop_invite_link( natState == 2 ? natPublic.c_str( ) : "", link, sizeof link );
-			if ( link[0] ) { copyToClipboard( hwnd, link ); setText( ctl( ID_INET ), fmt( "Copied %s. Your friend opens it (Elite Force with co-op, on Windows, Mac or Linux) to check your game and join.", link ) ); setRole( ctl( ID_INET ), R_TEXT2 ); lc_log( "Co-op: invite %s", link ); }
+			if ( link[0] ) { copyToClipboard( hwnd, link ); setText( ctl( ID_INET ), inviteCopiedText( link ) ); setRole( ctl( ID_INET ), R_TEXT2 ); lc_log( "Co-op: invite %s", link ); }
 			break; }
 		case ID_CHECK: doCheck( ); break;
 		case ID_ADDR: if ( code == EN_CHANGE && found ) { found = false; setConnectable( false ); setText( ctl( ID_CONNECT ), "Connect" ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" ); } break;
@@ -344,7 +356,7 @@ struct CoopDlg : Wnd {
 		}
 	}
 	bool onClose( ) override { coopNatRelease( ); end( IDCANCEL ); return true; }
-	void onTimer( int id ) override { if ( id == 2 ) { if ( ++lanAutoScans >= 3 ) KillTimer( hwnd, 2 ); doScan( ); return; } if ( id == 1 && natState == 1 ) natFail( "Your router didn\xE2\x80\x99t answer the request to open the port: it may not support automatic port opening (NAT-PMP / UPnP), or has it turned off." ); }
+	void onTimer( int id ) override { if ( id == 2 ) { if ( ++lanAutoScans >= 3 ) KillTimer( hwnd, 2 ); doScan( ); return; } if ( id == 1 && natState == 1 ) natFail( kNatTimeoutWhy ); }
 	void onUser( UINT m, WPARAM, LPARAM l ) override { if ( m == WM_NAT ) onNat( (NatRes *)l ); else if ( m == WM_QUERY ) onQuery( (QRes *)l ); else if ( m == WM_LAN ) onLan( (LRes *)l ); }
 	void paintOver( HDC dc ) override
 	{
@@ -363,10 +375,40 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	char lan[8][16], ifn[8][64]; int nlan = lc_coop_lan_addresses( lan, ifn, 8 );
 	if ( nlan > 0 ) d.lanFirst = lan[0];
 	int y = 18;
-	const int H = 802 + 24 + 182 + 28;
+	if ( owner ) setDpi( dpiOf( owner ) );
+	/* Wrapped texts get the height they need at this DPI and font (100-150 %), and the sheet grows by what they add;
+	   the Host group's intro wraps beside the Host button, as on the Mac, not under it. */
+	auto textH = [&]( const str &t, int w, int px, int minH ) { return max( minH, textHeight( W( t ), w, F( px ) ) * 96 / g_dpi + 2 ); };
+	const int tx = 36, tw = 400, hostX = W0 - 40 - 14 - 80, introW = hostX - 12 - tx, noteW = W0 - 72;
+	const str lead = "Play the campaign with a friend. The host is player 1 and plays the story; the friend joins as player 2.";
+	const str intro = fmt( "Starts single player with co-op on: choose New Game or Load as usual. Your friend then joins as player 2 with this %s\xE2\x80\x99s address:", PLATFORM_NOUN );
+	const str note = fmt( "Co-op uses UDP port %d. Windows may ask whether Elite Force can communicate on your network: allow it. Player 2 follows you until your friend joins; then your friend plays player 2 and sees your game from player 2\xE2\x80\x99s eyes.", LC_COOP_PORT );
+	const int leadH = textH( lead, 520, 12, 34 );
+	const int introH = textH( intro, introW, 12, 32 );
+	const int introRow = introH + 2;			/* at least 34: the rows below also start under the Host button */
+	const int lanH = nlan == 0 ? 20 : min( nlan, 4 ) * 18;
+	int inetH = 48;
+	for ( const str &t : { natFailText( natPrivateWhy( "255.255.255.255" ), "255.255.255.255" ), natFailText( kNatTimeoutWhy, "255.255.255.255" ),
+		inviteCopiedText( "stvef://coop/255.255.255.255:65535" ) } )
+		inetH = max( inetH, textH( t, noteW, 11, 48 ) );
+	const int noteH = textH( note, noteW, 11, 46 );
+	const int hostGrow = ( introRow - 34 ) + ( lanH - 18 ) + ( inetH - 48 ) + ( noteH - 46 );
+	/* a Check's result: room for the longest usual one, a found game whose Expansion Pack differs (the warning, then the
+	   game's description), so it isn't cut off above Connect */
+	const int resW = W0 - 40 - 14 - 30 - 16;
+	int resTitleH, resTextH;
+	{
+		char desc[2048], warn[1024];
+		lc_coop_describe( "\\state\\playing\\mission\\The Borg Ship, Deck 7 (Assimilation)\\map\\borg2\\skill\\2\\time\\3600\\players\\2"
+			"\\guest\\0\\player\\WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW\\needPassword\\1\\version\\1.5.0-macos-test\\coopProtocol\\8", desc, sizeof desc );
+		lc_coop_compare_paks( "pak0.pk3:1 pak1.pk3:2 pak2.pk3:3 pak3.pk3:4", "pak0.pk3:1 pak1.pk3:2 pak2.pk3:3 pak3.pk3:5", 0, warn, sizeof warn );
+		resTitleH = textH( "Co-op game found on \xE2\x80\x9CWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW\xE2\x80\x9D (255.255.255.255:65535), but the Expansion Pack differs", resW, 13, 34 );
+		resTextH = textH( str( warn ) + "\n\n" + desc, resW, 12, 48 );
+	}
+	const int joinGrow = ( resTitleH - 34 ) + ( resTextH - 48 );
+	const int H = 802 + 24 + 182 + 28 + ( leadH - 34 ) + hostGrow + joinGrow;
 	{
 		RECT wa; SystemParametersInfoW( SPI_GETWORKAREA, 0, &wa, 0 );
-		if ( owner ) setDpi( dpiOf( owner ) );
 		int availH = (int)( ( wa.bottom - wa.top ) * 96 / g_dpi ) - 70;
 		d.contentH = H; d.clientH = min( H, max( 360, availH ) );
 	}
@@ -376,10 +418,14 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 		SetWindowLongW( d.hwnd, GWL_STYLE, GetWindowLongW( d.hwnd, GWL_STYLE ) | WS_VSCROLL );
 		SetScrollInfo( d.hwnd, SB_VERT, &si, TRUE );
 		SetWindowPos( d.hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED );
+		/* the scroll bar takes its width from the client area: widen the window by it, so the right-hand column (Cancel) isn't cut */
+		RECT cr, wr; GetClientRect( d.hwnd, &cr ); GetWindowRect( d.hwnd, &wr );
+		if ( cr.right < S( W0 ) )
+			SetWindowPos( d.hwnd, 0, 0, 0, wr.right - wr.left + S( W0 ) - cr.right, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE );
 	}
 	d.label( 20, y, 70, 24, "Co-op", 17, 700, R_TEXT, DT_SINGLELINE );
 	y += 24 + 4;
-	d.label( 20, y, 520, 34, "Play the campaign with a friend. The host is player 1 and plays the story; the friend joins as player 2.", 12, 400, R_TEXT2 ); y += 36 + 6;
+	d.label( 20, y, 520, leadH, lead.c_str( ), 12, 400, R_TEXT2 ); y += leadH + 2 + 6;
 	/* name */
 	d.label( 20, y + 3, 80, 16, "Your name", 12, 400, R_TEXT, DT_SINGLELINE );
 	char saved[64], nm[64]; const char *s = lc_store_get( st, LC_KEY_COOP_NAME ); lc_coop_safe_name( s ? s : "", saved, sizeof saved );
@@ -390,11 +436,10 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	d.label( 334, y + 4, 150, 14, "up to 31 letters", 11, 400, R_TEXT2, DT_SINGLELINE );
 	y += 22 + 22;
 	/* host group */
-	int hTop = y, hH = 296 + 24 + 28;
+	int hTop = y, hH = 296 + 24 + 28 + hostGrow;
 	d.addGroup( 20, hTop, W0 - 40, hH, "HOST" );
-	int ty = hTop + 14; const int tx = 36, tw = 400;
-	str intro = fmt( "Starts single player with co-op on: choose New Game or Load as usual. Your friend then joins as player 2 with this %s\xE2\x80\x99s address:", PLATFORM_NOUN );
-	d.label( tx, ty, tw, 32, intro.c_str( ), 12, 400, R_TEXT ); ty += 34;
+	int ty = hTop + 14;
+	d.label( tx, ty, introW, introH, intro.c_str( ), 12, 400, R_TEXT ); ty += introRow;
 	if ( nlan == 0 ) { d.label( tx, ty, tw, 16, "No network found. Connect this PC to Wi-Fi or Ethernet first.", 12, 400, R_ORANGE, DT_SINGLELINE ); ty += 20; }
 	else for ( int i = 0; i < nlan && i < 4; i++ ) { d.label( tx, ty, tw, 18, fmt( "%s    (%s)", lan[i], ifn[i] ).c_str( ), 13, 500, R_TEXT, DT_SINGLELINE ); ty += 18; }
 	ty += 8;
@@ -410,16 +455,16 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	HWND sl = d.check( tx, ty, 360, 20, "Show this game on my network", CoopDlg::ID_SHOWLAN, lc_store_get_bool( st, LC_KEY_COOP_LAN_VISIBLE, 1 ) != 0, 12 );
 	setTooltip( d.hwnd, sl, "Friends on the same network see it under \xE2\x80\x9CGames on your network\xE2\x80\x9D. Off: only someone who types this PC\xE2\x80\x99s address finds it" ); ty += 24;
 	d.check( tx, ty, 380, 20, "Open the port on my router (for a friend on the internet)", CoopDlg::ID_ROUTER, false, 12 ); ty += 24;
-	d.label( tx, ty, tw, 48, "", 11, 400, R_TEXT2, DT_WORDBREAK, CoopDlg::ID_INET ); ty += 52;
+	d.label( tx, ty, noteW, inetH, "", 11, 400, R_TEXT2, DT_WORDBREAK, CoopDlg::ID_INET ); ty += inetH + 4;
 	HWND inv = d.button( tx, ty, 100, 22, "Copy Invite", CoopDlg::ID_INVITE, false, 12 );
 	setTooltip( d.hwnd, inv, "Copy a stvef://coop/ link for your friend: opening it shows Co-op with your address filled in" ); ty += 28;
-	d.label( tx, ty, W0 - 72, 46, fmt( "Co-op uses UDP port %d. Windows may ask whether Elite Force can communicate on your network: allow it. Player 2 follows you until your friend joins; then your friend plays player 2 and sees your game from player 2\xE2\x80\x99s eyes.", LC_COOP_PORT ).c_str( ), 11, 400, R_TEXT2, DT_WORDBREAK, CoopDlg::ID_NOTE );
-	HWND hb = d.button( W0 - 40 - 14 - 80, hTop + 14, 80, 28, "Host", CoopDlg::ID_HOST, false, 13 );
+	d.label( tx, ty, noteW, noteH, note.c_str( ), 11, 400, R_TEXT2, DT_WORDBREAK, CoopDlg::ID_NOTE );
+	HWND hb = d.button( hostX, hTop + 14, 80, 28, "Host", CoopDlg::ID_HOST, false, 13 );
 	EnableWindow( hb, canPlay );
 	setTooltip( d.hwnd, hb, canPlay ? "Play single player with co-op on" : "Add the game files first" );
 	y = hTop + hH + 22;
 	/* join group */
-	int jTop = y, jH = 250 + 182;
+	int jTop = y, jH = 250 + 182 + joinGrow;
 	d.addGroup( 20, jTop, W0 - 40, jH, "JOIN" );
 	int jy = jTop + 14;
 	/* Games on your network: a list that fills in by itself; a click checks that game */
@@ -473,9 +518,10 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	jy += 22 + 12;
 	d.ctl_( L"STATIC", L"", SS_NOTIFY, 0, tx, jy, 26, 26, CoopDlg::ID_RES_ICON ); ShowWindow( d.ctl( CoopDlg::ID_RES_ICON ), SW_HIDE );
 	d.ids[CoopDlg::ID_RES_SPIN] = mkSpinner( d.hwnd, tx + 4, jy + 4, 16, CoopDlg::ID_RES_SPIN );
-	d.label( tx + 30, jy, W0 - 40 - 14 - 30 - 16, 34, "", 13, 600, R_TEXT, DT_WORDBREAK, CoopDlg::ID_RES_TITLE ); d.showCtl( CoopDlg::ID_RES_TITLE, false );
-	d.label( tx + 30, jy + 36, W0 - 40 - 14 - 30 - 16, 48, "", 12, 400, R_TEXT2, DT_WORDBREAK, CoopDlg::ID_RES_TEXT ); d.showCtl( CoopDlg::ID_RES_TEXT, false );
-	jy += 92;
+	d.label( tx + 30, jy, resW, resTitleH, "", 13, 600, R_TEXT, DT_WORDBREAK, CoopDlg::ID_RES_TITLE ); d.showCtl( CoopDlg::ID_RES_TITLE, false );
+	d.label( tx + 30, jy + resTitleH + 2, resW, resTextH, "", 12, 400, R_TEXT2, DT_WORDBREAK, CoopDlg::ID_RES_TEXT ); d.showCtl( CoopDlg::ID_RES_TEXT, false );
+	d.resX = tx + 30; d.resY = jy; d.resW = resW; d.resBottom = jy + resTitleH + 2 + resTextH;
+	jy += resTitleH + 2 + resTextH + 8;
 	HWND cn = d.button( tx, jy, 80, 28, "Connect", CoopDlg::ID_CONNECT, false, 13 );
 	EnableWindow( cn, FALSE ); setTooltip( d.hwnd, cn, "Check the address first" );
 	d.label( tx + 92, jy, W0 - 40 - 14 - 92 - 16, 46, "Connect starts single player and joins the host\xE2\x80\x99s game as player 2: you see it from player 2\xE2\x80\x99s eyes and play player 2 while the host plays the story.", 11, 400, R_TEXT2 );
@@ -490,6 +536,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	if ( !prefillAddress.empty( ) ) SetWindowTextW( ae, W( prefillAddress ).c_str( ) );
 	SetFocus( ae );
 	if ( autoCheck ) PostMessageW( d.hwnd, WM_COMMAND, MAKEWPARAM( CoopDlg::ID_CHECK, BN_CLICKED ), (LPARAM)cb );
+	if ( testOn( "VOYAGERSP_TEST_COOP_SCROLL_END" ) ) d.scrollTo( S( d.contentH ) );	/* test snapshots: the sheet's lower part */
 	d.runModal( );
 	if ( playNow ) *playNow = d.playNow;
 }

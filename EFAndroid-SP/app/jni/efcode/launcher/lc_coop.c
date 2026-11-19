@@ -230,9 +230,10 @@ void lc_coop_query_run( const char *address, double timeout, lc_coop_query *out 
 	double deadline;
 	unsigned rnd;
 
+	/* copy the address before clearing the result: a caller may pass out->address itself */
+	lc_strlcpy( a, address ? address : "", sizeof( a ) );
 	memset( out, 0, sizeof( *out ) );
 	lc_net_init( );
-	lc_strlcpy( a, address ? address : "", sizeof( a ) );
 	lc_trim( a );
 	if ( !a[0] ) {
 		set_result( out, "bad", NULL, "Type the host\xe2\x80\x99s address, such as 192.168.1.20." );

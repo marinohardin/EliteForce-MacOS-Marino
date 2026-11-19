@@ -924,7 +924,7 @@ struct Launcher : Wnd {
 		if ( ( p = testEnv( "VOYAGERSP_TEST_UPDATE_ALERT" ) ) ) { g_alertSnapshotPath = p; startUpdateCheck( true ); pumpFor( 6000 ); }
 		if ( ( p = testEnv( "VOYAGERSP_TEST_SERVER_CONFIG_SNAPSHOT" ) ) ) { g_snapPath = p; showServerConfig( hwnd, &server, G.dataFolder ); }
 		if ( ( p = testEnv( "VOYAGERSP_TEST_BROWSER_SNAPSHOT" ) ) ) { str a, pw; g_snapPath = p; if ( showBrowser( hwnd, G.dataFolder, &a, &pw ) ) joinAndPlay( a, pw ); }
-		if ( ( p = testEnv( "VOYAGERSP_TEST_COOP_SHEET" ) ) && lc_coop_ui_enabled( ) ) { g_snapPath = p; bool pn = false; showCoopSheet( hwnd, G.canPlay( ), testEnv( "VOYAGERSP_TEST_COOP_QUERY" ) ? testEnv( "VOYAGERSP_TEST_COOP_QUERY" ) : "", testEnv( "VOYAGERSP_TEST_COOP_QUERY" ) != 0, &pn ); }
+		if ( ( p = testEnv( "VOYAGERSP_TEST_COOP_SHEET" ) ) && lc_coop_ui_enabled( ) ) { g_snapPath = p; if ( testEnv( "VOYAGERSP_TEST_COOP_QUERY" ) ) g_snapDelayMs = 3000; bool pn = false; showCoopSheet( hwnd, G.canPlay( ), testEnv( "VOYAGERSP_TEST_COOP_QUERY" ) ? testEnv( "VOYAGERSP_TEST_COOP_QUERY" ) : "", testEnv( "VOYAGERSP_TEST_COOP_QUERY" ) != 0, &pn ); }
 		if ( testOn( "VOYAGERSP_TEST_LAUNCHER_BROWSE_CANCEL" ) ) { g_snapPath.clear( ); str a, pw; showBrowser( hwnd, G.dataFolder, &a, &pw ); lc_log( "[test] Browse cancel: launcher %s", IsWindow( hwnd ) ? "stayed" : "gone" ); exitTest( ); }
 		if ( ( p = testEnv( "VOYAGERSP_TEST_LINK" ) ) ) { handleLink( p ); }
 		if ( ( p = testEnv( "VOYAGERSP_TEST_LAUNCHER_SNAPSHOT" ) ) ) {
