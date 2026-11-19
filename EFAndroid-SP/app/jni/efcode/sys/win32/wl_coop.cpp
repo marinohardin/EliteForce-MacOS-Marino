@@ -15,6 +15,11 @@ namespace wl {
 
 static lc_nat *g_coopNat = 0;			/* process-wide: kept when Host is pressed (the game opens its socket on the same port) */
 static void coopNatRelease( ) { if ( g_coopNat ) { lc_nat_release( g_coopNat ); g_coopNat = 0; } }
+/* The open sheet's window, for g_coopNat's answer. The mapping outlives the sheet (Host keeps it), and the sheet is a
+   local of showCoopSheet, so the worker's callback must not reach the sheet object itself: it posts here, or nowhere
+   once the sheet is closed. */
+static volatile HWND g_coopNatHwnd = 0;
+static int g_coopNatGen = 0;				/* which request an answer belongs to (a released one's is ignored) */
 
 struct CoopDlg : Wnd {
 	bool canPlay = false, playNow = false;
@@ -35,17 +40,17 @@ struct CoopDlg : Wnd {
 	bool lanSearched = false;	// a search has finished: keep its text while the next one runs
 	int lanAutoScans = 0;		// searches the sheet ran by itself: 3 (now, +5 s, +10 s), then only Refresh
 	int contentH = 0, clientH = 0;			/* the sheet scrolls when the screen is shorter than it */
-	struct NatRes { CoopDlg *d; lc_nat_result r; char ip[64]; int ext, err; };
-	struct QRes { CoopDlg *d; lc_coop_query q; char dataFolder[LC_MAX_PATH]; };
+	struct NatRes { lc_nat_result r; char ip[64]; int ext, err, gen; };
+	struct QRes { HWND hwnd; lc_coop_query q; char dataFolder[LC_MAX_PATH]; };	/* the sheet's window, not the sheet: it may close first */
 	struct LRes { HWND hwnd; lc_coop_lan_result r; char dataFolder[LC_MAX_PATH]; };
 	static const int WM_NAT = WM_APP + 40, WM_QUERY = WM_APP + 41, WM_LAN = WM_APP + 42;
 
 	static void natCb( lc_nat_result r, const char *ip, int ext, int err, void *u )
 	{
-		CoopDlg *d = (CoopDlg *)u;
-		NatRes *n = new NatRes{ d, r, "", ext, err };
+		NatRes *n = new NatRes{ r, "", ext, err, (int)(intptr_t)u };
 		if ( ip ) lc_strlcpy( n->ip, ip, sizeof n->ip );
-		if ( d->hwnd ) PostMessageW( d->hwnd, WM_NAT, 0, (LPARAM)n ); else delete n;
+		HWND h = g_coopNatHwnd;
+		if ( !h || !IsWindow( h ) || !PostMessageW( h, WM_NAT, 0, (LPARAM)n ) ) delete n;
 	}
 	void natFail( const str &why )
 	{
@@ -55,7 +60,7 @@ struct CoopDlg : Wnd {
 	}
 	void onNat( NatRes *n )
 	{
-		if ( natState == 1 ) {
+		if ( natState == 1 && n->gen == g_coopNatGen ) {
 			switch ( n->r ) {
 			case LC_NAT_OK: {
 				unsigned a, b, c, d; unsigned long ip = 0; if ( sscanf( n->ip, "%u.%u.%u.%u", &a, &b, &c, &d ) == 4 ) ip = ( a << 24 ) | ( b << 16 ) | ( c << 8 ) | d;
@@ -87,7 +92,7 @@ struct CoopDlg : Wnd {
 		if ( on ) {
 			coopNatRelease( );
 			natState = 1; natWhy.clear( ); natPublic.clear( );
-			g_coopNat = lc_nat_map_udp( LC_COOP_PORT, natCb, this );
+			g_coopNat = lc_nat_map_udp( LC_COOP_PORT, natCb, (void *)(intptr_t)++g_coopNatGen );
 			SetTimer( hwnd, 1, 15000, 0 );
 			if ( !g_coopNat ) natFail( "The router didn\xE2\x80\x99t open the port (error 0)." );
 		} else {
@@ -115,7 +120,7 @@ struct CoopDlg : Wnd {
 		QRes *r = (QRes *)u;
 		lc_coop_query_run( r->q.address, 2.0, &r->q );
 		lc_coop_check_paks( &r->q, r->dataFolder );
-		if ( r->d->hwnd ) PostMessageW( r->d->hwnd, WM_QUERY, 0, (LPARAM)r ); else delete r;
+		if ( !IsWindow( r->hwnd ) || !PostMessageW( r->hwnd, WM_QUERY, 0, (LPARAM)r ) ) delete r;
 	}
 	/* Connect is enabled and the default button (accent border, Enter) only while a Check found a game. This window
 	   isn't a dialog class, so Enter arrives as IDOK (see onCommand) rather than through DM_SETDEFID. */
@@ -133,7 +138,7 @@ struct CoopDlg : Wnd {
 		checking = true; EnableWindow( ctl( ID_CHECK ), FALSE );
 		found = false; setConnectable( false ); setTooltip( hwnd, ctl( ID_CONNECT ), "Check the address first" );
 		showResult( -1, R_TEXT, fmt( "Checking %s\xE2\x80\xA6", a.empty( ) ? "the address" : a.c_str( ) ), "", true );
-		QRes *r = new QRes; r->d = this; memset( &r->q, 0, sizeof r->q ); lc_strlcpy( r->q.address, a.c_str( ), sizeof r->q.address );
+		QRes *r = new QRes; r->hwnd = hwnd; memset( &r->q, 0, sizeof r->q ); lc_strlcpy( r->q.address, a.c_str( ), sizeof r->q.address );
 		lc_strlcpy( r->dataFolder, dataFolder.c_str( ), sizeof r->dataFolder );
 		lc_thread *t = lc_thread_start( queryWorker, r );
 		if ( t ) lc_thread_detach( t ); else { delete r; checking = false; EnableWindow( ctl( ID_CHECK ), TRUE ); }
@@ -370,7 +375,8 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 		int availH = (int)( ( wa.bottom - wa.top ) * 96 / g_dpi ) - 70;
 		d.contentH = H; d.clientH = min( H, max( 360, availH ) );
 	}
-	d.create( L"Co-op", W0, d.clientH, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner );
+	if ( !d.create( L"Co-op", W0, d.clientH, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner ) ) return;
+	g_coopNatHwnd = d.hwnd;
 	if ( d.contentH > d.clientH ) {
 		SCROLLINFO si = { sizeof si, SIF_RANGE | SIF_PAGE | SIF_POS, 0, S( d.contentH ) - 1, (UINT)S( d.clientH ), 0, 0 };
 		SetWindowLongW( d.hwnd, GWL_STYLE, GetWindowLongW( d.hwnd, GWL_STYLE ) | WS_VSCROLL );
@@ -491,6 +497,7 @@ void showCoopSheet( HWND owner, bool canPlay, const str &prefillAddress, bool au
 	SetFocus( ae );
 	if ( autoCheck ) PostMessageW( d.hwnd, WM_COMMAND, MAKEWPARAM( CoopDlg::ID_CHECK, BN_CLICKED ), (LPARAM)cb );
 	d.runModal( );
+	g_coopNatHwnd = 0;
 	if ( playNow ) *playNow = d.playNow;
 }
 
