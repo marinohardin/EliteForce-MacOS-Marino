@@ -76,6 +76,8 @@ Console:
   coop_password                   (a cvar) the host's password / the one sent
   coop_netstats 1 / 2             bytes and time every 5 s / and what changes most
   coop_simlatency <ms>, coop_simloss <percent>   (cvars, tests) a slow or lossy network
+  coop_simjitter <ms>, coop_simburst <ms>        (cvars, tests) uneven delivery: up to that much
+                                  more per packet / now and then everything held that long
 ===========================================================================
 */
 
@@ -388,7 +390,9 @@ static void CoopSendNow( int sock, const struct sockaddr_in *to, const void *dat
 /*
 A bad network, for tests: coop_simlatency <ms> holds every packet this copy sends that long
 (set it on both copies for a round trip of twice that), and coop_simloss <percent> drops that
-share of them. Both are 0 (off) unless set.
+share of them. coop_simjitter <ms> adds 0 to that many ms more to each (the order is kept), and
+coop_simburst <ms> now and then (every 0.3-1.5 s) holds everything for 60-100% of that long and
+then sends it at once, as Wi-Fi does. All are 0 (off) unless set.
 */
 #define COOP_SIM_QUEUE	1024
 
@@ -421,12 +425,31 @@ static void CoopSimFlush( void )
 
 static void CoopSendTo( int sock, const struct sockaddr_in *to, const void *data, int len )
 {
-	int delay, loss;
+	int delay, loss, jitter, burst;
 
 	if ( sock < 0 || len <= 0 )
 		return;
 	delay = Cvar_VariableIntegerValue( "coop_simlatency" );
 	loss = Cvar_VariableIntegerValue( "coop_simloss" );
+	jitter = Cvar_VariableIntegerValue( "coop_simjitter" );
+	if ( jitter > 0 )
+		delay = MAX( delay, 0 ) + (int)( arc4random() % (unsigned)( MIN( jitter, 1000 ) + 1 ) );
+	burst = Cvar_VariableIntegerValue( "coop_simburst" );
+	if ( burst > 0 )
+	{
+		// now and then everything is held back for 60-100% of that many ms, then goes at once (Wi-Fi)
+		static int holdUntil, nextHold;
+		int now = Sys_Milliseconds();
+
+		burst = MIN( burst, 1000 );
+		if ( now - nextHold >= 0 && now - holdUntil >= 0 )
+		{
+			holdUntil = now + burst * 6 / 10 + (int)( arc4random() % (unsigned)( burst * 4 / 10 + 1 ) );
+			nextHold = holdUntil + 300 + (int)( arc4random() % 1200 );
+		}
+		if ( holdUntil - now > 0 )
+			delay = MAX( delay, 0 ) + ( holdUntil - now );
+	}
 	if ( loss > 0 && (int)( arc4random() % 100 ) < loss )
 		return;
 	if ( delay <= 0 || len > COOP_MAX_PACKET )
@@ -1213,6 +1236,13 @@ static void CoopHostInput( msg_t *msg )
 		if ( coopHost.haveCmd && c.seq - coopHost.cmd.seq <= 0 )
 			continue;
 		coopHost.cmd = c;
+		if ( coopHost.haveCmd && c.seq - coopHost.appliedSeq <= 0 )
+		{
+			// a frame that had none waiting already stood in for it (CoopNet_GuestInput): only its buttons
+			coopHost.heldButtons |= c.buttons;
+			coopHost.cmdHeard = Sys_Milliseconds();
+			continue;
+		}
 		if ( coopHost.queued == COOP_CMD_QUEUE )
 		{
 			// the guest got ahead: drop the oldest, keeping its buttons
@@ -1382,14 +1412,17 @@ int CoopNet_HostGuestLevel( void )
 CoopNet_GuestInput
 
 The game's co-op code, once a game frame on the host (through sp/sp_bridge.cpp): the
-guest's next command. The guest makes one command per host frame it gets (each 50 ms
-of its play), so the game applies them one a frame, in order, and every replica frame
+guest's next command. The guest makes one command per host frame (each 50 ms of the
+host's time on its own clock), so the game applies them one a frame, in order, and every replica frame
 says which was the last (ackCmd): the guest's prediction replays the ones after it.
 With none waiting this frame (a command a little late, network jitter), player 2 keeps
 the newest command's angles and, for COOP_INPUT_REPEAT frames, its movement, without its
 buttons: a held crouch stays held (zeroed, player 2 stood up for a frame and its legs
 played the standing animation, a pop the guest saw on its own body) and a walk doesn't
-stall into the "sliding" standing legs; after that it stands still. Returns
+stall into the "sliding" standing legs; after that it stands still. Such a frame stands in
+for the next command (appliedSeq goes on, and when that command comes only its buttons are
+kept): a late command used to be applied a frame later on top, a step more than the guest's
+prediction had, and its view jumped ahead. Returns
 0 when there is no guest or its input is older than COOP_INPUT_STALE ms; player 2 then
 holds still (or, with no guest, follows player 1).
 =================
@@ -1403,6 +1436,9 @@ int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *for
 	{
 		coopHost.heldButtons = 0;
 		coopHost.queued = 0;
+		if ( coopHost.haveCmd && coopHost.appliedSeq - coopHost.cmd.seq > 0 )
+			coopHost.appliedSeq = coopHost.cmd.seq;		// the frames that stood in for commands never sent
+		coopHost.starved = 0;
 		return 0;
 	}
 	if ( coopHost.queued )
@@ -1420,6 +1456,8 @@ int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *for
 		c.buttons = 0;
 		if ( ++coopHost.starved > COOP_INPUT_REPEAT )
 			c.forwardmove = c.rightmove = c.upmove = 0;
+		else
+			coopHost.appliedSeq++;		// it stands in for the next command (see above)
 	}
 	angles[0] = c.angles[0];
 	angles[1] = c.angles[1];
@@ -2222,6 +2260,8 @@ static void CoopAddCommands( void )
 	Cvar_Get( "coop_netstats", "0", CVAR_TEMP );
 	Cvar_Get( "coop_simlatency", "0", CVAR_TEMP );
 	Cvar_Get( "coop_simloss", "0", CVAR_TEMP );
+	Cvar_Get( "coop_simjitter", "0", CVAR_TEMP );
+	Cvar_Get( "coop_simburst", "0", CVAR_TEMP );
 	Cmd_AddCommand( "coop_status", CoopStatus_f );
 	Cmd_AddCommand( "coop_disconnect", CoopDisconnect_f );
 	Cmd_AddCommand( "coop_kick", CoopKick_f );
