@@ -78,6 +78,7 @@ const char *Sys_DataResolve( int argc, char **argv, qboolean headless );
 const char *Sys_DataHomePath( void );
 void Sys_DataPrintEarlyLog( void );
 void Sys_DataInstallLog( void );
+void Sys_DataFlushLog( void );	// main loop: print what worker threads logged
 qboolean Sys_DataOverridden( int argc, char **argv );
 #endif
 
