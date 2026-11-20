@@ -680,9 +680,11 @@ Set text colors based on Q3 color codes
 */
 void CON_WindowsColorPrint( const char *msg )
 {
-	static char buffer[ MAXPRINTMSG ];
+	// On the stack, not static: a conversion warning from Sys_UTF8ToWide prints through here
+	// again, and shared buffers would then print the warning twice and lose the text.
+	char        buffer[ MAXPRINTMSG ];
 #ifdef UNICODE
-	static WCHAR wbuffer[ MAXPRINTMSG ];
+	WCHAR       wbuffer[ MAXPRINTMSG ];
 #endif
 	int         length = 0;
 

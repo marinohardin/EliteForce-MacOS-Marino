@@ -468,6 +468,8 @@ const char *Sys_Dirname( const char *path )
 	while( length > 0 && dir[ length ] != '\\' )
 		length--;
 
+	if( length < 0 )	// "" (argv[ 0 ] can be empty): dir[ -1 ] is before the buffer
+		length = 0;
 	dir[ length ] = '\0';
 
 	return dir;
@@ -496,7 +498,19 @@ qboolean Sys_UTF8ToWide( unsigned short *wstr, const char *str, int wstrCount )
 		}
 		wstr[i] = '\0';
 
-		Com_Printf( "WARNING: Converting UTF-8 ('%s') to UTF-16 failed: error 0x%08x.\n", str, (int) GetLastError() );
+		// Leaves out the string and can't re-enter itself: every console print converts through
+		// here (CON_WindowsColorPrint), so a warning that carried the same bytes failed again and
+		// printed itself until the stack overflowed.
+		{
+			static qboolean warning = qfalse;
+			DWORD err = GetLastError();
+
+			if ( !warning ) {
+				warning = qtrue;
+				Com_Printf( "WARNING: Converting UTF-8 to UTF-16 failed (error 0x%08x); shown with '?'.\n", (unsigned int) err );
+				warning = qfalse;
+			}
+		}
 		return qfalse;
 	}
 
