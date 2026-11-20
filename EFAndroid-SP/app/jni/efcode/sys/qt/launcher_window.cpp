@@ -244,11 +244,14 @@ QWidget *LauncherWindow::buildHeader()
 	QLabel *ic = new QLabel;
 	ic->setFixedSize( px( 56 ), px( 56 ) );
 	QPixmap pm( ":/icon.png" );
-	if ( !pm.isNull() )
-		ic->setPixmap( pm.scaled( QSize( px( 56 ), px( 56 ) ) * devicePixelRatioF(), Qt::KeepAspectRatio,
-			Qt::SmoothTransformation ) );
-	if ( !pm.isNull() )
-		ic->pixmap().setDevicePixelRatio( devicePixelRatioF() );
+	if ( !pm.isNull() ) {
+		/* the ratio goes on the pixmap before the label gets it: QLabel::pixmap() returns a copy, so setting it
+		   there afterwards did nothing and a 2x screen showed the icon's top-left quarter at double size */
+		QPixmap scaled = pm.scaled( QSize( px( 56 ), px( 56 ) ) * devicePixelRatioF(), Qt::KeepAspectRatio,
+			Qt::SmoothTransformation );
+		scaled.setDevicePixelRatio( devicePixelRatioF() );
+		ic->setPixmap( scaled );
+	}
 	left->addWidget( ic, 0, Qt::AlignTop );
 	if ( !pm.isNull() )
 		setWindowIcon( QIcon( pm ) );
