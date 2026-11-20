@@ -106,6 +106,9 @@ int lc_mkdir( const char *path );					/* 1 ok or exists */
 int lc_mkdir_p( const char *path );
 int lc_remove( const char *path );					/* file or empty dir */
 int lc_rename( const char *from, const char *to );	/* replaces an existing file */
+/* why the last file call above failed: GetLastError's text on Windows, strerror( errno ) elsewhere.
+   Call it right after the failure. *inUse is set when the file is open elsewhere (Windows). */
+void lc_file_error( char *err, size_t errSize, int *inUse );
 /* read a whole file (NUL-terminated, *len without the NUL); free() it */
 char *lc_read_file( const char *path, size_t *len );
 /* write via <path>.tmp + rename */

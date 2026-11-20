@@ -1,6 +1,12 @@
 #include "lc_common.h"
 #include "lc_test.h"
 #include <stdlib.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+static size_t logLen;
+static void LogLen( const char *line, void *u ) { (void)u; logLen = strlen( line ); }
 
 int main( void )
 {
@@ -60,6 +66,54 @@ int main( void )
 		char *text = lc_read_file( path, NULL );
 		CHECK( text && strstr( text, "// comment kept" ) );
 		free( text );
+	}
+
+	/* rename replaces the target; a failure says why */
+	{
+		char a[LC_MAX_PATH], b[LC_MAX_PATH], why[256] = "";
+		int inUse = -1;
+		char *text;
+		FILE *f;
+
+		lc_path_join( a, sizeof( a ), lc_homepath( ), "rename-a" );
+		lc_path_join( b, sizeof( b ), lc_homepath( ), "rename-b" );
+		f = lc_fopen( a, "wb" ); fputs( "new", f ); fclose( f );
+		f = lc_fopen( b, "wb" ); fputs( "old", f ); fclose( f );
+		CHECK( lc_rename( a, b ) );
+		CHECK( !lc_is_file( a ) );
+		text = lc_read_file( b, NULL );
+		CHECK_STR( text, "new" );
+		free( text );
+		CHECK( !lc_rename( a, b ) );	/* a is gone */
+		lc_file_error( why, sizeof( why ), &inUse );
+		CHECK( why[0] != 0 );
+		CHECK( inUse == 0 );
+#ifdef _WIN32
+		{	/* the target held open without delete sharing, as a running game holds its files */
+			wchar_t wb[LC_MAX_PATH];
+			HANDLE h;
+			f = lc_fopen( a, "wb" ); fputs( "newer", f ); fclose( f );
+			MultiByteToWideChar( CP_UTF8, 0, b, -1, wb, LC_MAX_PATH );
+			h = CreateFileW( wb, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL );
+			CHECK( h != INVALID_HANDLE_VALUE );
+			CHECK( !lc_rename( a, b ) );
+			lc_file_error( why, sizeof( why ), &inUse );
+			CHECK( inUse == 1 && why[0] );
+			CloseHandle( h );
+			CHECK( lc_rename( a, b ) );
+		}
+#endif
+		lc_remove( b );
+	}
+
+	/* a log line longer than the buffer arrives truncated and terminated */
+	{
+		static char big[3000];
+		memset( big, 'x', sizeof( big ) - 1 );
+		lc_set_log_sink( LogLen, NULL );
+		lc_log( "%s", big );
+		lc_set_log_sink( NULL, NULL );
+		CHECK( logLen == 2047 );
 	}
 	return TEST_DONE( );
 }

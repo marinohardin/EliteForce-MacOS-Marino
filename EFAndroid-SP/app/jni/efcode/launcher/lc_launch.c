@@ -56,6 +56,7 @@ static void Addf( char *buf, size_t size, const char *fmt, ... )
 	va_start( ap, fmt );
 	vsnprintf( buf + n, size - n, fmt, ap );
 	va_end( ap );
+	buf[ size - 1 ] = '\0';	/* msvcrt's _vsnprintf leaves a truncated result unterminated */
 }
 
 /* The §3.2 list as one string (each item followed by a space). used = what the
