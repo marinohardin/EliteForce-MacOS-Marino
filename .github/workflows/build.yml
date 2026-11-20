@@ -115,6 +115,29 @@ jobs:
           ui="$(find unpacked/squashfs-root -name 'libefui*.so' | head -1)"
           test -n "$game" && test -n "$ui"
           LD_LIBRARY_PATH="$(dirname "$game")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" dist/modload "$game" "$ui"
+      - name: Launcher snapshots (Qt offscreen)
+        # ef-launcher's window rendered to PNGs (VOYAGERSP_TEST_LAUNCHER_SNAPSHOT), light and dark, with and
+        # without the update badge, at 2x and with the Steam Deck's larger scale: for looking at, not compared
+        run: |
+          mkdir -p launcher-snapshots
+          shot() {	# <name> [VAR=value...]
+            name="$1"; shift
+            env HOME="$PWD/launcher-home-$name" QT_QPA_PLATFORM=offscreen VOYAGERSP_TEST_NODIALOG=1 \
+              VOYAGERSP_TEST_UPDATE=none VOYAGERSP_TEST_LAUNCHER_SNAPSHOT="$PWD/launcher-snapshots/$name.png" "$@" \
+              timeout 60 unpacked/squashfs-root/usr/bin/ef-launcher
+          }
+          shot light VOYAGERSP_TEST_LAUNCHER_APPEARANCE=light
+          shot dark VOYAGERSP_TEST_LAUNCHER_APPEARANCE=dark
+          shot light-update VOYAGERSP_TEST_LAUNCHER_APPEARANCE=light VOYAGERSP_TEST_UPDATE=9.9.9
+          shot dark-update VOYAGERSP_TEST_LAUNCHER_APPEARANCE=dark VOYAGERSP_TEST_UPDATE=9.9.9
+          shot light-2x VOYAGERSP_TEST_LAUNCHER_APPEARANCE=light QT_SCALE_FACTOR=2
+          shot dark-deck VOYAGERSP_TEST_LAUNCHER_APPEARANCE=dark VOYAGERSP_TEST_DECK=1
+          ls -l launcher-snapshots
+      - uses: actions/upload-artifact@v4.6.0
+        with:
+          name: linux-launcher-snapshots
+          path: launcher-snapshots/*.png
+          if-no-files-found: error
       - name: Dedicated server smoke (no GPU)
         run: tests/smoke/run-smoke.sh server "$(echo dist/EliteForce-Marino-*-x86_64.AppImage)"
       - name: Client smoke (Xvfb + lavapipe)

@@ -11,6 +11,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 /* win_launcher.h declares this with the engine's qboolean (an enum, int-sized); this file stays free of q_shared.h */
 enum { qfalse = 0, qtrue = 1 };
 #include <tlhelp32.h>
+#include <cmath>
 
 extern "C" void Sys_CoopSetLaunchPassword( const char *pw ) __attribute__(( weak ));
 
@@ -25,7 +26,7 @@ enum {
 	IDC_SRV0 = 230,		/* 230..236 value labels */
 	IDC_NAME = 240, IDC_NAMEHINT, IDC_MASTERSUM, IDC_SERVERS, IDC_LOOPBACK, IDC_LOOPHINT, IDC_CMOD, IDC_HUD, IDC_MODLABEL, IDC_NAMELABEL, IDC_INETLABEL,
 	IDC_PATH = 260, IDC_STATUS, IDC_EXPANSION, IDC_SHOW, IDC_ADD, IDC_CHANGE, IDC_VERSION,
-	IDC_GEAR = 270, IDC_DOWNLOAD, IDC_BADGE1, IDC_BADGE2,
+	IDC_GEAR = 270, IDC_DOWNLOAD, IDC_BADGE1, IDC_BADGE2, IDC_BRAND,
 	IDC_SRVLAB0 = 280,	/* 280..285 server summary captions (they were IDC_SRV0 + 20 + i: 250 is IDC_INETLABEL) */
 	IDM_ABOUT = 0x8010, IDM_UPDATE, IDM_AUTOUPDATE, IDM_QUIT
 };
@@ -232,18 +233,25 @@ struct Launcher : Wnd {
 		for ( auto &i : ids ) (void)i;
 		groups.clear( );
 		int y = 30;
-		/* header */
-		label( 98, y + 0, 330, 16, "Star Trek: Voyager", 12, 600, R_TEXT2, DT_SINGLELINE );
-		label( 98, y + 16, 330, 30, "Elite Force", 24, 700, R_TEXT, DT_SINGLELINE );
-		label( 98, y + 46, 330, 17, "Choose how you want to play.", 13, 400, R_TEXT2, DT_SINGLELINE );
-		HWND gear = mkIconButton( hwnd, 620 - MX - 28, y + 17, 28, 26, IDC_GEAR, G_MORE, "More: About, Check for Updates\xE2\x80\xA6" );
+		/* header: the title lettering is drawn from images (launcher_titles.h) */
+		titleLabel( 98, y + 5, LT_STAR_TREK_VOYAGER, R_TEXT2 );
+		titleLabel( 98, y + 20, LT_ELITE_FORCE, R_TEXT );
+		label( 98, y + 42, 330, 17, "Choose how you want to play.", 13, 400, R_TEXT2, DT_SINGLELINE );
+		/* "AwayTeamEF" at the right margin, its baseline on Elite Force's; the gear above it, right-aligned
+		   with it; the update badge takes its place while it shows */
+		{
+			const launcherTitle_t *a = titleInfo( LT_AWAY_TEAM_EF ), *e = titleInfo( LT_ELITE_FORCE );
+			titleLabel( 620 - MX - (int)ceil( a->w ), y + 20 + (int)lround( e->baseline - a->baseline ), LT_AWAY_TEAM_EF, R_GOLD,
+				IDC_BRAND );
+		}
+		HWND gear = mkIconButton( hwnd, 620 - MX - 28, y - 18, 28, 26, IDC_GEAR, G_MORE, "More: About, Check for Updates\xE2\x80\xA6" );
 		ids[IDC_GEAR] = gear;	/* gearMenu places the menu under it ( ctl( IDC_GEAR ) ) */
-		/* update badge: built hidden */
-		gBadge = addGroup( 620 - MX - 28 - 8 - 260, y + 8, 260, 46, "", 9 );
+		/* update badge: built hidden; wide enough that its text ends before the Download button */
+		gBadge = addGroup( 620 - MX - 280, y + 10, 280, 46, "", 9 );
 		groups[gBadge].kind = 1; groups[gBadge].visible = false;
-		label( 620 - MX - 28 - 8 - 260 + 38, y + 13, 150, 16, "Update available", 12, 600, R_TEXT, DT_SINGLELINE, IDC_BADGE1 );
-		label( 620 - MX - 28 - 8 - 260 + 38, y + 29, 150, 16, "", 11, 400, R_TEXT2, DT_SINGLELINE, IDC_BADGE2 );
-		button( 620 - MX - 28 - 8 - 84, y + 16, 76, 22, "Download\xE2\x80\xA6", IDC_DOWNLOAD, false, 12 );
+		label( 620 - MX - 280 + 38, y + 15, 150, 16, "Update available", 12, 600, R_TEXT, DT_SINGLELINE, IDC_BADGE1 );
+		label( 620 - MX - 280 + 38, y + 31, 150, 16, "", 11, 400, R_TEXT2, DT_SINGLELINE, IDC_BADGE2 );
+		button( 620 - MX - 84, y + 18, 76, 22, "Download\xE2\x80\xA6", IDC_DOWNLOAD, false, 12 );
 		setTooltip( hwnd, ctl( IDC_DOWNLOAD ), "Open the release page on GitHub" );
 		y += 62 + 20;
 		/* cards */
@@ -580,6 +588,7 @@ struct Launcher : Wnd {
 		bool show = updNewer;
 		groups[gBadge].visible = show;
 		for ( int id : { IDC_BADGE1, IDC_BADGE2, IDC_DOWNLOAD } ) showCtl( id, show );
+		showCtl( IDC_BRAND, !show );
 		if ( show ) {
 			setText( ctl( IDC_BADGE2 ), fmt( "Version %s \xC2\xB7 you have %s", updVersion.c_str( ), appVersion( ).c_str( ) ) );
 			setTooltip( hwnd, ctl( IDC_BADGE2 ), fmt( "Elite Force for Windows %s is on GitHub", updVersion.c_str( ) ).c_str( ) );

@@ -12,6 +12,8 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 
 #include <cmath>
 
+#include "../launcher_titles.h"
+
 extern int g_argc;
 extern char **g_argv;
 
@@ -36,6 +38,51 @@ protected:
 		p.drawRoundedRect( QRectF( rect() ), 9, 9 );
 		QFrame::paintEvent( e );
 	}
+};
+
+/* ---- the header's title lettering ---------------------------------------------------------------- */
+
+/* One string of the header in its Star Trek font, drawn from launcher_titles.h's alpha mask tinted with
+   the palette's colour for its role (so it follows a theme change) at the screen's pixel ratio. A
+   QLabel holding the string, so screen readers read it as text. */
+class TitleLabel : public QLabel {
+public:
+	enum Tint { Secondary, Primary, Gold };
+	TitleLabel( int which, Tint tint ) : m_t( launcherTitles[which] ), m_tint( tint )
+	{
+		setText( U( m_t.text ) );
+		m_mask.loadFromData( m_t.png, m_t.pngLen, "PNG" );
+		m_mask = m_mask.convertToFormat( QImage::Format_ARGB32_Premultiplied );
+		setFixedSize( int( std::ceil( m_t.w * scale() ) ), int( std::ceil( m_t.h * scale() ) ) );
+	}
+	/* rows from the top to the baseline, in device-independent pixels */
+	double baseline() const { return m_t.baseline * scale(); }
+protected:
+	void paintEvent( QPaintEvent * ) override
+	{
+		const qreal dpr = devicePixelRatioF();
+		const QColor c = m_tint == Gold ? QColor( 0xD6, 0xA0, 0x3C )
+			: m_tint == Secondary ? secondary() : palette().color( QPalette::WindowText );
+		const QSize dev( qRound( m_t.w * scale() * dpr ), qRound( m_t.h * scale() * dpr ) );
+		if ( m_cache.isNull() || m_cache.size() != dev || m_cacheColor != c ) {
+			QImage img = m_mask.scaled( dev, Qt::IgnoreAspectRatio, Qt::SmoothTransformation );
+			QPainter ip( &img );
+			ip.setCompositionMode( QPainter::CompositionMode_SourceIn );
+			ip.fillRect( img.rect(), c );
+			ip.end();
+			m_cache = QPixmap::fromImage( img );
+			m_cache.setDevicePixelRatio( dpr );
+			m_cacheColor = c;
+		}
+		QPainter p( this );
+		p.drawPixmap( 0, 0, m_cache );
+	}
+private:
+	const launcherTitle_t &m_t;
+	Tint m_tint;
+	QImage m_mask;
+	QPixmap m_cache;
+	QColor m_cacheColor;
 };
 
 /* ---- helpers ------------------------------------------------------------------------------------ */
@@ -165,6 +212,7 @@ void LauncherWindow::build()
 	root->setContentsMargins( px( 28 ), px( 30 ), px( 28 ), px( 20 ) );
 	root->setSpacing( px( 16 ) );
 	root->addWidget( buildHeader() );
+	root->setContentsMargins( px( 28 ), qMax( px( 8 ), px( 30 ) - m_headerLift ), px( 28 ), px( 20 ) );
 	root->addSpacing( px( 4 ) );
 	root->addWidget( buildCards() );
 
@@ -190,6 +238,9 @@ QWidget *LauncherWindow::buildHeader()
 	h->setContentsMargins( 0, 0, 0, 0 );
 	h->setSpacing( px( 14 ) );
 
+	/* left: the icon and the titles; they start m_headerLift lower, under the gear's row (set at the end) */
+	QHBoxLayout *left = new QHBoxLayout;
+	left->setSpacing( px( 14 ) );
 	QLabel *ic = new QLabel;
 	ic->setFixedSize( px( 56 ), px( 56 ) );
 	QPixmap pm( ":/icon.png" );
@@ -198,16 +249,24 @@ QWidget *LauncherWindow::buildHeader()
 			Qt::SmoothTransformation ) );
 	if ( !pm.isNull() )
 		ic->pixmap().setDevicePixelRatio( devicePixelRatioF() );
-	h->addWidget( ic );
+	left->addWidget( ic, 0, Qt::AlignTop );
 	if ( !pm.isNull() )
 		setWindowIcon( QIcon( pm ) );
 
+	/* the title lettering (Star Trek fonts, as images: launcher_titles.h) */
+	TitleLabel *stv = new TitleLabel( LT_STAR_TREK_VOYAGER, TitleLabel::Secondary );
+	TitleLabel *ef = new TitleLabel( LT_ELITE_FORCE, TitleLabel::Primary );
 	QVBoxLayout *col = new QVBoxLayout;
-	col->setSpacing( px( 2 ) );
-	col->addWidget( label( "Star Trek: Voyager", 12, QFont::DemiBold, secondary() ) );
-	col->addWidget( label( "Elite Force", 24, QFont::Bold ) );
+	col->setSpacing( 0 );
+	col->setContentsMargins( 0, px( 2 ), 0, 0 );
+	col->addWidget( stv );
+	col->addSpacing( px( 6 ) );
+	col->addWidget( ef );
+	col->addSpacing( px( 5 ) );
 	col->addWidget( label( "Choose how you want to play.", 13, QFont::Normal, secondary() ) );
-	h->addLayout( col );
+	col->addStretch( 1 );
+	left->addLayout( col );
+	h->addLayout( left );
 	h->addStretch( 1 );
 
 	/* update badge (hidden until a newer release is known) */
@@ -233,7 +292,6 @@ QWidget *LauncherWindow::buildHeader()
 	bh->addWidget( dl );
 	b->hide();
 	m_badge = b;
-	h->addWidget( b, 0, Qt::AlignVCenter );
 
 	/* the application menu (About, Check for Updates…, Quit) */
 	QToolButton *gear = iconButton( "gear", "Menu", 14 );
@@ -254,7 +312,7 @@ QWidget *LauncherWindow::buildHeader()
 		if ( on )
 			startUpdateCheck();
 		else
-			m_badge->hide();
+			setBadgeShown( false );
 	} );
 	menu->addSeparator();
 	QAction *q = menu->addAction( "Quit" );
@@ -262,7 +320,29 @@ QWidget *LauncherWindow::buildHeader()
 	connect( q, &QAction::triggered, this, &LauncherWindow::quit );
 	gear->setMenu( menu );
 	m_menu = menu;
-	h->addWidget( gear, 0, Qt::AlignTop );
+
+	/* right: the gear at the top, "AwayTeamEF" under it, right-aligned with it and on Elite Force's
+	   baseline; the update badge takes AwayTeamEF's place while it shows */
+	TitleLabel *brand = new TitleLabel( LT_AWAY_TEAM_EF, TitleLabel::Gold );
+	m_brand = brand;
+	const int gap = px( 6 );
+	QVBoxLayout *right = new QVBoxLayout;
+	right->setSpacing( 0 );
+	right->addWidget( gear, 0, Qt::AlignRight );
+	right->addSpacing( gap );
+	right->addWidget( brand, 0, Qt::AlignRight );
+	right->addWidget( b, 0, Qt::AlignRight );
+	right->addStretch( 1 );
+	h->addLayout( right );
+
+	/* the left side starts lower by the difference between AwayTeamEF's top and Elite Force's at the same
+	   baseline; the header as a whole moves up by as much (build()), so the icon and titles stay where they were */
+	const int gearH = gear->sizeHint().height();
+	const int efTop = px( 2 ) + stv->height() + px( 6 );
+	m_headerLift = qMax( 0, gearH + gap + int( std::lround( ef->baseline() - brand->baseline() ) ) - efTop );
+	left->setContentsMargins( 0, m_headerLift, 0, 0 );
+	/* no jump when the badge appears */
+	w->setMinimumHeight( qMax( m_headerLift + px( 56 ), gearH + gap + b->sizeHint().height() ) );
 	return w;
 }
 
@@ -1249,12 +1329,19 @@ void LauncherWindow::showUpdateBadge()
 	const bool newer = !m_updateVersion.isEmpty() && lc_version_is_newer( B( m_updateVersion ).constData(),
 		B( mine ).constData() );
 	if ( !newer || !m_autoUpdateAction->isChecked() ) {
-		m_badge->hide();
+		setBadgeShown( false );
 		return;
 	}
 	m_badgeText->setText( QString::fromUtf8( "Version %1 \xc2\xb7 you have %2" ).arg( m_updateVersion, mine ) );
 	m_badge->setToolTip( QString( "Elite Force for %1 %2 is on GitHub" ).arg( platformName(), m_updateVersion ) );
-	m_badge->show();
+	setBadgeShown( true );
+}
+
+/* the update badge shows in AwayTeamEF's place */
+void LauncherWindow::setBadgeShown( bool on )
+{
+	m_badge->setVisible( on );
+	m_brand->setVisible( !on );
 }
 
 QString LauncherWindow::platformName()

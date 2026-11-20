@@ -76,6 +76,7 @@ private:
 
 	void startUpdateCheck();
 	void showUpdateBadge();
+	void setBadgeShown( bool on );
 	void checkForUpdatesNow();
 	void showAbout();
 	QMessageBox *makeAbout();
@@ -134,7 +135,8 @@ private:
 		*m_expText = nullptr, *m_folderIcon = nullptr;
 	QPushButton *m_showFolder = nullptr, *m_addFiles = nullptr, *m_change = nullptr;
 	QPushButton *m_playButton = nullptr, *m_quitButton = nullptr;
-	QWidget *m_badge = nullptr;
+	QWidget *m_badge = nullptr, *m_brand = nullptr;
+	int m_headerLift = 0;		/* the header's top area for the gear, taken from the window's top margin */
 	QLabel *m_badgeTitle = nullptr, *m_badgeText = nullptr;
 	QAction *m_autoUpdateAction = nullptr;
 	QScrollArea *m_scroll = nullptr;
