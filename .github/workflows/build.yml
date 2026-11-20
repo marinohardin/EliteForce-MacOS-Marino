@@ -3,7 +3,7 @@
 #   push to main / pull requests / manual : build + smoke tests + upload artifacts
 #   tag macos-v<ver> : build all three platforms, then attach the Windows zip + installer
 #       and the Linux AppImage to ONE draft GitHub release for the tag, titled
-#       "Elite Force (Marino's Build) <ver>" (created with .github/release-notes.md if
+#       "AwayTeamEF <ver>" (created with .github/release-notes.md if
 #       missing, added to if it exists). Publish by hand.
 #
 # Each version is one release with every platform's downloads, on the tag macos-v<ver>:
@@ -336,7 +336,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ver="${GITHUB_REF_NAME#macos-v}"
-          title="Elite Force (Marino's Build) $ver"
+          title="AwayTeamEF $ver"
           set -- dist/EliteForce-Marino-"$ver"-x86_64.AppImage dist/EliteForce-Marino-"$ver"-windows-x64.zip \
             dist/EliteForce-Marino-"$ver"-setup.exe
           ls -l "$@"   # fails (and so does the job) if one is missing or named for another version
