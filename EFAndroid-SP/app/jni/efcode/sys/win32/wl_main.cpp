@@ -246,11 +246,11 @@ struct Launcher : Wnd {
 		}
 		HWND gear = mkIconButton( hwnd, 620 - MX - 28, y - 18, 28, 26, IDC_GEAR, G_MORE, "More: About, Check for Updates\xE2\x80\xA6" );
 		ids[IDC_GEAR] = gear;	/* gearMenu places the menu under it ( ctl( IDC_GEAR ) ) */
-		/* update badge: built hidden */
-		gBadge = addGroup( 620 - MX - 260, y + 10, 260, 46, "", 9 );
+		/* update badge: built hidden; wide enough that its text ends before the Download button */
+		gBadge = addGroup( 620 - MX - 280, y + 10, 280, 46, "", 9 );
 		groups[gBadge].kind = 1; groups[gBadge].visible = false;
-		label( 620 - MX - 260 + 38, y + 15, 150, 16, "Update available", 12, 600, R_TEXT, DT_SINGLELINE, IDC_BADGE1 );
-		label( 620 - MX - 260 + 38, y + 31, 150, 16, "", 11, 400, R_TEXT2, DT_SINGLELINE, IDC_BADGE2 );
+		label( 620 - MX - 280 + 38, y + 15, 150, 16, "Update available", 12, 600, R_TEXT, DT_SINGLELINE, IDC_BADGE1 );
+		label( 620 - MX - 280 + 38, y + 31, 150, 16, "", 11, 400, R_TEXT2, DT_SINGLELINE, IDC_BADGE2 );
 		button( 620 - MX - 84, y + 18, 76, 22, "Download\xE2\x80\xA6", IDC_DOWNLOAD, false, 12 );
 		setTooltip( hwnd, ctl( IDC_DOWNLOAD ), "Open the release page on GitHub" );
 		y += 62 + 20;
