@@ -140,12 +140,17 @@ COLORREF roleColor( int r )
 /* ------------------------------------------------------------- dpi, fonts */
 
 int g_dpi = 96;
-static std::map<int, HFONT> g_fonts;
+/* Keyed by DPI too, and never freed while windows are up: a DPI change (WM_DPICHANGED, or a
+   sheet opening on another monitor) used to delete every font, but only the Launcher rebuilds
+   its controls, so the server window and open sheets kept drawing with deleted HFONTs. Each
+   DPI's set is a few dozen handles, so they stay until the process exits. */
+static std::map<long long, HFONT> g_fonts;
 
 int S( int v ) { return MulDiv( v, g_dpi, 96 ); }
 
-void setDpi( int dpi ) { if ( dpi >= 96 && dpi != g_dpi ) { g_dpi = dpi; fontsReset( ); } }
+void setDpi( int dpi ) { if ( dpi >= 96 && dpi != g_dpi ) g_dpi = dpi; }
 
+/* Only once no window can still be using a font. */
 void fontsReset( )
 {
 	for ( auto &p : g_fonts ) DeleteObject( p.second );
@@ -154,7 +159,7 @@ void fontsReset( )
 
 HFONT F( int px, int weight, bool mono )
 {
-	int key = px * 10000 + weight * 2 + ( mono ? 1 : 0 );
+	long long key = ( (long long)g_dpi << 32 ) | (long long)( px * 10000 + weight * 2 + ( mono ? 1 : 0 ) );
 	auto i = g_fonts.find( key );
 	if ( i != g_fonts.end( ) ) return i->second;
 	HFONT f = CreateFontW( -S( px ), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,

@@ -1298,7 +1298,14 @@ static int CopyOne( runCtx *rc, const char *from, const char *to, char *buf, cha
 	SetTimes( part, mtime );		/* keep the original dates (the save menu shows them) */
 	/* rename into place: a running engine keeps reading the old inode */
 	if ( !lc_rename( part, to ) ) {
-		lc_snprintf( err, errSize, "Cannot rename %s: %s", part, strerror( errno ) );
+		char why[256];
+		int inUse = 0;
+
+		lc_file_error( why, sizeof( why ), &inUse );
+		if ( inUse )	/* Windows: the old file is open (most often by a running game) */
+			lc_snprintf( err, errSize, "Cannot replace %s: %s It's open in another program; quit Elite Force and try again", to, why );
+		else
+			lc_snprintf( err, errSize, "Cannot rename %s: %s", part, why );
 		lc_remove( part );
 		return 0;
 	}

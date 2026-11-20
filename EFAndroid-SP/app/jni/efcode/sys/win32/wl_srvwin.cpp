@@ -471,9 +471,12 @@ struct SrvWin : Wnd {
 	void doKick( int row )
 	{
 		if ( !hasChild || row < 0 || row >= (int)plist.size( ) ) return;
-		const lc_srv_player &p = plist[row];
+		/* a copy: the Alert below runs a message loop, and a status update can replace plist
+		   (freeing this row, or moving another player into it) meanwhile */
+		const lc_srv_player p = plist[row];
 		if ( !p.bot ) {
 			if ( Alert( hwnd, fmt( "Kick %s?", p.name ), "They're disconnected from the server, but can join again.", { "Kick", "Cancel" }, 1, 1 ) != 0 ) return;
+			if ( !hasChild || !srv ) return;	/* the server stopped while asking */
 		}
 		lc_srv_kick( srv, p.num );
 	}

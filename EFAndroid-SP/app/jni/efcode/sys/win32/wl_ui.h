@@ -120,6 +120,7 @@ struct Wnd {
 	virtual void onUser( UINT m, WPARAM w, LPARAM l ) { (void)m; (void)w; (void)l; }
 	virtual bool preTranslate( MSG *m ) { (void)m; return false; }
 	virtual bool onClose( ) { end( IDCANCEL ); return true; }
+	virtual void dismiss( ) { end( IDCANCEL ); }	/* closed from outside (a stvef:// link): no questions */
 	virtual void onDpiChanged( ) {}
 	virtual LRESULT onNotify( NMHDR *h ) { (void)h; return 0; }
 	virtual LRESULT onOther( UINT m, WPARAM w, LPARAM l, bool *handled ) { (void)m; (void)w; (void)l; *handled = false; return 0; }
