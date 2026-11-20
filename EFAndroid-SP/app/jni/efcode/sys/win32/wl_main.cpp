@@ -26,6 +26,7 @@ enum {
 	IDC_NAME = 240, IDC_NAMEHINT, IDC_MASTERSUM, IDC_SERVERS, IDC_LOOPBACK, IDC_LOOPHINT, IDC_CMOD, IDC_HUD, IDC_MODLABEL, IDC_NAMELABEL, IDC_INETLABEL,
 	IDC_PATH = 260, IDC_STATUS, IDC_EXPANSION, IDC_SHOW, IDC_ADD, IDC_CHANGE, IDC_VERSION,
 	IDC_GEAR = 270, IDC_DOWNLOAD, IDC_BADGE1, IDC_BADGE2,
+	IDC_SRVLAB0 = 280,	/* 280..285 server summary captions (they were IDC_SRV0 + 20 + i: 250 is IDC_INETLABEL) */
 	IDM_ABOUT = 0x8010, IDM_UPDATE, IDM_AUTOUPDATE, IDM_QUIT
 };
 
@@ -318,7 +319,7 @@ struct Launcher : Wnd {
 			int sy = gfxBoxTop + 10;
 			const char *sl[6] = { "Server name:", "Game:", "Maps:", "Players:", "Network:", "Address:" };
 			for ( int i = 0; i < 6; i++ ) {
-				label( lx, sy + 3, lw, 18, sl[i], 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE, IDC_SRV0 + 20 + i );
+				label( lx, sy + 3, lw, 18, sl[i], 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE, IDC_SRVLAB0 + i );
 				label( cx, sy + 3, CW - 14 - lw - 10 - 14, 18, "", 13, i == 5 ? 500 : 400, R_TEXT, DT_SINGLELINE | DT_END_ELLIPSIS, IDC_SRV0 + i );
 				sy += 24;
 			}
@@ -447,7 +448,7 @@ struct Launcher : Wnd {
 		groups[gGfx].visible = mode != 2; groups[gSrv].visible = mode == 2;
 		for ( int id : { IDC_QUALITY, IDC_DISPLAY, IDC_WINSIZE, IDC_HIGHDPI, IDC_AA, IDC_PICMIP, IDC_VSYNC, IDC_BRIGHT, IDC_BRIGHTHINT } ) showCtl( id, mode != 2 );
 		showGfxLabels( mode != 2 );
-		for ( int i = 0; i < 6; i++ ) { showCtl( IDC_SRV0 + i, mode == 2 ); showCtl( IDC_SRV0 + 20 + i, mode == 2 ); }
+		for ( int i = 0; i < 6; i++ ) { showCtl( IDC_SRV0 + i, mode == 2 ); showCtl( IDC_SRVLAB0 + i, mode == 2 ); }
 		if ( mode == 2 ) syncServer( );
 		InvalidateRect( hwnd, 0, TRUE );
 	}
