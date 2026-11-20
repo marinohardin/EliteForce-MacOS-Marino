@@ -236,6 +236,14 @@ static void CoopOpenSocket( void )
 	sa.sin_family = AF_INET;
 	sa.sin_port = htons( (unsigned short)CoopHostPort() );
 	sa.sin_addr.s_addr = htonl( INADDR_ANY );
+#ifdef _WIN32
+	{
+		// Windows lets another program bind the same port with SO_REUSEADDR and take over
+		// some of the datagrams; exclusive use makes that bind fail instead
+		BOOL on = TRUE;
+		setsockopt( fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&on, sizeof( on ) );
+	}
+#endif
 	failed = bind( fd, (struct sockaddr *)&sa, sizeof( sa ) ) != 0;
 	if ( failed )
 		err = COOP_ERRNO();
@@ -461,8 +469,11 @@ void Sys_CoopFrame( void )
 		if ( n < 0 )
 		{
 #ifdef _WIN32
-			// an ICMP "port unreachable" for an answer we sent shows up here; keep reading
-			if ( WSAGetLastError() == WSAECONNRESET )
+			// an ICMP "port unreachable" for an answer we sent shows up here; keep reading.
+			// A datagram bigger than the buffer fails with WSAEMSGSIZE (POSIX truncates it
+			// instead); Winsock has dropped it, so go on to the next one.
+			int e = WSAGetLastError();
+			if ( e == WSAECONNRESET || e == WSAEMSGSIZE )
 				continue;
 #endif
 			break;
