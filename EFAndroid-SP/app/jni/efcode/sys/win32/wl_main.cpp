@@ -236,7 +236,7 @@ struct Launcher : Wnd {
 		label( 98, y + 16, 330, 30, "Elite Force", 24, 700, R_TEXT, DT_SINGLELINE );
 		label( 98, y + 46, 330, 17, "Choose how you want to play.", 13, 400, R_TEXT2, DT_SINGLELINE );
 		HWND gear = mkIconButton( hwnd, 620 - MX - 28, y + 17, 28, 26, IDC_GEAR, G_MORE, "More: About, Check for Updates\xE2\x80\xA6" );
-		(void)gear;
+		ids[IDC_GEAR] = gear;	/* gearMenu places the menu under it ( ctl( IDC_GEAR ) ) */
 		/* update badge: built hidden */
 		gBadge = addGroup( 620 - MX - 28 - 8 - 260, y + 8, 260, 46, "", 9 );
 		groups[gBadge].kind = 1; groups[gBadge].visible = false;
@@ -770,7 +770,8 @@ struct Launcher : Wnd {
 		AppendMenuW( m, MF_STRING | ( lc_store_get_bool( st, LC_KEY_CHECK_UPDATES, 1 ) ? MF_CHECKED : 0 ), IDM_AUTOUPDATE, L"Check for Updates Automatically" );
 		AppendMenuW( m, MF_SEPARATOR, 0, 0 );
 		AppendMenuW( m, MF_STRING, IDM_QUIT, L"Quit\tEsc" );
-		RECT r; GetWindowRect( ctl( IDC_GEAR ), &r );
+		RECT r;
+		if ( !GetWindowRect( ctl( IDC_GEAR ), &r ) ) { POINT p; GetCursorPos( &p ); r.right = p.x; r.bottom = p.y; }
 		int c = TrackPopupMenu( m, TPM_RETURNCMD | TPM_RIGHTALIGN, r.right, r.bottom, 0, hwnd, 0 );
 		DestroyMenu( m );
 		if ( c ) command( c );
@@ -810,7 +811,8 @@ struct Launcher : Wnd {
 		closeSheets( );
 		joinAndPlay( addr, "" );
 	}
-	void closeSheets( ) { for ( Wnd *w : std::vector<Wnd *>( g_sheets ) ) if ( w != this ) w->end( IDCANCEL ); }
+	void closeSheets( ) { for ( Wnd *w : std::vector<Wnd *>( g_sheets ) ) if ( w != this ) w->dismiss( ); }
+	std::vector<str> linkQueue;	/* links from a second instance, handled after WM_COPYDATA returns */
 
 	/* ---------------- message handling ---------------- */
 	bool onClose( ) override { quit( ); return true; }
@@ -887,8 +889,17 @@ struct Launcher : Wnd {
 		case WM_MOUSEWHEEL: if ( contentH > clientH ) { scrollTo( scrollY - (short)HIWORD( w ) * S( 60 ) / 120 ); return 0; } break;
 		case WM_COPYDATA: {
 			COPYDATASTRUCT *cd = (COPYDATASTRUCT *)l;
-			if ( cd && cd->dwData == 0x4C4B4645 && cd->lpData ) { handleLink( str( (const char *)cd->lpData, cd->cbData ? strnlen( (const char *)cd->lpData, cd->cbData ) : 0 ) ); return TRUE; }
+			if ( cd && cd->dwData == 0x4C4B4645 && cd->lpData ) {
+				/* copied and handled from a posted message: handleLink can open a modal sheet,
+				   and the second instance waits in its send until this returns */
+				linkQueue.push_back( str( (const char *)cd->lpData, cd->cbData ? strnlen( (const char *)cd->lpData, cd->cbData ) : 0 ) );
+				PostMessageW( hwnd, WM_APP + 11, 0, 0 );
+				return TRUE;
+			}
 			break; }
+		case WM_APP + 11:
+			while ( !linkQueue.empty( ) ) { str k = linkQueue.front( ); linkQueue.erase( linkQueue.begin( ) ); handleLink( k ); }
+			return 0;
 		case WM_SYSCOMMAND: if ( ( w & 0xFFF0 ) >= IDM_ABOUT && ( w & 0xFFF0 ) <= IDM_AUTOUPDATE ) { command( (int)( w & 0xFFF0 ) ); return 0; } break;
 		case WM_INITMENUPOPUP: {
 			HMENU sm = GetSystemMenu( hwnd, FALSE );
@@ -968,7 +979,9 @@ extern "C" int Sys_WinLauncher( int argc, char **argv, char *commandLine, int si
 		if ( other ) {
 			COPYDATASTRUCT cd = { 0x4C4B4645, (DWORD)link.size( ) + 1, (void *)link.c_str( ) };
 			DWORD pid = 0; GetWindowThreadProcessId( other, &pid ); AllowSetForegroundWindow( pid );
-			SendMessageW( other, WM_COPYDATA, 0, (LPARAM)&cd );
+			DWORD_PTR res = 0;	/* not forever: the first instance may be busy or hung */
+			if ( !SendMessageTimeoutW( other, WM_COPYDATA, 0, (LPARAM)&cd, SMTO_ABORTIFHUNG, 5000, &res ) )
+				lc_log( "Link: the open launcher didn't take the link (error %lu)", (unsigned long)GetLastError( ) );
 			if ( IsIconic( other ) ) ShowWindow( other, SW_RESTORE );
 			SetForegroundWindow( other );
 			exit( 0 );
