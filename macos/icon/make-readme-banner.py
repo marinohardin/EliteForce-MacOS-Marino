@@ -122,7 +122,8 @@ def main():
 
     # the tags: what you can play, then where
     fp, fpb = sp.font(sp.MEDIUM, 21 * S), sp.font(sp.BOLD, 21 * S)
-    for y, tags in ((262, ((("Two-player co-op campaign", fpb, sp.GOLD),),
+    for y, tags in ((262, ((("Single player", fpb, sp.WHITE),),
+                           (("Two-player co-op campaign", fpb, sp.GOLD),),
                            (("Holomatch multiplayer", fpb, sp.WHITE),))),
                     (314, ((("macOS", fpb, sp.WHITE),), (("Windows", fp, sp.SOFT),),
                            (("Linux & Steam Deck", fp, sp.SOFT),)))):

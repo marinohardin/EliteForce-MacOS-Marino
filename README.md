@@ -1,4 +1,4 @@
-<img alt="AwayTeamEF: Star Trek: Voyager: Elite Force, Away Team Edition. Marino's Build. Two-player co-op campaign and Holomatch multiplayer for macOS, Windows, Linux and Steam Deck." src="docs/images/banner.png" width="100%" />
+<img alt="AwayTeamEF: Star Trek: Voyager: Elite Force, Away Team Edition. Marino's Build. Single player, two-player co-op campaign and Holomatch multiplayer for macOS, Windows, Linux and Steam Deck." src="docs/images/banner.png" width="100%" />
 
 # AwayTeamEF: Marino's Build
 
