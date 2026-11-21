@@ -83,8 +83,8 @@ Steps for each platform, Steam Deck setup, and where saves live:
 - **One-click server hosting** with a status window and automatic router port opening.
 - **Modern graphics:** widescreen, Retina / high resolution, full screen, and quality presets.
 - **Automatic update checks** so you know when a new version is out.
--
-- <img width="783" height="964" alt="AwayTeamEF: Holomatch Menus" src="https://github.com/user-attachments/assets/70a4ed86-ad1c-449f-89a7-6efecc681add" />
+  
+<img width="783" height="964" alt="AwayTeamEF: Holomatch Menus" src="https://github.com/user-attachments/assets/70a4ed86-ad1c-449f-89a7-6efecc681add" />
 
 
 ## Learn More
