@@ -631,6 +631,14 @@ qboolean CG_RegisterClientModelname( clientInfo_t *ci,
 {
 	char		filename[MAX_QPATH];
 
+#ifdef EF_COOP
+	// player 2 in a Holomatch model (models/players2/)
+	int coopHolo = COOP_RegisterHoloModels( ci, headModelName, headSkinName, torsoModelName, torsoSkinName, legsModelName, legsSkinName );
+	if ( coopHolo >= 0 )
+	{
+		return coopHolo ? qtrue : qfalse;
+	}
+#endif
 	Com_sprintf( filename, sizeof( filename ), "models/players/%s/lower.mdr", legsModelName );
 	ci->legsModel = cgi_R_RegisterModel( filename );
 	if ( !ci->legsModel ) 

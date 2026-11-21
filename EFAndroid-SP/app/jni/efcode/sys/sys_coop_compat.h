@@ -11,9 +11,10 @@ file names. Never included on macOS.
     checksum, level 5; here zlib's deflateInit2( level 5, windowBits -15 ) and
     inflateInit2( -15 ). Any conforming raw-deflate stream interoperates.
   - arc4random: the operating system's random numbers.
-  - Windows: Winsock for the BSD socket calls (close, fcntl( O_NONBLOCK ), errno).
+  - Windows: Winsock for the BSD socket calls (close, fcntl( O_NONBLOCK ), errno, recv).
     An ICMP "port unreachable" on a connected UDP socket is WSAECONNRESET there; errno
-    reads as ECONNREFUSED for it, which is what the guest looks for.
+    reads as ECONNREFUSED for it, which is what the guest looks for. An oversized
+    datagram is WSAEMSGSIZE there (POSIX truncates it); recv skips it.
 
 This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 ===========================================================================
@@ -63,6 +64,21 @@ static inline int coopCompatErrno( void )
 }
 #undef errno
 #define errno					( coopCompatErrno() )
+
+// recv on a UDP socket: a datagram bigger than the buffer fails with WSAEMSGSIZE (and is
+// dropped) where POSIX returns it truncated, which made the guest stop reading for the frame.
+// Skip such datagrams and read the next; the cap keeps a flood from holding the frame.
+static inline int coopCompatRecv( int fd, void *buf, size_t len, int flags )
+{
+	for ( int dropped = 0; ; dropped++ )
+	{
+		int n = recv( (SOCKET)fd, (char *)buf, (int)len, flags );
+
+		if ( n != SOCKET_ERROR || WSAGetLastError() != WSAEMSGSIZE || dropped >= 64 )
+			return n;
+	}
+}
+#define recv( fd, buf, len, flags )	coopCompatRecv( fd, buf, len, flags )
 
 extern BOOLEAN WINAPI SystemFunction036( PVOID buffer, ULONG length );		// RtlGenRandom
 static inline unsigned int coopCompatRandom( void )

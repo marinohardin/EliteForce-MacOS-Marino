@@ -76,6 +76,7 @@ void lc_log( const char *fmt, ... )
 	va_start( ap, fmt );
 	vsnprintf( line, sizeof( line ), fmt, ap );
 	va_end( ap );
+	line[ sizeof( line ) - 1 ] = '\0';	/* msvcrt's _vsnprintf leaves a truncated line unterminated */
 	if ( logSink )
 		logSink( line, logUser );
 	else
@@ -96,9 +97,7 @@ int lc_test_env( const char *name )
 
 int lc_coop_ui_enabled( void )
 {
-	if ( !LC_COOP_BUILT )
-		return 0;	/* the engine has no co-op to start */
-	return LC_COOP_UI_ENABLED || lc_test_env( "EF_SHOW_COOP" );
+	return LC_COOP_BUILT;	/* only when the engine has co-op to start */
 }
 
 /* ===================================================================== */
@@ -393,10 +392,43 @@ int lc_remove( const char *path )
 int lc_rename( const char *from, const char *to )
 {
 	wchar_t *a = Wide( from ), *b = Wide( to );
-	int ok = a && b && MoveFileExW( a, b, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED );
+	DWORD e = ERROR_INVALID_PARAMETER;
+	int ok = 0, tries;
+
+	/* Not POSIX: replacing a file that another process (the game, a virus scanner, the indexer)
+	   has open fails instead of leaving it the old file. Brief holds clear up on their own, so
+	   try for about a second before giving up. */
+	for ( tries = 0; a && b && tries < 10; tries++ ) {
+		if ( MoveFileExW( a, b, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED ) ) {
+			ok = 1;
+			break;
+		}
+		e = GetLastError( );
+		if ( e != ERROR_SHARING_VIOLATION && e != ERROR_ACCESS_DENIED && e != ERROR_LOCK_VIOLATION )
+			break;
+		Sleep( 100 );
+	}
 	free( a );
 	free( b );
+	if ( !ok )
+		SetLastError( e );
 	return ok;
+}
+
+void lc_file_error( char *err, size_t errSize, int *inUse )
+{
+	DWORD e = GetLastError( );
+	wchar_t w[512];
+
+	if ( inUse )
+		*inUse = e == ERROR_SHARING_VIOLATION || e == ERROR_ACCESS_DENIED || e == ERROR_LOCK_VIOLATION;
+	if ( !err || !errSize )
+		return;
+	if ( FormatMessageW( FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, e, 0, w, 512, NULL ) ) {
+		Narrow( w, err, errSize );
+		lc_trim( err );
+	} else
+		lc_snprintf( err, errSize, "error %lu", (unsigned long)e );
 }
 
 int lc_list_dir( const char *dir, int (*cb)( const char *name, int isDir, void *user ), void *user )
@@ -484,6 +516,16 @@ int lc_remove( const char *path )
 int lc_rename( const char *from, const char *to )
 {
 	return !rename( from, to );
+}
+
+void lc_file_error( char *err, size_t errSize, int *inUse )
+{
+	int e = errno;
+
+	if ( inUse )
+		*inUse = 0;
+	if ( err && errSize )
+		lc_strlcpy( err, strerror( e ), errSize );
 }
 
 int lc_list_dir( const char *dir, int (*cb)( const char *name, int isDir, void *user ), void *user )

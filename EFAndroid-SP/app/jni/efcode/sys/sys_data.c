@@ -40,6 +40,11 @@ stderr and are replayed into the console by Sys_DataPrintEarlyLog.
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#ifdef _WIN32
+#	include <windows.h>
+#else
+#	include <pthread.h>
+#endif
 
 #ifndef DEDICATED
 #	ifdef USE_LOCAL_HEADERS
@@ -80,17 +85,79 @@ static void AppendEarly( const char *line )
 
 static lc_mutex *logLock;			// the launcher's worker threads log too
 
+// Once the console is up, only the main thread may call Com_Printf (the console
+// ring and the log file have no lock of their own). Lines that worker threads
+// log (co-op Check, router mapping, server browser) wait here until the main
+// loop prints them (Sys_DataFlushLog).
+static char *workerLog;
+static size_t workerLen, workerCap;
+
+#ifdef _WIN32
+static DWORD mainThread;
+static qboolean mainThreadSet;
+static qboolean OnMainThread( void )
+{
+	return !mainThreadSet || GetCurrentThreadId( ) == mainThread;
+}
+static void SetMainThread( void )
+{
+	mainThread = GetCurrentThreadId( );
+	mainThreadSet = qtrue;
+}
+#else
+static pthread_t mainThread;
+static qboolean mainThreadSet;
+static qboolean OnMainThread( void )
+{
+	return !mainThreadSet || pthread_equal( pthread_self( ), mainThread );
+}
+static void SetMainThread( void )
+{
+	mainThread = pthread_self( );
+	mainThreadSet = qtrue;
+}
+#endif
+
+static void AppendWorker( const char *line )
+{
+	size_t n = strlen( line ) + 1;
+
+	if ( workerLen + n + 1 > workerCap ) {
+		size_t ncap = workerCap ? workerCap * 2 : 4096;
+		char *grown;
+
+		while ( ncap < workerLen + n + 1 )
+			ncap *= 2;
+		if ( !( grown = realloc( workerLog, ncap ) ) )
+			return;
+		workerLog = grown;
+		workerCap = ncap;
+	}
+	memcpy( workerLog + workerLen, line, n - 1 );
+	workerLog[workerLen + n - 1] = '\n';
+	workerLen += n;
+	workerLog[workerLen] = '\0';
+}
+
 static void DataLogLine( const char *line, void *user )
 {
+	qboolean printNow = qfalse;
+
 	if ( logLock )
 		lc_mutex_lock( logLock );
 	fprintf( stderr, "%s\n", line );
-	if ( logLive )
-		Com_Printf( "%s\n", line );
-	else
+	if ( !logLive )
 		AppendEarly( line );
+	else if ( OnMainThread( ) )
+		printNow = qtrue;
+	else
+		AppendWorker( line );
 	if ( logLock )
 		lc_mutex_unlock( logLock );
+	if ( printNow ) {
+		Sys_DataFlushLog( );		// keep the order: what the workers logged first
+		Com_Printf( "%s\n", line );
+	}
 }
 
 // the launcher core logs through lc_log: into the early log, then the console
@@ -98,7 +165,45 @@ void Sys_DataInstallLog( void )
 {
 	if ( !logLock )
 		logLock = lc_mutex_new( );
+	if ( !mainThreadSet )
+		SetMainThread( );		// main( ) calls this first, before any worker exists
 	lc_set_log_sink( DataLogLine, NULL );
+}
+
+/*
+=================
+Sys_DataFlushLog
+
+Main thread, every frame and when quitting: prints what worker threads logged
+since. The lines are taken out under the lock and printed outside it, so a
+worker never waits on the console.
+=================
+*/
+void Sys_DataFlushLog( void )
+{
+	char *lines, *p, *nl;
+
+	if ( !OnMainThread( ) )
+		return;
+	if ( logLock )
+		lc_mutex_lock( logLock );
+	lines = logLive && workerLen ? workerLog : NULL;
+	if ( lines ) {
+		workerLog = NULL;
+		workerLen = workerCap = 0;
+	}
+	if ( logLock )
+		lc_mutex_unlock( logLock );
+	if ( !lines )
+		return;
+	// one Com_Printf per line: its buffer is MAXPRINTMSG, the queue can be longer
+	for ( p = lines; *p; p = nl + 1 ) {
+		if ( !( nl = strchr( p, '\n' ) ) )
+			break;
+		*nl = '\0';
+		Com_Printf( "%s\n", p );
+	}
+	free( lines );
 }
 
 void Sys_DataPrintEarlyLog( void )

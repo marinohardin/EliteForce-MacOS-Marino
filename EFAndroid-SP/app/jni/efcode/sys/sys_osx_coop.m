@@ -1,6 +1,6 @@
 /*
 ===========================================================================
-macOS app bundle: single-player co-op in the launcher (experimental).
+macOS app bundle: single-player co-op in the launcher.
 
 This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 It is compiled with ARC, and only in EF_COOP builds (see the macOS
@@ -27,11 +27,30 @@ The Single Player card gets a "Co-op…" button. Its sheet has:
     network address); the friend opens it, and the launcher's link handler
     (sys_osx_launcher.m) opens this sheet with the address filled in and
     checked.
+  - "Games on your network" (Join side): while the sheet is open it asks every
+    network's broadcast address (and this Mac, 127.0.0.1) "getcoopinfo
+    <challenge> lan" on the co-op port every 5 seconds (and on Refresh), and
+    lists the hosts that answer within 1.5 s: who and where, the level, a lock
+    when the host set a password, and greyed with the reason when this Mac
+    can't join it (another version, other game files, already full). A click
+    fills in the address and checks it. The launcher core's lc_coop_lan_scan
+    does the same for Windows and Linux. macOS asks once whether Elite Force
+    may find devices on the local network (NSLocalNetworkUsageDescription);
+    when that is denied the broadcasts can't be sent and the list says where
+    to allow it. Host has "Show this game on my network" (on by default; off:
+    +set coop_lanVisible 0, the host then answers only direct Checks).
+  - Host's "Team attack: Off / Half / On" (Off by default): whether the two
+    players' shots, and the explosions the game puts down to a player (their
+    grenades, not a barrel they set off), hurt each other, at half or full
+    damage. Off puts nothing on the command line; Half and On add
+    +set coop_teamAttack 1 or 2. Only the host's game deals damage.
   - "Your name" (both sides): the player's name in co-op messages ("Hold Use
     to revive ..."), the coop_name cvar; it starts as this Mac's name. Join
     also has "Munro: Male / Female" for how player 2 looks on both screens
-    (coop_sex). Both are kept in the app's preferences like the sheet's other
-    choices.
+    and sounds (coop_sex), and "Character": the default Munro, or a crew or
+    Hazard Team member from the game's own pak0-pak2 (coop_look, the list in
+    the game's coop_characters.h; the voice stays the chosen Munro's). All
+    are kept in the app's preferences like the sheet's other choices.
   - An optional password: the host's (a guest must give it) on the Host side,
     the one to send on the Join side. It is handed to the engine directly
     (Sys_CoopSetLaunchPassword), never on the command line or in the log.
@@ -40,7 +59,10 @@ The host's answer (the engine side, below): single player runs with the
 engine's networking off (net_enabled is 0 there), so a co-op host opens a
 small UDP socket of its own on VSP_COOP_PORT (29760) while sp_coop is 1 and
 answers one connectionless query, polled once a frame from Com_Frame:
-  -> "\xff\xff\xff\xffgetcoopinfo [challenge]"
+  -> "\xff\xff\xff\xffgetcoopinfo [challenge] [lan]" ("lan": a guest's "Games on your
+     network" search, sent to the network's broadcast addresses; a host with coop_lanVisible 0,
+     the launcher's "Show this game on my network" unticked, ignores those and answers only
+     direct Checks of its address)
   <- "\xff\xff\xff\xffcoopInfoResponse\n" and an infostring with
      coopProtocol, version (the app's), hostname (the Mac's name), paks
      (the game's own .pk3 files loaded, FS_CoopPaks: the Join side compares
@@ -76,6 +98,16 @@ Test hooks (environment variables; the launcher's are in sys_osx_launcher.m):
   VOYAGERSP_TEST_NAT=<a.b.c.d|fail>  (as for the server window) pretend the
                                 router answered that public address, or that
                                 it can't open ports; nothing is asked
+  VOYAGERSP_TEST_COOP_LAN=1     once the launcher is up, open the sheet, wait
+                                for the first network search (its rows are
+                                logged), then snapshot as above;
+                                VOYAGERSP_TEST_COOP_LAN=pick also clicks the
+                                first row and waits for its Check
+  VOYAGERSP_TEST_COOP_FOCUS=1   before the snapshot, move the focus from the
+                                host's address to the host's password (as a
+                                click into another field does)
+  VOYAGERSP_TEST_COOP_SCAN_PORTS=<n>[,<n>...]  search these UDP ports instead
+                                of the co-op port (test hosts on other ports)
   VOYAGERSP_TEST_COOP_PORT=<n>  host on UDP port n instead of the co-op
                                 port (two test copies next to another copy
                                 that holds it; the guest joins with :n)
@@ -103,6 +135,7 @@ Test hooks (environment variables; the launcher's are in sys_osx_launcher.m):
 
 #include "sys_osx_launcher.h"
 #include "sys_osx_coop.h"
+#include "../../../../../efgame/src/game/coop_characters.h"	// player 2's characters (coop_look)
 
 #define COOP_QUERY		"getcoopinfo"
 #define COOP_RESPONSE	"coopInfoResponse"
@@ -280,6 +313,25 @@ static void CoopCloseSocket( void )
 	Com_Printf( "co-op: no longer answering co-op checks\n" );
 }
 
+// the rest of a co-op check after its challenge: "lan" among its words marks a network search
+static BOOL CoopQueryFromLan( const char *p )
+{
+	while( *p )
+	{
+		const char *w;
+		while( *p == ' ' )
+			p++;
+		w = p;
+		while( *p && *p != ' ' && *p != '\n' )
+			p++;
+		if( p - w == 3 && !strncmp( w, "lan", 3 ) )
+			return YES;
+		if( *p == '\n' )
+			break;
+	}
+	return NO;
+}
+
 // A co-op check: answer it (unless rate limited) and return YES; NO for any other packet.
 static BOOL CoopAnswer( const char *packet, int len, const struct sockaddr_in *from )
 {
@@ -304,6 +356,11 @@ static BOOL CoopAnswer( const char *packet, int len, const struct sockaddr_in *f
 	for( ; n < (int)sizeof( challenge ) - 1 && ( isalnum( (unsigned char)*p ) || *p == '-' || *p == '_' ); p++ )
 		challenge[n++] = *p;
 	challenge[n] = 0;
+	// a guest's "Games on your network" search adds " lan" (lc_coop.c / VSP_CoopLanScan): a host that
+	// isn't shown on the network (coop_lanVisible 0, the launcher's "Show this game on my network")
+	// stays silent to it, but still answers a Check of its address
+	if( CoopQueryFromLan( p ) && !Cvar_VariableIntegerValue( "coop_lanVisible" ) )
+		return YES;
 
 	if( CoopAddressLimited( from->sin_addr.s_addr ) || CoopRateLimited( &coopOutbound, 10, 100 ) )
 		return YES;
@@ -406,6 +463,8 @@ void Sys_CoopFrame( void )
 		Cvar_Get( "coop_password", "", CVAR_TEMP );
 		Cvar_Get( "coop_name", "", CVAR_TEMP );		// "Your name" (empty: this Mac's name)
 		Cvar_Get( "coop_sex", "", CVAR_TEMP );		// a guest's Munro: male / female (empty: like the host's)
+		Cvar_Get( "coop_look", "", CVAR_TEMP );		// a guest's character for player 2 (empty: Munro)
+		Cvar_Get( "coop_lanVisible", "1", CVAR_TEMP );	// a host: answer "Games on your network" searches (0: only Checks of its address)
 		coop_backgroundPlay = Cvar_Get( "coop_backgroundPlay", "1", CVAR_ARCHIVE );
 		CoopNet_AddCommands();
 	}
@@ -809,11 +868,18 @@ NSString *VSP_CoopLinkAddress( NSString *link )
 static BOOL coopHostChosen;
 static BOOL coopHostBackground = YES;	// Host: "Keep playing in the background" (coop_backgroundPlay)
 #define COOP_BACKGROUND_DEFAULT	@"CoopKeepPlayingInBackground"
+static BOOL coopHostLanVisible = YES;	// Host: "Show this game on my network" (coop_lanVisible)
+#define COOP_LAN_VISIBLE_DEFAULT	@"CoopShowOnNetwork"
+static int coopHostTeamAttack;		// Host: "Team attack" 0 Off, 1 Half, 2 On (coop_teamAttack)
+#define COOP_TEAM_ATTACK_DEFAULT	@"CoopTeamAttack"
+#define COOP_ROUTER_DEFAULT	@"CoopOpenRouterPort"	// "Open the port on my router": on unless unticked
 static NSString *coopJoinAddress;	// Connect: the host's "address:port"
 #define COOP_NAME_DEFAULT	@"CoopPlayerName"
 #define COOP_SEX_DEFAULT	@"CoopGuestMunro"		// @"male" / @"female"
 static NSString *coopPlayerName;	// Host / Connect: "Your name" (coop_name), already safe
 static NSString *coopGuestSex;		// Connect: @"male" / @"female" (coop_sex)
+#define COOP_LOOK_DEFAULT	@"CoopGuestCharacter"	// a coop_characters.h id, @"" for Munro
+static NSString *coopGuestLook;		// Connect: the character's id (coop_look), nil / @"" for Munro
 
 // A name the game can show and the command line can carry: letters turned into plain ASCII,
 // without quotes, \ ; % or control characters, spaces squeezed, at most COOP_NAME_MAX characters
@@ -847,7 +913,7 @@ static NSString *CoopMacName( void )
 - (BOOL)isFlipped	{ return YES; }
 @end
 
-@interface VSPCoopController : NSObject <NSTextFieldDelegate>
+@interface VSPCoopController : NSObject <NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @property (nonatomic, strong) NSWindow *panel;
 @property (nonatomic, weak) id<VSPCoopLauncher> launcher;
 - (void)check: (id)sender;
@@ -859,8 +925,16 @@ static NSString *CoopMacName( void )
 @property (nonatomic, readonly) NSTextField *address;
 @property (nonatomic, readonly) NSButton *internetCheck;
 @property (nonatomic, copy) void ( ^checked )( NSDictionary *result );	// tests
+@property (nonatomic, copy) void ( ^scanned )( NSArray *games );		// tests
+- (void)startSearching;
+- (void)stopSearching;
+- (void)pickRow: (NSInteger)row;
 - (NSString *)connectTitle;		// tests
+- (NSTextField *)hostPasswordField;	// tests
+- (NSString *)statusTitle;		// tests
 - (BOOL)canConnect;
+- (BOOL)connectIsDefault;		// tests
+- (void)setConnectable: (BOOL)can;
 @end
 
 static NSStackView *CoopStack( NSArray<NSView *> *views, NSUserInterfaceLayoutOrientation o, CGFloat spacing )
@@ -940,6 +1014,252 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	return m;
 }
 
+/* ------------------------------------------------------------------------
+   "Games on your network": a broadcast search for co-op hosts (Windows and
+   Linux: the launcher core's lc_coop_lan_scan, with the same sentences)
+   ------------------------------------------------------------------------ */
+
+#define COOP_LAN_MAX	24
+
+// the UDP ports searched: the co-op port, or VOYAGERSP_TEST_COOP_SCAN_PORTS=n[,n...]
+static NSArray<NSNumber *> *CoopScanPorts( void )
+{
+	NSMutableArray<NSNumber *> *a = [NSMutableArray array];
+	const char *test = getenv( "VOYAGERSP_TEST_COOP_SCAN_PORTS" );
+
+	if( test )
+		for( NSString *n in [@( test ) componentsSeparatedByCharactersInSet: [[NSCharacterSet decimalDigitCharacterSet] invertedSet]] )
+			if( [n intValue] > 0 && [n intValue] < 65536 && [a count] < 8 )
+				[a addObject: @( [n intValue] )];
+	if( ![a count] )
+		[a addObject: @( VSP_COOP_PORT )];
+	return a;
+}
+
+// this Mac's IPv4 addresses and each of its networks' broadcast addresses (host order; no
+// loopback or link-local)
+static void CoopLanInterfaces( NSMutableArray<NSNumber *> *own, NSMutableArray<NSNumber *> *broadcasts )
+{
+	struct ifaddrs *list, *ifa;
+
+	if( getifaddrs( &list ) != 0 )
+		return;
+	for( ifa = list; ifa; ifa = ifa->ifa_next )
+	{
+		const struct sockaddr_in *sin = (const struct sockaddr_in *)ifa->ifa_addr;
+		const struct sockaddr_in *bc = (const struct sockaddr_in *)ifa->ifa_broadaddr;
+		uint32_t a;
+
+		if( !sin || sin->sin_family != AF_INET || !( ifa->ifa_flags & IFF_UP ) || !( ifa->ifa_flags & IFF_RUNNING ) ||
+			( ifa->ifa_flags & IFF_LOOPBACK ) )
+			continue;
+		a = ntohl( sin->sin_addr.s_addr );
+		if( ( a & 0xffff0000 ) == 0xa9fe0000 )	// 169.254/16
+			continue;
+		if( ![own containsObject: @( a )] )
+			[own addObject: @( a )];
+		if( ( ifa->ifa_flags & IFF_BROADCAST ) && bc && bc->sin_family == AF_INET )
+		{
+			uint32_t b = ntohl( bc->sin_addr.s_addr );
+			if( b && b != 0xffffffffu && ![broadcasts containsObject: @( b )] )
+				[broadcasts addObject: @( b )];
+		}
+	}
+	freeifaddrs( list );
+}
+
+// a row's first line: who and where
+static NSString *CoopLanTitle( NSDictionary *g )
+{
+	NSDictionary *info = g[@"info"];
+	NSString *player = CoopSafeName( info[@"player"] ?: @"" ), *host = info[@"hostname"] ?: @"";
+
+	if( [player length] && [host length] && [player caseInsensitiveCompare: host] != NSOrderedSame )
+		return [NSString stringWithFormat: @"%@ on “%@”", player, host];
+	return [player length] ? player : [host length] ? host : g[@"address"];
+}
+
+// its second line: the level, the difficulty and the address, or why this Mac can't join
+static NSString *CoopLanDetail( NSDictionary *g )
+{
+	NSDictionary *info = g[@"info"];
+	NSString *map = info[@"map"] ?: @"", *mission = info[@"mission"] ?: @"", *where;
+
+	if( ![g[@"usable"] boolValue] && [g[@"reason"] length] )
+		return [NSString stringWithFormat: @"%@ · %@", g[@"reason"], g[@"address"]];
+	if( ![info[@"state"] isEqualToString: @"playing"] || ![map length] )
+		where = @"In the menus";
+	else if( [mission length] )
+		where = [NSString stringWithFormat: @"“%@” (%@)", mission, map];
+	else
+		where = map;
+	return [NSString stringWithFormat: @"%@ · %@ difficulty · %@", where, CoopSkillName( info[@"skill"] ?: @"" ), g[@"address"]];
+}
+
+// one answer: a new row, or a newer answer of a host already listed (a host on this Mac answers both
+// on 127.0.0.1 and on its network address: one row, with the address a friend could use)
+static void CoopLanTake( NSMutableArray<NSMutableDictionary *> *games, NSString *from, BOOL local, const char *buf, size_t n,
+	const char *challenge )
+{
+	static const char prefix[] = COOP_OOB COOP_RESPONSE "\n";
+	NSDictionary *info;
+	BOOL isLoop = [from hasPrefix: @"127."];
+	NSString *port = [[from componentsSeparatedByString: @":"] lastObject];
+
+	if( n < sizeof( prefix ) - 1 || memcmp( buf, prefix, sizeof( prefix ) - 1 ) )
+		return;
+	info = CoopParseInfo( buf + sizeof( prefix ) - 1, n - ( sizeof( prefix ) - 1 ) );
+	if( !info || ( info[@"challenge"] && ![info[@"challenge"] isEqualToString: @( challenge )] ) )
+		return;
+	local = local || isLoop;
+	for( NSMutableDictionary *g in games )
+	{
+		BOOL same = ( local && [g[@"local"] boolValue] ) ?
+			[[[g[@"address"] componentsSeparatedByString: @":"] lastObject] isEqualToString: port] :
+			[g[@"address"] isEqualToString: from];
+		if( !same )
+			continue;
+		if( !isLoop && [g[@"address"] hasPrefix: @"127."] )
+			g[@"address"] = from;
+		g[@"info"] = info;
+		return;
+	}
+	if( [games count] < COOP_LAN_MAX )
+		[games addObject: [@{ @"address": from, @"info": info, @"local": @( local ) } mutableCopy]];
+}
+
+// can this Mac join each game? (what a Check would say), then the joinable ones first, by name
+static void CoopLanCheck( NSMutableArray<NSMutableDictionary *> *games, NSString *dataFolder )
+{
+	NSString *ours = nil;
+
+	for( NSMutableDictionary *g in games )
+	{
+		NSDictionary *info = g[@"info"];
+		NSString *version = info[@"version"] ?: @"";
+		char text[1024];
+
+		g[@"usable"] = @NO;
+		[g removeObjectForKey: @"reason"];
+		if( [info[@"coopProtocol"] intValue] != VSP_COOP_PROTOCOL || ![version isEqualToString: @EF_APP_VERSION] )
+		{
+			g[@"reason"] = [NSString stringWithFormat: @"Another version: the host runs Elite Force %@, this Mac runs %s",
+				[version length] ? version : @"?", EF_APP_VERSION];
+			continue;
+		}
+		if( !ours )
+			ours = CoopLocalPaks( dataFolder );
+		if( CoopNet_ComparePaks( [( info[@"paks"] ?: @"" ) UTF8String], [ours UTF8String], qfalse, text, sizeof( text ) ) ==
+			COOP_PAKS_DIFFER )
+		{
+			g[@"reason"] = @"Your game files don’t match the host’s";
+			continue;
+		}
+		if( [info[@"guest"] isEqualToString: @"1"] )
+		{
+			g[@"reason"] = @"Full: a friend already plays player 2";
+			continue;
+		}
+		g[@"usable"] = @YES;
+	}
+	[games sortUsingComparator: ^NSComparisonResult( NSDictionary *a, NSDictionary *b ) {
+		NSComparisonResult c;
+		if( [a[@"usable"] boolValue] != [b[@"usable"] boolValue] )
+			return [a[@"usable"] boolValue] ? NSOrderedAscending : NSOrderedDescending;
+		c = [CoopLanTitle( a ) caseInsensitiveCompare: CoopLanTitle( b )];
+		return c != NSOrderedSame ? c : [a[@"address"] compare: b[@"address"]];
+	}];
+}
+
+// Ask the networks for co-op games for `seconds` (twice: at once and a third of the way in):
+// @{ games: rows (address, info, local, usable, reason), broadcasts: sent, error: the sentence
+// when none could be sent }. Runs off the main thread.
+static NSDictionary *CoopLanScan( double seconds, NSString *dataFolder )
+{
+	NSMutableArray<NSNumber *> *own = [NSMutableArray array], *bcs = [NSMutableArray array];
+	NSMutableArray<NSMutableDictionary *> *games = [NSMutableArray array];
+	NSArray<NSNumber *> *ports = CoopScanPorts();
+	NSString *error = nil;
+	char q[64], challenge[16], buf[1500];
+	int fd, on = 1, ql, round = 0, sent = 0, failed = 0, sendError = 0;
+	CFAbsoluteTime start, deadline;
+
+	CoopLanInterfaces( own, bcs );
+	[bcs addObject: @( 0xffffffffu )];
+	if( ( fd = socket( AF_INET, SOCK_DGRAM, 0 ) ) < 0 )
+		return @{ @"games": games, @"broadcasts": @0, @"error": @"A network socket couldn’t be opened." };
+	setsockopt( fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof( on ) );
+	snprintf( challenge, sizeof( challenge ), "%08x", arc4random() );
+	ql = snprintf( q, sizeof( q ), COOP_OOB COOP_QUERY " %s lan", challenge );
+
+	start = CFAbsoluteTimeGetCurrent();
+	deadline = start + seconds;
+	for( ;; )
+	{
+		CFAbsoluteTime now = CFAbsoluteTimeGetCurrent(), next;
+		struct pollfd pfd = { fd, POLLIN, 0 };
+		struct sockaddr_in from;
+		socklen_t fromLen = sizeof( from );
+		char a[INET_ADDRSTRLEN];
+		uint32_t ip;
+		ssize_t n;
+
+		if( now >= deadline )
+			break;
+		if( round < 2 && now - start >= seconds * round / 3 )
+		{
+			for( NSNumber *port in ports )
+			{
+				struct sockaddr_in to;
+				memset( &to, 0, sizeof( to ) );
+				to.sin_len = sizeof( to );
+				to.sin_family = AF_INET;
+				to.sin_port = htons( (uint16_t)[port intValue] );
+				for( NSNumber *b in bcs )
+				{
+					to.sin_addr.s_addr = htonl( [b unsignedIntValue] );
+					if( sendto( fd, q, ql, 0, (struct sockaddr *)&to, sizeof( to ) ) < 0 )
+					{
+						sendError = errno;
+						failed++;
+					}
+					else
+						sent++;
+				}
+				to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );		// copies on this Mac, even without a network
+				sendto( fd, q, ql, 0, (struct sockaddr *)&to, sizeof( to ) );
+			}
+			round++;
+		}
+		next = round < 2 ? start + seconds * round / 3 : deadline;
+		if( poll( &pfd, 1, MAX( 1, (int)( ( next - CFAbsoluteTimeGetCurrent() ) * 1000 ) + 1 ) ) <= 0 )
+			continue;
+		n = recvfrom( fd, buf, sizeof( buf ) - 1, 0, (struct sockaddr *)&from, &fromLen );
+		if( n <= 0 || from.sin_family != AF_INET )
+			continue;
+		buf[n] = 0;
+		inet_ntop( AF_INET, &from.sin_addr, a, sizeof( a ) );
+		ip = ntohl( from.sin_addr.s_addr );
+		CoopLanTake( games, [NSString stringWithFormat: @"%s:%d", a, ntohs( from.sin_port )],
+			( ip >> 24 ) == 127 || [own containsObject: @( ip )], buf, (size_t)n, challenge );
+	}
+	close( fd );
+	if( !sent && failed )
+	{
+		// With a network, a refusal is macOS's Local Network privacy (or a firewall): say where to allow it
+		if( [own count] )
+			error = [NSString stringWithFormat: @"macOS didn’t let Elite Force search your network (%s). Allow Elite Force in "
+				@"System Settings > Privacy & Security > Local Network, or type the host’s address below.", strerror( sendError )];
+		else
+			error = [NSString stringWithFormat: @"This Mac couldn’t search your network (%s). Connect it to Wi-Fi or Ethernet, "
+				@"or type the host’s address below.", strerror( sendError )];
+	}
+	LLog( @"Co-op: network search: %d broadcast%s sent%s, %lu game%s found", sent, sent == 1 ? "" : "s",
+		error ? " (none could be sent)" : "", (unsigned long)[games count], [games count] == 1 ? "" : "s" );
+	CoopLanCheck( games, dataFolder );
+	return error ? @{ @"games": games, @"broadcasts": @( sent ), @"error": error } : @{ @"games": games, @"broadcasts": @( sent ) };
+}
+
 @implementation VSPCoopController
 {
 	NSTextField *resultTitle, *resultText;
@@ -957,6 +1277,17 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	NSButton *backgroundCheck;
 	NSTextField *nameField;
 	NSSegmentedControl *sexControl;
+	NSPopUpButton *lookPopup;		// "Character": Munro, then coop_characters.h (each item's representedObject: its id)
+	NSButton *showLanCheck;			// Host: "Show this game on my network"
+	NSSegmentedControl *teamAttackControl;	// Host: "Team attack" Off / Half / On
+	NSTableView *gamesTable;		// "Games on your network"
+	NSArray<NSDictionary *> *lanGames;	// its rows (CoopLanScan)
+	NSTextField *gamesStatus;
+	NSButton *gamesRefresh;
+	NSTimer *lanTimer;				// a new search every 5 s, 3 searches in all (then Refresh)
+	int lanAutoScans;				// searches the sheet ran by itself
+	BOOL lanSearched;				// a search has finished: keep its text while the next one runs
+	BOOL scanning;
 }
 
 - (instancetype)initWithLauncher: (id)launcher
@@ -1037,6 +1368,21 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	}
 	[backgroundCheck setToolTip: @"The game goes on while its window isn’t in front, e.g. while you click into a second "
 		@"copy on this Mac (keys and the mouse still go only to the window in front)"];
+	showLanCheck = [NSButton checkboxWithTitle: @"Show this game on my network" target: nil action: nil];
+	{
+		id saved = [[NSUserDefaults standardUserDefaults] objectForKey: COOP_LAN_VISIBLE_DEFAULT];
+		[showLanCheck setState: ( !saved || [saved boolValue] ) ? NSControlStateValueOn : NSControlStateValueOff];
+	}
+	[showLanCheck setToolTip: @"Friends on the same network see it under “Games on your network”. Off: only someone who "
+		@"types this Mac’s address finds it"];
+	teamAttackControl = [NSSegmentedControl segmentedControlWithLabels: @[ @"Off", @"Half", @"On" ]
+		trackingMode: NSSegmentSwitchTrackingSelectOne target: nil action: nil];
+	{
+		NSInteger saved = [[NSUserDefaults standardUserDefaults] integerForKey: COOP_TEAM_ATTACK_DEFAULT];
+		[teamAttackControl setSelectedSegment: ( saved >= 0 && saved <= 2 ) ? saved : 0];
+	}
+	[teamAttackControl setToolTip: @"Whether you and player 2 can hurt each other with your shots and grenades: "
+		@"not at all, half the damage, or full damage"];
 	hostButton = [NSButton buttonWithTitle: @"Host" target: self action: @selector(host:)];
 	[hostButton setEnabled: canPlay];
 	[hostButton setToolTip: canPlay ? @"Play single player with co-op on" : @"Add the game files first"];
@@ -1047,11 +1393,21 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	col = CoopStack( @[ intro, list,
 		CoopStack( @[ VSP_Label( @"Password (optional)", [NSFont systemFontOfSize: 12], nil ), hostPassword ],
 			NSUserInterfaceLayoutOrientationHorizontal, 8 ),
-		backgroundCheck, _internetCheck, internetStatus, inviteButton,
+		CoopStack( @[ VSP_Label( @"Team attack", [NSFont systemFontOfSize: 12], nil ), teamAttackControl ],
+			NSUserInterfaceLayoutOrientationHorizontal, 8 ),
+		backgroundCheck, showLanCheck, _internetCheck, internetStatus, inviteButton,
 		note ], NSUserInterfaceLayoutOrientationVertical, 8 );
 	{
 		__weak VSPCoopController *weakSelf = self;
 		coopNatChanged = ^{ [weakSelf showInternet]; };
+	}
+	// on by default (and remembered when unticked): ask the router as the sheet opens (Cancel closes
+	// the port again); test runs only with a pretend router
+	{
+		id saved = [[NSUserDefaults standardUserDefaults] objectForKey: COOP_ROUTER_DEFAULT];
+		BOOL test = getenv( "VOYAGERSP_TEST_BACKGROUND" ) && !getenv( "VOYAGERSP_TEST_NAT" );
+		if( ( !saved || [saved boolValue] ) && !test )
+			CoopNatOpen();		// (does nothing while it's already asking or open)
 	}
 	[self showInternet];
 	row = CoopStack( @[ col, hostButton ], NSUserInterfaceLayoutOrientationHorizontal, 16 );
@@ -1060,13 +1416,56 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	return VSP_Group( @"HOST", row );
 }
 
+// "Character": the default Munro (the sex above), then the crew, the Hazard Team and the
+// experimental Holomatch models from the game's own paks (coop_characters.h); remembered as the id
+- (NSPopUpButton *)lookPopup
+{
+	NSString *saved = [[NSUserDefaults standardUserDefaults] stringForKey: COOP_LOOK_DEFAULT];
+	NSMenu *menu;
+	const char *group = "";
+
+	lookPopup = [[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: NO];
+	menu = [lookPopup menu];
+	[menu setAutoenablesItems: NO];
+	[lookPopup addItemWithTitle: @"Munro (default)"];
+	[[lookPopup lastItem] setRepresentedObject: @""];
+	for( int i = 0; i < COOP_NUM_CHARACTERS; i++ )
+	{
+		const coopCharacter_t *c = &coop_characters[i];
+		NSMenuItem *item;
+
+		if( strcmp( c->group, group ) )
+		{
+			group = c->group;
+			[menu addItem: [NSMenuItem separatorItem]];
+			item = [[NSMenuItem alloc] initWithTitle: !strcmp( group, "crew" ) ? @"Voyager crew" :
+				!strcmp( group, "hazard" ) ? @"Hazard Team" : @"Experimental"
+				action: NULL keyEquivalent: @""];
+			[item setEnabled: NO];
+			[menu addItem: item];
+		}
+		item = [[NSMenuItem alloc] initWithTitle: [NSString stringWithUTF8String: c->name] action: NULL keyEquivalent: @""];
+		[item setRepresentedObject: [NSString stringWithUTF8String: c->id]];
+		[item setIndentationLevel: 1];
+		[menu addItem: item];
+		if( [saved isEqualToString: [item representedObject]] )
+			[lookPopup selectItem: item];
+	}
+	[lookPopup setToolTip: @"Player 2’s look on both screens: Munro, or a member of Voyager’s crew or the Hazard Team. "
+		@"Only characters from the game’s own files, so the host has them too."];
+	return lookPopup;
+}
+
 - (NSView *)joinGroup
 {
 	NSTextField *label = VSP_Label( @"Host’s address", [NSFont systemFontOfSize: 12], nil );
 	NSTextField *later = VSP_WrapLabel( @"Connect starts single player and joins the host’s game as player 2: you see "
 		@"it from player 2’s eyes and play player 2 while the host plays the story.",
 		[NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
-	NSStackView *line, *result, *texts, *bottom, *col, *pass, *munro;
+	NSStackView *line, *result, *texts, *bottom, *col, *pass, *munro, *character, *gamesHead;
+	NSTextField *lookLabel;
+	NSScrollView *gamesScroll;
+	NSTableColumn *column;
 
 	[later setPreferredMaxLayoutWidth: 380];
 	_address = [NSTextField textFieldWithString: @""];
@@ -1074,11 +1473,45 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	[_address setPlaceholderString: [NSString stringWithFormat: @"192.168.1.20, or address:port (default %d)", VSP_COOP_PORT]];
 	[_address setTarget: self];
 	[_address setAction: @selector(check:)];
+	// Return checks; leaving the field doesn't (it has the focus when the sheet opens, so the first
+	// click into another field would check an empty address), as on Windows and Linux
+	[[_address cell] setSendsActionOnEndEditing: NO];
 	[[_address widthAnchor] constraintGreaterThanOrEqualToConstant: 260].active = YES;
 	checkButton = [NSButton buttonWithTitle: @"Check" target: self action: @selector(check:)];
 	[checkButton setToolTip: @"Ask that address whether a co-op game runs there"];
 	[[checkButton widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
 	line = CoopStack( @[ label, _address, checkButton ], NSUserInterfaceLayoutOrientationHorizontal, 8 );
+
+	// "Games on your network": the answers to a broadcast search; a click fills in the address and checks it
+	gamesRefresh = [NSButton buttonWithTitle: @"Refresh" target: self action: @selector(scan:)];
+	[gamesRefresh setToolTip: @"Look again for co-op games on your network (it also looks every few seconds)"];
+	[[gamesRefresh widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
+	gamesHead = CoopStack( @[ VSP_Label( @"Games on your network", [NSFont systemFontOfSize: 12 weight: NSFontWeightSemibold], nil ),
+		[NSView new], gamesRefresh ], NSUserInterfaceLayoutOrientationHorizontal, 8 );
+	[[gamesHead views][1] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	gamesTable = [[NSTableView alloc] init];
+	column = [[NSTableColumn alloc] initWithIdentifier: @"game"];
+	[column setResizingMask: NSTableColumnAutoresizingMask];
+	[gamesTable addTableColumn: column];
+	[gamesTable setHeaderView: nil];
+	[gamesTable setStyle: NSTableViewStylePlain];
+	[gamesTable setColumnAutoresizingStyle: NSTableViewUniformColumnAutoresizingStyle];
+	[gamesTable setRowHeight: 36];
+	[gamesTable setIntercellSpacing: NSMakeSize( 0, 2 )];
+	[gamesTable setRefusesFirstResponder: YES];		// (the selection stays the quiet grey: the text stays readable)
+	[gamesTable setDataSource: self];
+	[gamesTable setDelegate: self];
+	[gamesTable setTarget: self];
+	[gamesTable setAction: @selector(pickGame:)];
+	gamesScroll = [[NSScrollView alloc] init];
+	[gamesScroll setDocumentView: gamesTable];
+	[gamesScroll setHasVerticalScroller: YES];
+	[gamesScroll setAutohidesScrollers: YES];
+	[gamesScroll setBorderType: NSBezelBorder];
+	[[gamesScroll heightAnchor] constraintEqualToConstant: 3 * 38 + 4].active = YES;
+	gamesStatus = VSP_WrapLabel( @"", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+	[gamesStatus setPreferredMaxLayoutWidth: 480];
+	[gamesStatus setSelectable: YES];
 
 	resultIcon = [NSImageView imageViewWithImage: [NSImage imageWithSystemSymbolName: @"questionmark.circle"
 		accessibilityDescription: nil]];
@@ -1111,6 +1544,12 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	[sexControl setToolTip: @"How player 2 looks on both screens. The story still speaks to the host’s Munro."];
 	munro = CoopStack( @[ VSP_Label( @"Munro", [NSFont systemFontOfSize: 12], nil ), sexControl ],
 		NSUserInterfaceLayoutOrientationHorizontal, 8 );
+	lookLabel = VSP_Label( @"Character", [NSFont systemFontOfSize: 12], nil );
+	[lookLabel setContentCompressionResistancePriority: NSLayoutPriorityRequired
+		forOrientation: NSLayoutConstraintOrientationHorizontal];
+	character = CoopStack( @[ lookLabel, [self lookPopup],
+		VSP_Label( @"with the voice of the Munro above", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] ) ],
+		NSUserInterfaceLayoutOrientationHorizontal, 8 );
 
 	connectButton = [NSButton buttonWithTitle: @"Connect" target: self action: @selector(connect:)];
 	[connectButton setEnabled: NO];
@@ -1118,8 +1557,12 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	[[connectButton widthAnchor] constraintGreaterThanOrEqualToConstant: 80].active = YES;
 	bottom = CoopStack( @[ connectButton, later ], NSUserInterfaceLayoutOrientationHorizontal, 10 );
 	[bottom setAlignment: NSLayoutAttributeTop];
-	col = CoopStack( @[ line, CoopStack( @[ pass, munro ], NSUserInterfaceLayoutOrientationHorizontal, 24 ), result, bottom ],
+	col = CoopStack( @[ gamesHead, gamesScroll, gamesStatus, line, CoopStack( @[ pass, munro ], NSUserInterfaceLayoutOrientationHorizontal, 24 ), character, result, bottom ],
 		NSUserInterfaceLayoutOrientationVertical, 12 );
+	[col setCustomSpacing: 6 afterView: gamesHead];
+	[col setCustomSpacing: 6 afterView: gamesScroll];
+	for( NSView *v in @[ gamesHead, gamesScroll ] )
+		[[v widthAnchor] constraintEqualToAnchor: [col widthAnchor]].active = YES;
 	return VSP_Group( @"JOIN", col );
 }
 
@@ -1129,7 +1572,6 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	NSStackView *root, *footer, *head, *middle;
 	NSView *document;
 	NSButton *cancel;
-	NSTextField *badge;
 
 	_panel = [[NSWindow alloc] initWithContentRect: NSMakeRect( 0, 0, 560, 420 )
 		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO];
@@ -1137,8 +1579,7 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	VSP_ApplyTestAppearance( _panel );
 	content = [_panel contentView];
 
-	badge = VSP_Label( @"EXPERIMENTAL", [NSFont systemFontOfSize: 10 weight: NSFontWeightSemibold], [NSColor systemOrangeColor] );
-	head = CoopStack( @[ VSP_Label( @"Co-op", [NSFont systemFontOfSize: 17 weight: NSFontWeightBold], nil ), badge ],
+	head = CoopStack( @[ VSP_Label( @"Co-op", [NSFont systemFontOfSize: 17 weight: NSFontWeightBold], nil ) ],
 		NSUserInterfaceLayoutOrientationHorizontal, 8 );
 	[head setAlignment: NSLayoutAttributeFirstBaseline];
 	cancel = [NSButton buttonWithTitle: @"Cancel" target: self action: @selector(cancel:)];
@@ -1208,6 +1649,139 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 	[_panel setInitialFirstResponder: _address];
 }
 
+/* ---- Games on your network ---- */
+
+- (void)startSearching
+{
+	__weak VSPCoopController *weakSelf = self;
+
+	[self scan: nil];
+	lanAutoScans = 1;
+	[lanTimer invalidate];
+	// 3 searches by itself (now, +5 s, +10 s), then only on Refresh, so the sheet stops changing
+	lanTimer = [NSTimer timerWithTimeInterval: 5 repeats: YES block: ^( NSTimer *t ) {
+		VSPCoopController *me = weakSelf;
+		if( !me || ++me->lanAutoScans >= 3 )
+			[t invalidate];
+		[me scan: nil];
+	}];
+	[[NSRunLoop currentRunLoop] addTimer: lanTimer forMode: NSRunLoopCommonModes];
+}
+
+- (void)stopSearching
+{
+	[lanTimer invalidate];
+	lanTimer = nil;
+}
+
+- (void)showGamesStatus: (NSString *)text color: (NSColor *)color
+{
+	[gamesStatus setStringValue: text];
+	[gamesStatus setTextColor: color];
+}
+
+- (void)scan: (id)sender
+{
+	NSString *dataFolder = [_launcher dataFolder];
+
+	if( scanning )
+		return;
+	scanning = YES;
+	[gamesRefresh setEnabled: NO];
+	if( !lanSearched )
+		[self showGamesStatus: @"Looking for co-op games on your network…" color: [NSColor secondaryLabelColor]];
+	dispatch_async( dispatch_get_global_queue( QOS_CLASS_USER_INITIATED, 0 ), ^{
+		NSDictionary *r = CoopLanScan( 1.5, dataFolder );
+		dispatch_async( dispatch_get_main_queue(), ^{ [self scanned: r]; } );
+	} );
+}
+
+- (void)scanned: (NSDictionary *)r
+{
+	NSInteger sel = [gamesTable selectedRow];
+	NSString *selAddress = sel >= 0 && sel < (NSInteger)[lanGames count] ? lanGames[sel][@"address"] : nil;
+
+	scanning = NO;
+	lanSearched = YES;
+	[gamesRefresh setEnabled: YES];
+	lanGames = r[@"games"];
+	[gamesTable reloadData];
+	[gamesTable deselectAll: nil];
+	for( NSUInteger i = 0; selAddress && i < [lanGames count]; i++ )
+		if( [lanGames[i][@"address"] isEqualToString: selAddress] )
+			[gamesTable selectRowIndexes: [NSIndexSet indexSetWithIndex: i] byExtendingSelection: NO];
+	if( r[@"error"] )
+		[self showGamesStatus: r[@"error"] color: [NSColor systemOrangeColor]];
+	else if( ![lanGames count] )
+		[self showGamesStatus: @"None found yet. Have host show, or enter address manually below." color: [NSColor secondaryLabelColor]];
+	else
+		[self showGamesStatus: @"Click a game to check it." color: [NSColor secondaryLabelColor]];
+	if( getenv( "VOYAGERSP_TEST_COOP_LAN" ) )
+	{
+		LLog( @"[test] co-op lan: %lu game(s)%@", (unsigned long)[lanGames count], r[@"error"] ? [@", " stringByAppendingString: r[@"error"]] : @"" );
+		for( NSDictionary *g in lanGames )
+			LLog( @"[test] co-op lan row: %@ | %@%@", CoopLanTitle( g ), CoopLanDetail( g ),
+				[g[@"info"][@"needPassword"] isEqualToString: @"1"] ? @" | lock" : @"" );
+	}
+	if( self.scanned )
+		self.scanned( lanGames );
+}
+
+- (NSInteger)numberOfRowsInTableView: (NSTableView *)t
+{
+	return [lanGames count];
+}
+
+// two lines: who and where (and a lock when the host set a password), then the level or why this
+// Mac can't join; greyed when it can't
+- (NSView *)tableView: (NSTableView *)t viewForTableColumn: (NSTableColumn *)c row: (NSInteger)row
+{
+	NSDictionary *g = lanGames[row];
+	BOOL usable = [g[@"usable"] boolValue];
+	NSColor *dim = [NSColor tertiaryLabelColor];
+	NSTextField *title = VSP_Label( CoopLanTitle( g ), [NSFont systemFontOfSize: 12 weight: NSFontWeightSemibold], usable ? nil : dim );
+	NSTextField *detail = VSP_Label( CoopLanDetail( g ), [NSFont systemFontOfSize: 11], usable ? [NSColor secondaryLabelColor] : dim );
+	NSMutableArray<NSView *> *top = [NSMutableArray arrayWithObject: title];
+	NSStackView *v;
+
+	for( NSTextField *f in @[ title, detail ] )
+	{
+		[[f cell] setLineBreakMode: NSLineBreakByTruncatingTail];
+		[f setContentCompressionResistancePriority: NSLayoutPriorityDefaultLow forOrientation: NSLayoutConstraintOrientationHorizontal];
+	}
+	if( [g[@"info"][@"needPassword"] isEqualToString: @"1"] )
+	{
+		NSImageView *lock = [NSImageView imageViewWithImage: [NSImage imageWithSystemSymbolName: @"lock.fill"
+			accessibilityDescription: @"Password"]];
+		[lock setSymbolConfiguration: [NSImageSymbolConfiguration configurationWithPointSize: 10 weight: NSFontWeightRegular]];
+		[lock setContentTintColor: usable ? [NSColor secondaryLabelColor] : dim];
+		[lock setToolTip: @"The host set a password"];
+		[top addObject: lock];
+	}
+	v = CoopStack( @[ CoopStack( top, NSUserInterfaceLayoutOrientationHorizontal, 4 ), detail ],
+		NSUserInterfaceLayoutOrientationVertical, 1 );
+	[v setEdgeInsets: NSEdgeInsetsMake( 3, 6, 3, 6 )];
+	[v setToolTip: usable ? [NSString stringWithFormat: @"Check %@", g[@"address"]] : g[@"reason"]];
+	return v;
+}
+
+- (void)pickRow: (NSInteger)row
+{
+	if( row < 0 || row >= (NSInteger)[lanGames count] )
+		return;
+	[gamesTable selectRowIndexes: [NSIndexSet indexSetWithIndex: row] byExtendingSelection: NO];
+	[_address setStringValue: lanGames[row][@"address"]];
+	foundAddress = nil;		// (a new address: as if typed)
+	foundInfo = nil;
+	[self setConnectable: NO];
+	[self check: nil];
+}
+
+- (void)pickGame: (id)sender
+{
+	[self pickRow: [gamesTable clickedRow]];
+}
+
 // the router's answer, under the checkbox
 - (void)showInternet
 {
@@ -1239,6 +1813,9 @@ static NSDictionary *CoopCheckPaks( NSDictionary *r, NSString *dataFolder )
 
 - (void)internet: (id)sender
 {
+	if( sender )
+		[[NSUserDefaults standardUserDefaults] setBool: [_internetCheck state] == NSControlStateValueOn
+			forKey: COOP_ROUTER_DEFAULT];
 	if( [_internetCheck state] == NSControlStateValueOn )
 		CoopNatOpen();
 	else
@@ -1314,6 +1891,13 @@ static NSString *CoopDescribe( NSDictionary *info )
 	return [lines componentsJoinedByString: @"\n"];
 }
 
+// Connect is enabled and the default button (blue, Return) only while a Check found a game
+- (void)setConnectable: (BOOL)can
+{
+	[connectButton setEnabled: can];
+	[connectButton setKeyEquivalent: can ? @"\r" : @""];
+}
+
 - (void)showResult: (NSDictionary *)r
 {
 	NSString *status = r[@"status"], *where = r[@"address"] ? r[@"address"] : @"";
@@ -1325,7 +1909,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 
 	foundAddress = found ? r[@"address"] : nil;
 	foundInfo = found ? info : nil;
-	[connectButton setEnabled: found && [_launcher canPlay]];
+	[self setConnectable: found && [_launcher canPlay]];
 	[connectButton setTitle: warning ? @"Join Anyway" : @"Connect"];
 	[connectButton setToolTip: found ? [NSString stringWithFormat: @"Join %@ as player 2", r[@"address"]] :
 		@"Check the address first"];
@@ -1390,10 +1974,18 @@ static NSString *CoopDescribe( NSDictionary *info )
 	coopJoinAddress = nil;
 	coopHostBackground = [backgroundCheck state] == NSControlStateValueOn;
 	[[NSUserDefaults standardUserDefaults] setBool: coopHostBackground forKey: COOP_BACKGROUND_DEFAULT];
+	coopHostLanVisible = [showLanCheck state] == NSControlStateValueOn;
+	[[NSUserDefaults standardUserDefaults] setBool: coopHostLanVisible forKey: COOP_LAN_VISIBLE_DEFAULT];
+	coopHostTeamAttack = (int)[teamAttackControl selectedSegment];
+	if( coopHostTeamAttack < 0 || coopHostTeamAttack > 2 )
+		coopHostTeamAttack = 0;
+	[[NSUserDefaults standardUserDefaults] setInteger: coopHostTeamAttack forKey: COOP_TEAM_ATTACK_DEFAULT];
 	[self takeName];
 	Sys_CoopSetLaunchPassword( [[hostPassword stringValue] UTF8String] );
-	LLog( @"Co-op: hosting (single player with sp_coop 1) as %@%@", coopPlayerName,
-		[[hostPassword stringValue] length] ? @", with a password" : @"" );
+	LLog( @"Co-op: hosting (single player with sp_coop 1) as %@%@%@%@", coopPlayerName,
+		[[hostPassword stringValue] length] ? @", with a password" : @"",
+		coopHostLanVisible ? @"" : @", not shown on the network",
+		coopHostTeamAttack == 2 ? @", team attack on" : coopHostTeamAttack == 1 ? @", team attack half" : @"" );
 	[l selectMode: 0];
 	[l play: nil];
 }
@@ -1405,9 +1997,19 @@ static NSString *CoopDescribe( NSDictionary *info )
 		return;
 	foundAddress = nil;
 	foundInfo = nil;
-	[connectButton setEnabled: NO];
+	[self setConnectable: NO];
 	[connectButton setTitle: @"Connect"];
 	[connectButton setToolTip: @"Check the address first"];
+}
+
+// Return in the host's address: Connect when the Check found a game at it and it hasn't been edited
+// since (Connect is the default button then), otherwise Check it (the field's action)
+- (BOOL)control: (NSControl *)control textView: (NSTextView *)textView doCommandBySelector: (SEL)command
+{
+	if( control != _address || command != @selector(insertNewline:) || !foundAddress || ![connectButton isEnabled] )
+		return NO;
+	[self connect: nil];
+	return YES;
 }
 
 - (void)connect: (id)sender
@@ -1430,9 +2032,11 @@ static NSString *CoopDescribe( NSDictionary *info )
 	[self takeName];
 	coopGuestSex = [sexControl selectedSegment] == 1 ? @"female" : @"male";
 	[[NSUserDefaults standardUserDefaults] setObject: coopGuestSex forKey: COOP_SEX_DEFAULT];
+	coopGuestLook = [[lookPopup selectedItem] representedObject] ?: @"";
+	[[NSUserDefaults standardUserDefaults] setObject: coopGuestLook forKey: COOP_LOOK_DEFAULT];
 	Sys_CoopSetLaunchPassword( [[joinPassword stringValue] UTF8String] );
-	LLog( @"Co-op: joining %@ as player 2 (single player with coop_connect), %@, %@ Munro", coopJoinAddress,
-		coopPlayerName, coopGuestSex );
+	LLog( @"Co-op: joining %@ as player 2 (single player with coop_connect), %@, %@ Munro%@", coopJoinAddress,
+		coopPlayerName, coopGuestSex, [coopGuestLook length] ? [@" as " stringByAppendingString: coopGuestLook] : @"" );
 	[l selectMode: 0];
 	[l play: nil];
 }
@@ -1443,7 +2047,10 @@ static NSString *CoopDescribe( NSDictionary *info )
 }
 
 - (NSString *)connectTitle	{ return [connectButton title]; }
+- (NSTextField *)hostPasswordField	{ return hostPassword; }
+- (NSString *)statusTitle	{ return [resultTitle stringValue]; }
 - (BOOL)canConnect			{ return [connectButton isEnabled]; }
+- (BOOL)connectIsDefault	{ return [[connectButton keyEquivalent] isEqualToString: @"\r"]; }
 
 @end
 
@@ -1468,11 +2075,13 @@ static NSString *CoopDescribe( NSDictionary *info )
 	c = [[VSPCoopController alloc] initWithLauncher: _launcher];
 	// the block keeps the controller alive until the sheet ends
 	[parent beginSheet: [c panel] completionHandler: ^( NSModalResponse r ) {
+		[c stopSearching];
 		[[c panel] orderOut: nil];
 		coopNatChanged = nil;
 		if( r != NSModalResponseOK )
 			CoopNatClose();		// not hosting after all
 	}];
+	[c startSearching];
 	return c;
 }
 
@@ -1482,6 +2091,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 - (void)runTests
 {
 	const char *sheet = getenv( "VOYAGERSP_TEST_COOP_SHEET" ), *query = getenv( "VOYAGERSP_TEST_COOP_QUERY" );
+	const char *lan = getenv( "VOYAGERSP_TEST_COOP_LAN" );
 	VSPCoopController *c = [self open];
 	void ( ^finish )( void );
 
@@ -1496,6 +2106,14 @@ static NSString *CoopDescribe( NSDictionary *info )
 	finish = ^{
 		NSWindow *p = [c panel];
 		double hold = getenv( "VOYAGERSP_TEST_COOP_HOLD" ) ? atof( getenv( "VOYAGERSP_TEST_COOP_HOLD" ) ) : 0;
+		if( getenv( "VOYAGERSP_TEST_COOP_FOCUS" ) )
+		{
+			BOOL moved = [p makeFirstResponder: [c hostPasswordField]];
+			LLog( @"[test] co-op focus: %@ the host's password, status \"%@\"", moved ? @"moved to" : @"couldn't move to",
+				[c statusTitle] );
+		}
+		LLog( @"[test] co-op connect: %s, %s", [c canConnect] ? "enabled" : "disabled",
+			[c connectIsDefault] ? "default button" : "not default" );
 		if( sheet )
 			VSP_SnapshotWindow( p, sheet );
 		LLog( @"[test] co-op sheet: window %ld, launcher window %ld, holding %.0f s", (long)[p windowNumber],
@@ -1542,6 +2160,24 @@ static NSString *CoopDescribe( NSDictionary *info )
 		[[c address] setStringValue: @( query )];
 		[c check: nil];
 	}
+	else if( lan )
+	{
+		__weak VSPCoopController *wc = c;
+		c.scanned = ^( NSArray *games ) {
+			VSPCoopController *cc = wc;
+			cc.scanned = nil;
+			if( !strcmp( lan, "pick" ) && [games count] )
+			{
+				cc.checked = ^( NSDictionary *r ) {
+					LLog( @"[test] co-op lan pick %@: %@", r[@"address"], r[@"status"] );
+					finish();
+				};
+				[cc pickRow: 0];
+			}
+			else
+				finish();
+		};
+	}
 	else
 		finish();
 }
@@ -1572,10 +2208,10 @@ NSButton *VSP_CoopButton( id launcher )
 	b = [NSButton buttonWithTitle: @"Co-op…" target: target action: @selector(openCoop:)];
 	[b setControlSize: NSControlSizeSmall];
 	[b setFont: [NSFont systemFontOfSize: [NSFont smallSystemFontSize]]];
-	[b setToolTip: @"Play the campaign with a friend: host a co-op game, or check for one to join (experimental)"];
+	[b setToolTip: @"Play the campaign with a friend: host a co-op game, or check for one to join"];
 
 	if( getenv( "VOYAGERSP_TEST_COOP_SHEET" ) || getenv( "VOYAGERSP_TEST_COOP_HOST" ) ||
-		getenv( "VOYAGERSP_TEST_COOP_QUERY" ) || getenv( "VOYAGERSP_TEST_COOP_INTERNET" ) )
+		getenv( "VOYAGERSP_TEST_COOP_QUERY" ) || getenv( "VOYAGERSP_TEST_COOP_INTERNET" ) || getenv( "VOYAGERSP_TEST_COOP_LAN" ) )
 	{
 		VSPCoopButtonTarget *t = target;
 		NSTimer *timer = [NSTimer timerWithTimeInterval: 1 repeats: NO block: ^( NSTimer *tm ) { [t runTests]; }];
@@ -1589,7 +2225,13 @@ void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch )
 	if( holomatch )
 		return;
 	if( coopHostChosen )
+	{
 		[args appendFormat: @"+set sp_coop 1 +set coop_backgroundPlay %d ", coopHostBackground ? 1 : 0];
+		if( !coopHostLanVisible )
+			[args appendString: @"+set coop_lanVisible 0 "];
+		if( coopHostTeamAttack == 1 || coopHostTeamAttack == 2 )
+			[args appendFormat: @"+set coop_teamAttack %d ", coopHostTeamAttack];
+	}
 	else if( [coopJoinAddress length] )
 	{
 		// "1.2.3.4:29760" from the Check (inet_ntop and a port): nothing to quote, but keep it so
@@ -1597,6 +2239,10 @@ void VSP_CoopAppendArgs( NSMutableString *args, BOOL holomatch )
 		if( [coopJoinAddress rangeOfCharacterFromSet: bad].location == NSNotFound )
 			[args appendFormat: @"+set coop_connect \"%@\" +set coop_sex %@ ", coopJoinAddress,
 				[coopGuestSex isEqualToString: @"female"] ? @"female" : @"male"];
+		// (an id from coop_characters.h: lower case letters, digits and _)
+		for( int i = 0; i < COOP_NUM_CHARACTERS; i++ )
+			if( [coopGuestLook isEqualToString: [NSString stringWithUTF8String: coop_characters[i].id]] )
+				[args appendFormat: @"+set coop_look %s ", coop_characters[i].id];
 	}
 	else
 		return;

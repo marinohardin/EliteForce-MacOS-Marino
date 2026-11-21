@@ -102,8 +102,10 @@ key/value file in the homepath (sys_data.c already reads `gamefolder` from it,
 | `ChooserPanelSizeReset` | bool | one-time reset of the open panel's remembered size (also removes Apple's `NSNavPanelExpandedSizeForOpenMode`) | chooser | chooser, once | `D:98,713-718` (macOS-only quirk; not needed elsewhere) |
 | `ApplePressAndHoldEnabled` | registered default NO | disables the accent picker on key hold | – | registerDefaults at start | `O:94-99` (macOS-only) |
 | `CoopKeepPlayingInBackground` | bool, absent = YES | co-op Host "Keep playing in the background" | sheet build | Host pressed | `C:801-802,959-960,1262` |
+| `CoopTeamAttack` | integer 0 Off (absent), 1 Half, 2 On | co-op Host "Team attack" | sheet build | Host pressed | `hostGroup`, `host:` |
 | `CoopPlayerName` | string | co-op "Your name" (stored after cleaning; may be empty) | sheet build | Host or Connect | `C:804,898-901,916` |
 | `CoopGuestMunro` | `"male"`/`"female"` | co-op Join "Munro" choice | sheet build | Connect | `C:805,1033-1034,1301` |
+| `CoopGuestCharacter` | string: a `coop_characters.h` id, `""` = Munro | co-op Join "Character" choice | sheet build | Connect | `lookPopup`, `connect:` |
 | `ServerSettings` | dict | Host a Server settings (`VSPServerSettings`) | init | Config… Done / Start Server | `S:113` (other spec) |
 | `MasterServers` | array of strings; absent = defaults | Servers… list | init, Play | Servers… sheet | `S:3845-3911` (other spec) |
 | `LoopbackHostFix` | bool; absent = YES (only `NO` is stored) | Loopback Host Fix checkbox | init, Play | checkbox toggle | `S:4471-4491` |
@@ -583,8 +585,8 @@ followed by a space (values in quotes exactly as shown):
 [basepath] +set fs_basepath "<basepath>"
 [HM, masters cfg written OK] +exec vsp_masters.cfg
 [HM, Loopback Host Fix on and router answered] +set cl_loopbackHostIP <public IPv4>
-[SP, co-op Host chosen]    +set sp_coop 1 +set coop_backgroundPlay <0|1>
-[SP, co-op Connect chosen] +set coop_connect "<a.b.c.d:port>" +set coop_sex <male|female>
+[SP, co-op Host chosen]    +set sp_coop 1 +set coop_backgroundPlay <0|1> [+set coop_lanVisible 0] [+set coop_teamAttack <1|2>]
+[SP, co-op Connect chosen] +set coop_connect "<a.b.c.d:port>" +set coop_sex <male|female> [+set coop_look <id>]
 [SP, co-op either, name non-empty] +set coop_name "<CoopSafeName(name)>"
 [HM, joinAddress from Browse…/link] [+set password "<pw>"] +connect <address>
 <brightness args, or +exec vsp_brightness.cfg, or nothing for Custom>
@@ -1083,7 +1085,7 @@ attached; `C:1327-1343`). Sheet window, content width 560, title "Co-op",
 insets 18/20/20/20, vertical spacing 12 (4 after the heading, 18 after the Join
 group). Initial focus: the Join address field.
 
-1. Heading row: "Co-op" (17 pt bold) + "EXPERIMENTAL" (10 pt semibold, orange).
+1. Heading row: "Co-op" (17 pt bold).
 2. Intro (12 pt secondary, wrap 520): "Play the campaign with a friend. The host is player 1 and plays the story; the friend joins as player 2."
 3. **Name row** (`C:895-918`): "Your name" (12 pt) | text field width 220 | hint
    "up to 31 letters" (11 pt secondary). Initial: `CoopSafeName(saved
@@ -1098,8 +1100,9 @@ group). Initial focus: the Join address field.
      default route first; Windows `GetAdaptersAddresses`, show the adapter's
      friendly name.)
    - "Password (optional)" (12 pt) + secure field width 160, placeholder "none"
+   - "Team attack" (12 pt) + segmented control Off | Half | On, select one (like Join's Munro Male | Female; initial from `CoopTeamAttack`, default Off); tooltip "Whether you and player 2 can hurt each other with your shots and grenades: not at all, half the damage, or full damage"
    - checkbox "Keep playing in the background" (initial from `CoopKeepPlayingInBackground`, default on); tooltip "The game goes on while its window isn’t in front, e.g. while you click into a second copy on this Mac (keys and the mouse still go only to the window in front)"
-   - checkbox "Open the port on my router (for a friend on the internet)" (state mirrors the NAT mapping: on while asking or mapped)
+   - checkbox "Open the port on my router (for a friend on the internet)" (state mirrors the NAT mapping: on while asking or mapped). On by default: when the sheet opens and `CoopOpenRouterPort` (launcher store `coopopenrouterport`) is absent or on, it asks the router (not in test runs, unless `VOYAGERSP_TEST_NAT` pretends a router); ticking or unticking saves the setting
    - internet status (11 pt, wrap 400, selectable), see below
    - "Copy Invite" (small) — tooltip "Copy a stvef://coop/ link for your friend: opening it shows Co-op with your address filled in"; enabled iff an invite link exists and the router isn't being asked
    - note (11 pt secondary): "Co-op uses UDP port 29760. macOS may ask whether Elite Force can find devices on your local network: allow it. Player 2 follows you until your friend joins; then your friend plays player 2 and sees your game from player 2’s eyes."
@@ -1107,6 +1110,7 @@ group). Initial focus: the Join address field.
 5. **JOIN group** (`C:987-1048`), caption "JOIN", column spacing 12:
    - Row: "Host’s address" (12 pt) | text field (min width 260; placeholder "192.168.1.20, or address:port (default 29760)"; **Return = Check**) | "Check" button (min width 80; tooltip "Ask that address whether a co-op game runs there").
    - Row (spacing 24): ["Password" + secure field 160, placeholder "if the host set one"] ["Munro" + segmented "Male" | "Female" (initial from `CoopGuestMunro`, default Male); tooltip "How player 2 looks on both screens. The story still speaks to the host’s Munro."]
+   - Row: "Character" (12 pt) | popup: "Munro (default)", then a separator, a disabled "Voyager crew" header and the crew, a separator, a disabled "Hazard Team" header and its members (indented one level; titles and ids from `efgame/src/game/coop_characters.h`, the same table the game checks); initial from `CoopGuestCharacter` (default Munro) | "with the voice of the Munro above" (11 pt secondary).
    - Result row (hidden until the first Check): icon (SF symbol 20 pt, width 26) or a small spinner while checking; title (13 pt semibold, wrap 440); text (12 pt secondary, wrap 440, selectable; hidden when empty).
    - Bottom row: "Connect" (min width 80; disabled until a Check found a game; tooltip "Check the address first" / `"Join <address> as player 2"`) + text (11 pt secondary, wrap 380): "Connect starts single player and joins the host’s game as player 2: you see it from player 2’s eyes and play player 2 while the host plays the story."
 6. Footer: right-aligned "Cancel" (Esc, min width 80).
@@ -1170,10 +1174,10 @@ Description lines (`CoopDescribe`, `C:1162-1195`):
 6. `"Host’s app: Elite Force for Mac <version or ?> · co-op version <coopProtocol or ?>"`.
 
 **Host** (`C:1251-1269`): requires canPlay. End the sheet (OK); keep the NAT
-mapping; remember Host chosen, background flag (saved to defaults), name
+mapping; remember Host chosen, background flag and team attack (saved to defaults), name
 (`takeName`: cleaned name saved to `CoopPlayerName`; empty → computer name
 used); `Sys_CoopSetLaunchPassword(host password)`; log `Co-op: hosting (single
-player with sp_coop 1) as <name>[, with a password]`; select Single Player;
+player with sp_coop 1) as <name>[, with a password][, not shown on the network][, team attack half|on]`; select Single Player;
 **Play**.
 
 **Connect** (`C:1282-1307`): requires a found address and canPlay. If the host
@@ -1190,9 +1194,12 @@ coop_connect), <name>, <sex> Munro`, select Single Player, **Play**.
 
 Only when not Holomatch:
 
-- Host chosen: `+set sp_coop 1 +set coop_backgroundPlay <1|0> `
+- Host chosen: `+set sp_coop 1 +set coop_backgroundPlay <1|0> `, then `+set coop_lanVisible 0 ` when
+  "Show this game on my network" is off, then `+set coop_teamAttack <1|2> ` when "Team attack" is Half or On
+  (Off: nothing; the game's default is 0)
 - Connect chosen and the address contains only `0-9 . :`:
-  `+set coop_connect "<ip:port>" +set coop_sex <male|female> `
+  `+set coop_connect "<ip:port>" +set coop_sex <male|female> `, then `+set coop_look <id> ` when the
+  chosen character's id is in `coop_characters.h` (Munro: nothing)
 - Either, with a non-empty name: `+set coop_name "<CoopSafeName(name)>" `
 
 The **password is never on the command line**: the launcher hands it to the
@@ -1213,7 +1220,7 @@ for interop (the engine cleans names again, `CoopCleanName` `N:232-250`).
 
 - **Cvars** registered on the first `Sys_CoopFrame` outside Holomatch/dedicated
   (`C:388-403`): `coop_connect` "" TEMP, `coop_password` "" TEMP, `coop_name`
-  "" TEMP, `coop_sex` "" TEMP, `coop_backgroundPlay` "1" ARCHIVE; plus
+  "" TEMP, `coop_sex` "" TEMP, `coop_look` "" TEMP, `coop_backgroundPlay` "1" ARCHIVE; plus
   `coop_netstats`, `coop_simlatency`, `coop_simloss` (TEMP) and commands
   `coop_status`, `coop_disconnect`, `coop_kick` (`N:1997-2008`). `sp_coop` is
   the game's latched cvar (1 = host, turns co-op on at the next level start;
@@ -1266,7 +1273,7 @@ Pure sockets; portable except `arc4random` and the Cocoa return type.
 7. Accept only packets from the exact ip:port, starting with
    `\xff\xff\xff\xffcoopInfoResponse\n`, whose infostring parses and whose
    `challenge` (if present) equals ours.
-8. `coopProtocol != 7` or `version != EF_APP_VERSION` → mismatch: `"The host runs Elite Force for Mac <v> (co-op version <p>), and this Mac runs <mine> (co-op version 7). Both need the same version to play together."`
+8. `coopProtocol != 8` or `version != EF_APP_VERSION` → mismatch: `"The host runs Elite Force for Mac <v> (co-op version <p>), and this Mac runs <mine> (co-op version 8). Both need the same version to play together."`
    Then the pak check (protocol 7): this computer's own paks (every `.pk3` in the homepath's baseEF and the game's BaseEF, by checksum, `FS_CoopCorePakIndex`) against the answer's `paks` with `CoopNet_ComparePaks`: pak0-pak2 differ → refused, shown with the sentences naming the packs (no Connect); only pak3 (Expansion Pack) differs → found with a warning and "Join Anyway".
 9. Else found (with info). Timeout → none; if a send failed → error `"macOS couldn’t send to it (<strerror>). If you didn’t allow Elite Force to find devices on your local network, allow it in System Settings > Privacy & Security > Local Network."` (Port: firewall wording.)
 
@@ -1287,13 +1294,13 @@ in OOB mode (`MSG_InitOOB`: no Huffman; `MSG_WriteLong/Short/Byte/String/Data`
 
 | Dir | Word | Payload |
 |---|---|---|
-| guest→host | `coopConnect` | `coopProtocol`, `version`, `paks` (`FS_CoopPaks()`: the game's own paks loaded, `"pak0.pk3:<checksum> pak1.pk3:<checksum> ..."`), `name` (clean, else "Player 2"), `sex` (optional `male`/`female`), `nonce` (16 hex), `password` (if any) |
+| guest→host | `coopConnect` | `coopProtocol`, `version`, `paks` (`FS_CoopPaks()`: the game's own paks loaded, `"pak0.pk3:<checksum> pak1.pk3:<checksum> ..."`), `name` (clean, else "Player 2"), `sex` (optional `male`/`female`), `look` (optional: a player 2 character id from `coop_characters.h`, lower case letters, digits and `_`, at most 23; the host takes only one it knows with all files in its own pak0-pak2), `nonce` (16 hex), `password` (if any) |
 | host→guest | `coopAccept` | `session` (decimal, 1…0x7ffffffe), `nonce` (echo), `paks` (the host's), `hostName`, `state`, `map`, `time`, `players` |
 | host→guest | `coopReject` | sentence |
 
 Host rules (`N:969-1071`): ≤ 5 connect requests per second from anyone; the
 same guest (address + nonce) gets the same accept again; protocol/version
-mismatch → `"The host runs Elite Force for Mac <v> (co-op version 7), and you run <v'> (co-op version <p'>). Both need the same version."`;
+mismatch → `"The host runs Elite Force for Mac <v> (co-op version 8), and you run <v'> (co-op version <p'>). Both need the same version."`;
 another address while a guest is active → `"The game already has a player 2 (<name>)."`;
 pak0-pak2 differ (`CoopNet_ComparePaks`) → `"Your game files differ from the host's. You're missing pak2.pk3 (the host has it). Both need the game's original pak0.pk3, pak1.pk3 and pak2.pk3 (other packs don't matter)."` (each differing pack named); only pak3 differs → accepted, with a note on both consoles;
 password set and wrong → "Wrong password." / missing → "This game needs a password.";
@@ -1476,8 +1483,12 @@ app; SDL builds the menu bar; the File menu is added in game (§5.2).
 
 - Repository `marinohardin/EliteForce-MacOS-Marino`; tag prefix **`macos-v`**
   (releases `macos-v1.1.0` … `macos-v1.3.0`; `v1.x` tags are the Android
-  project's, `docs/PUBLISHING.md:102`). Port: per-platform prefixes (e.g.
-  `windows-v`, `linux-v`) or a shared one; make it a parameter.
+  project's, `docs/PUBLISHING.md:102`). Port (as built, 1.5.0): the shared
+  prefix `macos-v`, since each version is one release with every platform's
+  downloads; a release counts only when one of its `assets[].name` ends with the
+  platform's suffix (Windows `-setup.exe`, `-windows-x64.zip`; Linux
+  `.AppImage`; case-insensitive). The 1.4.0 prefixes `windows-v`/`linux-v` are
+  still accepted (same asset rule). See `LC_UPDATE_*` in `lc_common.h`.
 - Request: `GET https://api.github.com/repos/<repo>/releases?per_page=100`,
   headers `Accept: application/vnd.github+json`, `User-Agent:
   EliteForce-MacOS/<app version>`; no cookies/cache (ephemeral session);
@@ -1622,7 +1633,7 @@ void        LC_StoreFree( lc_store_t *s );
 Keys: `gamefolder` (must stay compatible with `SD:486-517`), `launchermode`,
 `checkforupdates`, `updatelastcheck` (unix time), `updatelatestversion`,
 `updatelatesturl`, `hudwidescreen`, `coopkeepplayinginbackground`,
-`coopplayername`, `coopguestmunro`, `loopbackhostfix`, plus the server spec's
+`coopplayername`, `coopguestmunro`, `coopteamattack` (0/1/2, absent = 0), `loopbackhostfix`, plus the server spec's
 keys (master list, server settings, browser favorites).
 
 ### 10.2 Config reading and graphics model
@@ -1752,9 +1763,12 @@ shared.)
 ### 10.7 Updates
 
 ```c
-// tagPrefix e.g. "macos-v"; 1 + version/url, 0 none (url = releases page), -1 parse failure
-int  LC_ParseReleases( const char *json, size_t len, const char *tagPrefix, const char *repo,
-                       char *version, size_t vSize, char *url, size_t uSize );
+// tagPrefixes e.g. { "macos-v", "windows-v", NULL }; assetSuffixes (NULL = no asset needed)
+// e.g. { "-setup.exe", "-windows-x64.zip", NULL }; 1 + version/url/asset name,
+// 0 none (url = releases page), -1 parse failure   (as built: lc_update_parse)
+int  LC_ParseReleases( const char *json, size_t len, const char *const *tagPrefixes,
+                       const char *const *assetSuffixes, const char *repo,
+                       char *version, size_t vSize, char *url, size_t uSize, char *asset, size_t aSize );
 int  LC_VersionCompare( const char *a, const char *b );    // NSNumericSearch semantics (§8)
 int  LC_UpdateDue( long long lastCheck, long long now );   // !(0 <= now-last < 86400)
 void LC_ReleasesURL( const char *repo, char *out, size_t size );  // ...releases?per_page=100

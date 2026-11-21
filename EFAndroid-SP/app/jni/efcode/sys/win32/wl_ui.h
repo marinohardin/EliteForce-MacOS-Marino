@@ -39,6 +39,8 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 extern "C" {
 #include "../../launcher/lc_common.h"
 }
+#define LAUNCHER_TITLES_TYPES_ONLY		/* the images themselves are in wl_ui.cpp */
+#include "../launcher_titles.h"
 
 namespace wl {
 
@@ -64,7 +66,7 @@ str fmt( const char *f, ... )
 
 /* ---- colours and theme ---- */
 enum Role { R_TEXT, R_TEXT2, R_TEXT3, R_ORANGE, R_GREEN, R_RED, R_ACCENT, R_PURPLE, R_BLUE, R_AMBER,
-	R_YELLOW, R_TEAL, R_PINK, R_BLACK };
+	R_YELLOW, R_TEAL, R_PINK, R_BLACK, R_GOLD };
 struct Theme {
 	bool dark;
 	COLORREF bg, text, text2, text3, sep, group, field, accent, orange, green, red, purple, blue, amber,
@@ -94,6 +96,10 @@ void drawGlyph( HDC dc, int glyph, int x, int y, int size, COLORREF c );	/* devi
 void fillRoundRect( HDC dc, RECT r, int radius, COLORREF fill, COLORREF stroke, int strokeW );
 void drawAppIcon( HDC dc, int x, int y, int size );
 
+/* ---- title lettering (launcher_titles.h): an alpha mask tinted with c, drawn w x h device px ---- */
+void drawTitle( HDC dc, int which, int x, int y, int w, int h, COLORREF c );
+const launcherTitle_t *titleInfo( int which );		/* LT_*: its text, size and baseline (points) */
+
 /* ---- images ---- */
 HBITMAP decodeImage( const unsigned char *data, size_t len, bool isTga, int *w, int *h );
 bool savePng( HBITMAP bmp, const char *path );
@@ -120,6 +126,7 @@ struct Wnd {
 	virtual void onUser( UINT m, WPARAM w, LPARAM l ) { (void)m; (void)w; (void)l; }
 	virtual bool preTranslate( MSG *m ) { (void)m; return false; }
 	virtual bool onClose( ) { end( IDCANCEL ); return true; }
+	virtual void dismiss( ) { end( IDCANCEL ); }	/* closed from outside (a stvef:// link): no questions */
 	virtual void onDpiChanged( ) {}
 	virtual LRESULT onNotify( NMHDR *h ) { (void)h; return 0; }
 	virtual LRESULT onOther( UINT m, WPARAM w, LPARAM l, bool *handled ) { (void)m; (void)w; (void)l; *handled = false; return 0; }
@@ -127,6 +134,8 @@ struct Wnd {
 	HWND ctl( int id ) { auto i = ids.find( id ); return i == ids.end( ) ? 0 : i->second; }
 	HWND label( int x, int y, int w, int h, const char *text, int px = 13, int weight = 400, int role = R_TEXT,
 		UINT dt = DT_WORDBREAK, int id = 0 );
+	/* the title lettering image which (LT_*) as a label: its text is the string, its size the image's */
+	HWND titleLabel( int x, int y, int which, int role, int id = 0 );
 	HWND button( int x, int y, int w, int h, const char *text, int id, bool def = false, int px = 13 );
 	HWND check( int x, int y, int w, int h, const char *text, int id, bool on = false, int px = 13 );
 	HWND radio( int x, int y, int w, int h, const char *text, int id, bool first = false, int px = 13 );

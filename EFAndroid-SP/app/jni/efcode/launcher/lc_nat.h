@@ -51,6 +51,9 @@ int  lc_lan_address(char *out, size_t n);                     /* platform #ifdef
 /* the co-op sheet's list (LDC 6.1): IPv4 addresses of interfaces that are up, not loopback, not
    169.254/16; the one with the default route first (macOS: en0). Returns the count. */
 int  lc_lan_addresses(char addrs[][16], char ifnames[][64], int max);
+/* the directed broadcast address (host byte order) of each up IPv4 interface that isn't loopback or
+   169.254/16, without duplicates (the co-op "Games on your network" search). Returns the count. */
+int  lc_lan_broadcasts(unsigned *out, int max);
 /* default gateway (host byte order) or 0 */
 unsigned lc_default_gateway(void);
 

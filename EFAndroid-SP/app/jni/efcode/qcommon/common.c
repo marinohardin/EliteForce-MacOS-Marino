@@ -1059,6 +1059,12 @@ void *Z_TagMalloc( int size, int tag ) {
 			Com_Error(ERR_FATAL, "Z_Malloc: failed on allocation of %i bytes from the %s zone: %s, line: %d (%s)",
 								size, zone == smallzone ? "small" : "main", file, line, label);
 #else
+			if ( zone == mainzone ) {
+				// say which limit was hit and how to raise it
+				Com_Error(ERR_FATAL, "Z_Malloc: failed on allocation of %i bytes from the main zone "
+									"(the zone is full: com_zoneMegs is %i; start the game with +set com_zoneMegs %i)",
+									size, mainzone->size / ( 1024 * 1024 ), mainzone->size / ( 1024 * 1024 ) * 2);
+			}
 			Com_Error(ERR_FATAL, "Z_Malloc: failed on allocation of %i bytes from the %s zone",
 								size, zone == smallzone ? "small" : "main");
 #endif

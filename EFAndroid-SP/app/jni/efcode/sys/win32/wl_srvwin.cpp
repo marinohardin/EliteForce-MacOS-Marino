@@ -344,7 +344,7 @@ struct SrvWin : Wnd {
 	}
 
 	/* ---- listing check (9.10, 9.11) ---- */
-	struct ListRes { SrvWin *s; lc_list_result r; };
+	struct ListRes { HWND hwnd; str want; char cur[LC_MAX_MASTERS][65]; int n; lc_list_result r; };
 	str masterLabel( int i )
 	{
 		char cur[LC_MAX_MASTERS][65]; int n = lc_masters_load( lc_store_shared( ), cur );
@@ -363,19 +363,21 @@ struct SrvWin : Wnd {
 	void stopListCheck( ) { KillTimer( hwnd, 5 ); checking = false; showListing( ); }
 	static void listWorker( void *u )
 	{
-		ListRes *r = (ListRes *)u; SrvWin *s = r->s;
-		char cur[LC_MAX_MASTERS][65]; int n = lc_masters_load( lc_store_shared( ), cur );
-		str ip = !s->publicAddr.empty( ) ? s->publicAddr : s->lookupAddr;
-		str want = ip.empty( ) ? str( ) : fmt( "%s:%d", ip.c_str( ), !s->publicAddr.empty( ) ? s->publicPort : s->port );
+		ListRes *r = (ListRes *)u;
 		memset( &r->r, 0, sizeof r->r );
-		lc_list_check( cur, n, want.empty( ) ? 0 : want.c_str( ), &r->r );
-		if ( s->hwnd ) PostMessageW( s->hwnd, WM_LISTRES, 0, (LPARAM)r ); else delete r;
+		lc_list_check( r->cur, r->n, r->want.empty( ) ? 0 : r->want.c_str( ), &r->r );
+		if ( !IsWindow( r->hwnd ) || !PostMessageW( r->hwnd, WM_LISTRES, 0, (LPARAM)r ) ) delete r;
 	}
 	void checkList( )
 	{
 		if ( !hasChild || !checking ) return;
 		checkCount++;
-		ListRes *r = new ListRes{ this, {} };
+		/* everything the worker needs is read here, on the UI thread, which changes it while the worker runs */
+		str ip = !publicAddr.empty( ) ? publicAddr : lookupAddr;
+		ListRes *r = new ListRes( );
+		r->hwnd = hwnd;
+		r->want = ip.empty( ) ? str( ) : fmt( "%s:%d", ip.c_str( ), !publicAddr.empty( ) ? publicPort : port );
+		r->n = lc_masters_load( lc_store_shared( ), r->cur );	/* the shared store is not thread safe */
 		lc_thread *t = lc_thread_start( listWorker, r );
 		if ( t ) lc_thread_detach( t ); else { delete r; }
 	}
@@ -469,9 +471,12 @@ struct SrvWin : Wnd {
 	void doKick( int row )
 	{
 		if ( !hasChild || row < 0 || row >= (int)plist.size( ) ) return;
-		const lc_srv_player &p = plist[row];
+		/* a copy: the Alert below runs a message loop, and a status update can replace plist
+		   (freeing this row, or moving another player into it) meanwhile */
+		const lc_srv_player p = plist[row];
 		if ( !p.bot ) {
 			if ( Alert( hwnd, fmt( "Kick %s?", p.name ), "They're disconnected from the server, but can join again.", { "Kick", "Cancel" }, 1, 1 ) != 0 ) return;
+			if ( !hasChild || !srv ) return;	/* the server stopped while asking */
 		}
 		lc_srv_kick( srv, p.num );
 	}

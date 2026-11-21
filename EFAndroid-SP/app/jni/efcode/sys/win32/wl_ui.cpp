@@ -6,6 +6,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 ===========================================================================
 */
 
+#include "../launcher_titles.h"		/* the images (before wl_ui.h, which wants the types only) */
 #include "wl_ui.h"
 #include <algorithm>
 #include <cmath>
@@ -133,6 +134,7 @@ COLORREF roleColor( int r )
 	case R_TEAL: return T.teal;
 	case R_PINK: return T.pink;
 	case R_BLACK: return T.dark ? blend( T.text, T.bg, 50 ) : RGB( 0, 0, 0 );
+	case R_GOLD: return RGB( 0xD6, 0xA0, 0x3C );		/* the "AwayTeamEF" lettering, light and dark */
 	default: return T.text;
 	}
 }
@@ -140,12 +142,17 @@ COLORREF roleColor( int r )
 /* ------------------------------------------------------------- dpi, fonts */
 
 int g_dpi = 96;
-static std::map<int, HFONT> g_fonts;
+/* Keyed by DPI too, and never freed while windows are up: a DPI change (WM_DPICHANGED, or a
+   sheet opening on another monitor) used to delete every font, but only the Launcher rebuilds
+   its controls, so the server window and open sheets kept drawing with deleted HFONTs. Each
+   DPI's set is a few dozen handles, so they stay until the process exits. */
+static std::map<long long, HFONT> g_fonts;
 
 int S( int v ) { return MulDiv( v, g_dpi, 96 ); }
 
-void setDpi( int dpi ) { if ( dpi >= 96 && dpi != g_dpi ) { g_dpi = dpi; fontsReset( ); } }
+void setDpi( int dpi ) { if ( dpi >= 96 && dpi != g_dpi ) g_dpi = dpi; }
 
+/* Only once no window can still be using a font. */
 void fontsReset( )
 {
 	for ( auto &p : g_fonts ) DeleteObject( p.second );
@@ -154,7 +161,7 @@ void fontsReset( )
 
 HFONT F( int px, int weight, bool mono )
 {
-	int key = px * 10000 + weight * 2 + ( mono ? 1 : 0 );
+	long long key = ( (long long)g_dpi << 32 ) | (long long)( px * 10000 + weight * 2 + ( mono ? 1 : 0 ) );
 	auto i = g_fonts.find( key );
 	if ( i != g_fonts.end( ) ) return i->second;
 	HFONT f = CreateFontW( -S( px ), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
@@ -166,6 +173,7 @@ HFONT F( int px, int weight, bool mono )
 
 int dpiOf( HWND w )
 {
+	if ( const char *t = testEnv( "VOYAGERSP_TEST_LAUNCHER_DPI" ) ) { int d = atoi( t ); if ( d >= 96 ) return d; }	/* layout tests at 125 / 150 % */
 	typedef UINT ( WINAPI *GetDpiForWindowFn )( HWND );
 	static GetDpiForWindowFn fn = (GetDpiForWindowFn)GetProcAddress( GetModuleHandleW( L"user32.dll" ), "GetDpiForWindow" );
 	if ( fn && w ) { UINT d = fn( w ); if ( d ) return (int)d; }
@@ -395,6 +403,67 @@ void drawAppIcon( HDC dc, int x, int y, int size )
 	else drawGlyph( dc, G_APP, x, y, size, T.accent );
 }
 
+/* ------------------------------------------------------ title lettering */
+
+/* the mask's coverage (0..255) per pixel, decoded once */
+static const std::vector<BYTE> *titleMask( int which, int *w, int *h )
+{
+	static std::vector<BYTE> masks[LT_COUNT];
+	static int mw[LT_COUNT], mh[LT_COUNT];
+	if ( which < 0 || which >= LT_COUNT ) return 0;
+	if ( masks[which].empty( ) ) {
+		const launcherTitle_t *t = &launcherTitles[which];
+		HGLOBAL hg = GlobalAlloc( GMEM_MOVEABLE, t->pngLen );
+		if ( !hg ) return 0;
+		memcpy( GlobalLock( hg ), t->png, t->pngLen ); GlobalUnlock( hg );
+		IStream *st = 0;
+		if ( CreateStreamOnHGlobal( hg, TRUE, &st ) != S_OK ) { GlobalFree( hg ); return 0; }
+		{
+			Bitmap bmp( st );
+			BitmapData bd;
+			Rect r( 0, 0, (INT)bmp.GetWidth( ), (INT)bmp.GetHeight( ) );
+			if ( bmp.GetLastStatus( ) == Ok && r.Width > 0 && r.Height > 0 &&
+					bmp.LockBits( &r, ImageLockModeRead, PixelFormat32bppARGB, &bd ) == Ok ) {
+				masks[which].resize( (size_t)r.Width * r.Height );
+				for ( int y = 0; y < r.Height; y++ ) {
+					const BYTE *row = (const BYTE *)bd.Scan0 + (size_t)y * bd.Stride;
+					for ( int x = 0; x < r.Width; x++ ) masks[which][(size_t)y * r.Width + x] = row[x * 4 + 3];
+				}
+				bmp.UnlockBits( &bd );
+				mw[which] = r.Width; mh[which] = r.Height;
+			}
+		}
+		st->Release( );
+		if ( masks[which].empty( ) ) return 0;
+	}
+	*w = mw[which]; *h = mh[which];
+	return &masks[which];
+}
+
+const launcherTitle_t *titleInfo( int which ) { return &launcherTitles[which]; }
+
+void drawTitle( HDC dc, int which, int x, int y, int w, int h, COLORREF c )
+{
+	int mw, mh;
+	const std::vector<BYTE> *m = titleMask( which, &mw, &mh );
+	if ( !m || w <= 0 || h <= 0 ) return;
+	/* the mask in colour c (premultiplied), scaled down to the device size with GDI+'s prefiltered bicubic */
+	std::vector<BYTE> px( (size_t)mw * mh * 4 );
+	for ( size_t i = 0; i < m->size( ); i++ ) {
+		int a = ( *m )[i];
+		px[i * 4 + 0] = (BYTE)( GetBValue( c ) * a / 255 );
+		px[i * 4 + 1] = (BYTE)( GetGValue( c ) * a / 255 );
+		px[i * 4 + 2] = (BYTE)( GetRValue( c ) * a / 255 );
+		px[i * 4 + 3] = (BYTE)a;
+	}
+	Bitmap src( mw, mh, mw * 4, PixelFormat32bppPARGB, px.data( ) );
+	Graphics g( dc );
+	g.SetInterpolationMode( InterpolationModeHighQualityBicubic );
+	g.SetPixelOffsetMode( PixelOffsetModeHalf );
+	g.SetCompositingQuality( CompositingQualityHighQuality );
+	g.DrawImage( &src, Rect( x, y, w, h ), 0, 0, mw, mh, UnitPixel );
+}
+
 /* ---------------------------------------------------------------- images */
 
 static HBITMAP dibFromRgba( const unsigned char *bgra, int w, int h, bool topDown )
@@ -597,19 +666,21 @@ struct MemDC {
 #define PAINT_BEGIN HDC dc; PAINTSTRUCT ps; bool prn = ( m == WM_PRINTCLIENT ); if ( prn ) dc = (HDC)w; else dc = BeginPaint( h, &ps );
 #define PAINT_END if ( !prn ) EndPaint( h, &ps );
 
-struct LabelData { int role; UINT dt; HFONT font; };
+struct LabelData { int role; UINT dt; HFONT font; int title; };
 #define LBL_SETROLE ( WM_APP + 1 )
 #define LBL_SETDT ( WM_APP + 2 )
+#define LBL_SETTITLE ( WM_APP + 3 )		/* draw the title lettering image wParam (LT_*) instead of the text */
 
 static LRESULT CALLBACK labelProc( HWND h, UINT m, WPARAM w, LPARAM l )
 {
 	LabelData *d = (LabelData *)GetWindowLongPtrW( h, GWLP_USERDATA );
 	switch ( m ) {
-	case WM_NCCREATE: d = new LabelData{ R_TEXT, DT_WORDBREAK, 0 }; SetWindowLongPtrW( h, GWLP_USERDATA, (LONG_PTR)d ); break;
+	case WM_NCCREATE: d = new LabelData{ R_TEXT, DT_WORDBREAK, 0, -1 }; SetWindowLongPtrW( h, GWLP_USERDATA, (LONG_PTR)d ); break;
 	case WM_NCDESTROY: delete d; SetWindowLongPtrW( h, GWLP_USERDATA, 0 ); break;
 	case WM_SETFONT: if ( d ) { d->font = (HFONT)w; if ( l ) InvalidateRect( h, 0, FALSE ); } return 0;
 	case LBL_SETROLE: if ( d && d->role != (int)w ) { d->role = (int)w; InvalidateRect( GetParent( h ), 0, FALSE ); RedrawWindow( h, 0, 0, RDW_INVALIDATE | RDW_UPDATENOW ); } return 0;
 	case LBL_SETDT: d->dt = (UINT)w; return 0;
+	case LBL_SETTITLE: d->title = (int)w; InvalidateRect( h, 0, FALSE ); return 0;
 	case WM_ERASEBKGND: return 1;
 	case WM_SETTEXT: {
 		LRESULT r = DefWindowProcW( h, m, w, l );
@@ -623,13 +694,20 @@ static LRESULT CALLBACK labelProc( HWND h, UINT m, WPARAM w, LPARAM l )
 		{
 			MemDC md( dc, rc.right, rc.bottom );
 			parentBg( h, md.dc, rc.right, rc.bottom );
-			wchar_t buf[2048];
-			int n = GetWindowTextW( h, buf, 2048 );
-			SetBkMode( md.dc, TRANSPARENT );
-			SetTextColor( md.dc, roleColor( d->role ) );
-			HGDIOBJ of = SelectObject( md.dc, d->font ? d->font : F( 13 ) );
-			DrawTextW( md.dc, buf, n, &rc, d->dt | DT_NOPREFIX );
-			SelectObject( md.dc, of );
+			if ( d->title >= 0 && d->title < LT_COUNT ) {
+				/* the image's own size at this DPI, from the label's top left */
+				const launcherTitle_t *t = &launcherTitles[d->title];
+				drawTitle( md.dc, d->title, 0, 0, (int)lround( t->w * g_dpi / 96.0 ), (int)lround( t->h * g_dpi / 96.0 ),
+					roleColor( d->role ) );
+			} else {
+				wchar_t buf[2048];
+				int n = GetWindowTextW( h, buf, 2048 );
+				SetBkMode( md.dc, TRANSPARENT );
+				SetTextColor( md.dc, roleColor( d->role ) );
+				HGDIOBJ of = SelectObject( md.dc, d->font ? d->font : F( 13 ) );
+				DrawTextW( md.dc, buf, n, &rc, d->dt | DT_NOPREFIX );
+				SelectObject( md.dc, of );
+			}
 		}
 		PAINT_END return 0; }
 	}
@@ -1035,6 +1113,13 @@ HWND Wnd::label( int x, int y, int w, int h, const char *text, int px, int weigh
 	HWND c = ctl_( L"EFLabel", W( text ).c_str( ), 0, 0, x, y, w, h, id, px, weight );
 	SendMessageW( c, LBL_SETROLE, role, 0 );
 	SendMessageW( c, LBL_SETDT, dt, 0 );
+	return c;
+}
+HWND Wnd::titleLabel( int x, int y, int which, int role, int id )
+{
+	const launcherTitle_t *t = &launcherTitles[which];
+	HWND c = label( x, y, (int)ceil( t->w ), (int)ceil( t->h ), t->text, 13, 400, role, DT_SINGLELINE, id );
+	SendMessageW( c, LBL_SETTITLE, which, 0 );
 	return c;
 }
 HWND Wnd::button( int x, int y, int w, int h, const char *text, int id, bool def, int px )

@@ -295,7 +295,12 @@ static void CON_Show( void )
 	if( qconsole_pipe )
 		return;
 
-	GetConsoleScreenBufferInfo( qconsole_hout, &binfo );
+	// No console (the game started from Explorer or a shortcut has NULL std
+	// handles): binfo would stay uninitialized stack, and a negative
+	// srWindow.Right below would point the write past the end of the stack,
+	// which crashed the launcher's co-op Host in WriteConsoleOutput.
+	if( !GetConsoleScreenBufferInfo( qconsole_hout, &binfo ) )
+		return;
 
 	// if we're in the middle of printf, don't bother writing the buffer
 	if( !qconsole_drawinput )
@@ -333,10 +338,16 @@ static void CON_Show( void )
 		line[ i ].Attributes = attrib;
 	}
 
-	if( qconsole_linelen > binfo.srWindow.Right )
+	if( qconsole_linelen > binfo.srWindow.Right && binfo.srWindow.Right > 0 )
 	{
-		WriteConsoleOutput( qconsole_hout, 
-			line + (qconsole_linelen - binfo.srWindow.Right ),
+		// the line is wider than the window: show its end. The source is
+		// MAX_EDIT_LINE cells, so the width read from it shrinks by the offset.
+		int offset = qconsole_linelen - binfo.srWindow.Right;
+
+		if( offset >= MAX_EDIT_LINE )
+			offset = MAX_EDIT_LINE - 1;
+		writeSize.X = MAX_EDIT_LINE - offset;
+		WriteConsoleOutput( qconsole_hout, line + offset,
 			writeSize, writePos, &writeArea );
 	}
 	else
@@ -384,6 +395,8 @@ void CON_Shutdown( void )
 {
 	if( qconsole_pipe )
 		return;		// the reader thread may be blocked in ReadFile on stdin: leave the handles
+	if( !qconsole_hin || !qconsole_hout )
+		return;		// no console (CON_Init found none)
 	CON_Hide( );
 	SetConsoleMode( qconsole_hin, qconsole_orig_mode );
 	SetConsoleCursorInfo( qconsole_hout, &qconsole_orig_cursorinfo );
@@ -420,15 +433,19 @@ void CON_Init( void )
 	// handle Ctrl-C or other console termination
 	SetConsoleCtrlHandler( CON_CtrlHandler, TRUE );
 
+	// A GUI program started from Explorer or a shortcut gets NULL std handles
+	// (not INVALID_HANDLE_VALUE): there is no console then, so leave both
+	// handles NULL; CON_Show and CON_Shutdown do nothing without them.
 	qconsole_hin = GetStdHandle( STD_INPUT_HANDLE );
-	if( qconsole_hin == INVALID_HANDLE_VALUE )
-		return;
-
 	qconsole_hout = GetStdHandle( STD_OUTPUT_HANDLE );
-	if( qconsole_hout == INVALID_HANDLE_VALUE )
+	if( qconsole_hin == INVALID_HANDLE_VALUE || qconsole_hout == INVALID_HANDLE_VALUE ||
+		!qconsole_hin || !qconsole_hout )
+	{
+		qconsole_hin = qconsole_hout = NULL;
 		return;
+	}
 
-	if( sys_headless && qconsole_hin != NULL && GetFileType( qconsole_hin ) == FILE_TYPE_PIPE )
+	if( sys_headless && GetFileType( qconsole_hin ) == FILE_TYPE_PIPE )
 	{
 		DWORD mode;
 
@@ -452,7 +469,8 @@ void CON_Init( void )
 
 	FlushConsoleInputBuffer( qconsole_hin ); 
 
-	GetConsoleScreenBufferInfo( qconsole_hout, &info );
+	if( !GetConsoleScreenBufferInfo( qconsole_hout, &info ) )
+		info.wAttributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;	// no console
 	qconsole_attrib = info.wAttributes;
 	qconsole_backgroundAttrib = qconsole_attrib & (BACKGROUND_BLUE|BACKGROUND_GREEN|BACKGROUND_RED|BACKGROUND_INTENSITY);
 
@@ -560,15 +578,18 @@ char *CON_Input( void )
 		{
 			field_t f;
 
+			Com_Memset( &f, 0, sizeof( f ) );
 #ifdef UNICODE
-			Sys_WideToUTF8( utf8line, qconsole_line, sizeof( utf8line ) );
+			// complete the line's UTF-8 text (f was left uninitialized here,
+			// and Field_AutoComplete could write past it)
+			Sys_WideToUTF8( f.buffer, qconsole_line, sizeof( f.buffer ) );
 #else
 			Q_strncpyz( f.buffer, qconsole_line,
 				sizeof( f.buffer ) );
 #endif
 			Field_AutoComplete( &f );
 #ifdef UNICODE
-			Sys_UTF8ToWide( qconsole_line, utf8line, ARRAY_LEN( qconsole_line ) );
+			Sys_UTF8ToWide( qconsole_line, f.buffer, ARRAY_LEN( qconsole_line ) );
 			qconsole_linelen = wcslen( qconsole_line );
 #else
 			Q_strncpyz( qconsole_line, f.buffer,
@@ -579,7 +600,7 @@ char *CON_Input( void )
 			break;
 		}
 
-		if( qconsole_linelen < sizeof( qconsole_line ) - 1 )
+		if( qconsole_linelen < ARRAY_LEN( qconsole_line ) - 1 )
 		{
 #ifdef UNICODE
 			WCHAR c = buff[ i ].Event.KeyEvent.uChar.UnicodeChar;
@@ -596,7 +617,7 @@ char *CON_Input( void )
 					{
 						memmove( qconsole_line + qconsole_cursor - 1,
 									qconsole_line + qconsole_cursor,
-									qconsole_linelen - qconsole_cursor );
+									( qconsole_linelen - qconsole_cursor ) * sizeof( TCHAR ) );
 					}
 
 					qconsole_line[ newlen ] = '\0';
@@ -610,7 +631,7 @@ char *CON_Input( void )
 				{
 					memmove( qconsole_line + qconsole_cursor + 1,
 								qconsole_line + qconsole_cursor,
-								qconsole_linelen - qconsole_cursor );
+								( qconsole_linelen - qconsole_cursor ) * sizeof( TCHAR ) );
 				}
 
 				qconsole_line[ qconsole_cursor++ ] = c;
@@ -659,9 +680,11 @@ Set text colors based on Q3 color codes
 */
 void CON_WindowsColorPrint( const char *msg )
 {
-	static char buffer[ MAXPRINTMSG ];
+	// On the stack, not static: a conversion warning from Sys_UTF8ToWide prints through here
+	// again, and shared buffers would then print the warning twice and lose the text.
+	char        buffer[ MAXPRINTMSG ];
 #ifdef UNICODE
-	static WCHAR wbuffer[ MAXPRINTMSG ];
+	WCHAR       wbuffer[ MAXPRINTMSG ];
 #endif
 	int         length = 0;
 

@@ -93,6 +93,8 @@ struct CopyDlg : Wnd {
 	}
 	void onCommand( int id, int code, HWND ) override { if ( id == IDCANCEL ) cancel = 1; }
 	bool onClose( ) override { cancel = 1; return true; }
+	/* a link closes the sheets: stop the copy too, or the join below waits for all of it */
+	void dismiss( ) override { cancel = 1; end( -1 ); }
 	void update( )
 	{
 		unsigned long long p = progress;
@@ -123,6 +125,7 @@ bool dataCopyJobRun( HWND owner, lc_copyjob *job, const str &homeBase )
 	SetTimer( d.hwnd, 1, 20, 0 );
 	if ( !d.th ) { d.rc = 0; strcpy( d.err, "Couldn't start the copy." ); d.finished = 1; }
 	int rc = d.runModal( );
+	if ( !d.finished ) d.cancel = 1;	/* the panel ended early: don't let the join wait for the whole copy */
 	if ( d.th ) lc_thread_join( d.th );
 	bool ok = d.rc == 1;
 	if ( d.rc == 0 ) {

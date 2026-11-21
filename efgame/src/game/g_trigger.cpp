@@ -259,6 +259,10 @@ void Touch_Multi( gentity_t *self, gentity_t *other, trace_t *trace )
 		}
 	}
 
+	if ( COOP_P2Trigger( self, other ) )
+	{
+		return;
+	}
 	multi_trigger( self, COOP_StoryActivator( other ) );
 }
 

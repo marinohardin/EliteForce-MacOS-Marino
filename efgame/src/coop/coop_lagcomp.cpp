@@ -13,7 +13,9 @@
 // "position shift" and "instant weapons" modules): keep a short history of positions, shift the
 // other players back to the shooter's time for the weapon's traces only, and cap how far back. This
 // is our own code for the single-player game; the shooter is only player 2, player 1's shots (the
-// host's own) are not shifted, and projectiles aren't either.
+// host's own) are not shifted. Player 2's projectiles catch up to the view time instead (see
+// LC_ShiftMissiles), and the spread of its scavenger rifle and tetrion shots is drawn from a
+// sequence the guest's cgame repeats (COOP_SeedShot), so the guest can show them as it fires.
 //
 // Console (host): coop_lagcomp 0|1 (default 1), coop_lagcomp_max <ms> (default 400: up to 300 ms of
 // round trip plus the guest's one-frame view delay and one queued command), coop_lagcomp_debug 1
@@ -306,6 +308,105 @@ static qboolean LC_InstantHit( int weapon, qboolean alt )
 }
 
 /*
+Player 2's projectiles
+
+The guest draws a projectile of player 2 from the moment it fires (coop_predict.cpp), flying from the
+host time its screen showed then (the shot's view time). The host's own projectile starts when the
+command arrives, a round trip later on the guest's screen. It is owed that time, at most
+coop_lagcomp_max: it leaves player 2's muzzle on the host like any other shot (by the eye, as
+player 1's own shots), and is paid what it is owed at double speed along the same path, one frame's
+worth each frame (COOP_LagCatchUp: its start time moves back by the frame's length), so after as long as
+it was owed it flies exactly where it would if it had been fired at the view time. Each frame's move
+traces the whole way from where it was, so nothing is skipped.
+(Starting it at the view time at once put it that far along before player 1 ever saw it: up to 400
+ms of a scavenger rifle bolt is 600 units, so in most rooms the bolt hit the far wall in its first
+frame and player 1 saw no shot at all, only the impact.)
+s.time2 holds the start time it is owed (the view time) until it is paid; the guest's cgame draws it
+on that path (COOP_MissileLerp), as it was drawn before, so the guest sees nothing of the catching up.
+*/
+static byte			lc_hadMissile[MAX_GENTITIES];	// player 2's projectiles that were there before this shot
+static int			lc_setTime[MAX_GENTITIES];		// the start time COOP_LagCatchUp gave it last
+
+static qboolean LC_P2Missile( const gentity_t *m, const gentity_t *shooter )
+{
+	return m->inuse && m->s.eType == ET_MISSILE && m->owner == shooter;
+}
+
+static void LC_NoteMissiles( gentity_t *shooter )
+{
+	for ( int i = 0; i < globals.num_entities; i++ )
+	{
+		lc_hadMissile[i] = LC_P2Missile( &g_entities[i], shooter ) ? 1 : 0;
+	}
+}
+
+static void LC_ShiftMissiles( gentity_t *shooter )
+{
+	int viewTime = coop_p2.shotViewTime;
+
+	if ( !lc_enable->integer || viewTime >= level.time )
+	{
+		return;
+	}
+	if ( viewTime < level.time - lc_max->integer )
+	{
+		viewTime = level.time - lc_max->integer;
+	}
+	for ( int i = 0; i < globals.num_entities; i++ )
+	{
+		gentity_t *m = &g_entities[i];
+
+		if ( lc_hadMissile[i] || !LC_P2Missile( m, shooter ) || m->s.pos.trTime != level.time ||
+			( m->s.pos.trType != TR_LINEAR && m->s.pos.trType != TR_GRAVITY ) || VectorCompare( m->s.pos.trDelta, vec3_origin ) )
+		{
+			continue;		// (the arc welder's burst doesn't fly)
+		}
+		m->s.time2 = viewTime;
+		lc_setTime[i] = m->s.pos.trTime;
+		if ( lc_debug->integer )
+		{
+			gi.Printf( "co-op lagcomp: player 2's projectile %d (weapon %d) is owed %d ms\n", i, m->s.weapon,
+				level.time - viewTime );
+		}
+	}
+}
+
+/*
+COOP_LagCatchUp
+
+The start of each game frame, before anything moves: each of player 2's projectiles that is still
+owed time (s.time2) takes up to this frame's length of it, so this frame moves it two frames' worth.
+One the game started anew meanwhile (a bounce, a seeker turning) keeps its new path and is owed
+nothing more.
+*/
+void COOP_LagCatchUp( void )
+{
+	int msec = level.time - level.previousTime;
+
+	for ( int i = MAX_CLIENTS; i < globals.num_entities; i++ )
+	{
+		gentity_t *m = &g_entities[i];
+
+		if ( !m->inuse || !m->s.time2 || m->s.eType != ET_MISSILE )
+		{
+			continue;
+		}
+		if ( m->s.pos.trTime != lc_setTime[i] || ( m->s.pos.trType != TR_LINEAR && m->s.pos.trType != TR_GRAVITY ) )
+		{
+			m->s.time2 = 0;
+			continue;
+		}
+		int t = m->s.pos.trTime - ( msec > 0 ? msec : 0 );
+		if ( t <= m->s.time2 )
+		{
+			t = m->s.time2;
+			m->s.time2 = 0;		// paid: on the view time's path from now on
+		}
+		m->s.pos.trTime = lc_setTime[i] = t;
+	}
+}
+
+/*
 COOP_ShotStart / COOP_ShotEnd
 
 Around FireWeapon. For player 2: its temp entities name it (the guest's cgame leaves out the host's
@@ -330,6 +431,11 @@ void COOP_ShotStart( gentity_t *ent, qboolean alt )
 
 	LC_Cvars();
 	viewTime = coop_p2.shotViewTime;
+	if ( viewTime )
+	{
+		COOP_SeedShot( viewTime );		// the guest's prediction draws the same spread
+		LC_NoteMissiles( ent );
+	}
 	if ( !lc_enable->integer || !viewTime || lc_newest < 0 || !LC_InstantHit( ent->s.weapon, alt ) )
 	{
 		if ( lc_debug->integer )
@@ -362,6 +468,11 @@ void COOP_ShotEnd( void )
 		gi.trace = lc_realTrace;
 		lc_realTrace = NULL;
 	}
+	if ( lc_shooter > 0 && coop_p2.shotViewTime )
+	{
+		LC_ShiftMissiles( &g_entities[lc_shooter] );
+	}
+	COOP_UnseedShot();
 	lc_shiftTime = 0;
 	lc_shooter = -1;
 }
@@ -373,6 +484,42 @@ void COOP_TagTempEntity( gentity_t *tent )
 	{
 		tent->s.otherEntityNum2 = lc_shooter;
 	}
+}
+
+// the spread's random numbers (COOP_SeedShot): the host seeds them around player 2's shot with the
+// view time the guest sent, the guest's cgame around its prediction of the same shot
+static int			lc_seed;
+static qboolean		lc_seeded;
+
+void COOP_SeedShot( int seed )
+{
+	lc_seed = seed;
+	lc_seeded = qtrue;
+}
+
+void COOP_UnseedShot( void )
+{
+	lc_seeded = qfalse;
+}
+
+float COOP_WeaponRandom( void )
+{
+	return lc_seeded ? Q_random( &lc_seed ) : random();
+}
+
+float COOP_WeaponCrandom( void )
+{
+	return lc_seeded ? Q_crandom( &lc_seed ) : crandom();
+}
+
+int COOP_WeaponIrand( int min, int max )
+{
+	if ( !lc_seeded )
+	{
+		return Q_irand( min, max );
+	}
+	int n = min + (int)( Q_random( &lc_seed ) * ( max - min + 1 ) );
+	return n > max ? max : n;
 }
 
 /*

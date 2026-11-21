@@ -4,6 +4,7 @@
 #include "b_local.h"
 #include "g_nav.h"
 #include "anims.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern void FX_StasisCharge( vec3_t origin, vec3_t dir, float perc_done );
 extern void PM_SetLegsAnimTimer( gentity_t *ent, int *legsAnimTimer, int time );

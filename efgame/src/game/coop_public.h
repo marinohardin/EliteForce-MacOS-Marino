@@ -34,17 +34,29 @@
 #define COOP_P2DeadThink(e,u)		((void)0)
 #define COOP_P2Die(e,a)				((void)0)
 #define COOP_PreSave()				((void)0)
+#define COOP_PostSave()				((void)0)
 #define COOP_OnCameraEnable()		((void)0)
 #define COOP_OnCameraDisable()		((void)0)
 #define COOP_ConsoleCommand(c)		0
+#define COOP_P2Notarget(e)			((void)0)
 #define COOP_RegisterCommands()		((void)0)
 #define COOP_FindPlayerWaypoints()	((void)0)
 #define COOP_OnPickup(i,p)			((void)0)
 #define COOP_OnScriptWeapon(e,w)	((void)0)
+#define COOP_OnScriptOrigin(e)		((void)0)
+#define COOP_OnScriptHealth(e,h)	((void)0)
+#define COOP_OnScriptBeam(e,ev)		((void)0)
+#define COOP_P2Trigger(t,o)			0
+#define COOP_OnScriptArmor(e,a)		((void)0)
 #define COOP_CacheForNextLevel()	((void)0)
 #define COOP_ShotStart(e,a)			((void)0)
 #define COOP_ShotEnd()				((void)0)
 #define COOP_TagTempEntity(e)		((void)0)
+#define COOP_WeaponRandom()			random()
+#define COOP_WeaponCrandom()		crandom()
+#define COOP_WeaponIrand(a,b)		Q_irand( (a), (b) )
+#define COOP_AddPredictedMissiles()	((void)0)
+#define COOP_MissileLerp(c)			qtrue
 #define COOP_PredictShot(c,a)		((void)0)
 #define COOP_SkipHostShot(s,e)		0
 #define COOP_NoteViewMuzzle(o)		((void)0)
@@ -58,10 +70,12 @@
 #define COOP_IsDowned(e)			0
 #define COOP_AnyoneDown()			0
 #define COOP_ReviveAll()			((void)0)
+#define COOP_UseButtons(e,u)		((void)0)
 #define COOP_NoteAttacker(v,a)		((void)0)
 #define COOP_ScriptEnemy(s,e)		(e)
 #define COOP_RethinkPlayerEnemy()	((void)0)
 #define COOP_EVERYONE				NULL
+#define COOP_TeamAttack(t,a)		0
 
 #else // EF_COOP
 
@@ -115,6 +129,16 @@ void		COOP_OnPickup( gentity_t *item, gentity_t *picker );
 void		COOP_OnDirectSound( int entNum, int channel, const char *path );
 // Q3_SetWeapon gave P1 a weapon: P2 gets it too
 void		COOP_OnScriptWeapon( gentity_t *ent, int wp );
+// Q3_SetHealth / Q3_SetArmor raised P1's: P2's is raised as far (also when P2 spawns later in the level)
+void		COOP_OnScriptHealth( gentity_t *ent, int health );
+void		COOP_OnScriptArmor( gentity_t *ent, int armor );
+// Q3_SetEvent beamed P1 in or out (the transporter shimmer): P2 shimmers too
+void		COOP_OnScriptBeam( gentity_t *ent, int event );
+// Touch_Multi: player 2 set off a trigger the level meant for player 1 alone; the map's fix handled it
+// instead (coop_fixes.cpp). qtrue: the trigger doesn't fire
+qboolean	COOP_P2Trigger( gentity_t *trigger, gentity_t *other );
+// Q3_SetOrigin moved an entity (coop_fixes.cpp): player 1 moved by a script takes player 2 along
+void		COOP_OnScriptOrigin( gentity_t *ent );
 // G_ChangeMap: keep P2's health, armor and ammo for the next level
 void		COOP_CacheForNextLevel( void );
 
@@ -123,6 +147,14 @@ void		COOP_CacheForNextLevel( void );
 void		COOP_ShotStart( gentity_t *ent, qboolean alt );
 void		COOP_ShotEnd( void );
 void		COOP_TagTempEntity( gentity_t *tent );
+// the random numbers of a shot's spread (the scavenger rifle's, the tetrion's): while a guest's
+// shot of player 2 is fired (host) or predicted (guest) they come from a sequence seeded with the
+// shot's view time, so both draw the same spread; otherwise random(), crandom(), Q_irand()
+void		COOP_SeedShot( int seed );
+void		COOP_UnseedShot( void );
+float		COOP_WeaponRandom( void );
+float		COOP_WeaponCrandom( void );
+int			COOP_WeaponIrand( int min, int max );
 
 // the guest's cgame (coop_predict.cpp): player 2's shots drawn when the guest fires
 // (CG_FireWeapon), the host's effects of them left out (CG_EntityEvent), and where the view
@@ -130,6 +162,22 @@ void		COOP_TagTempEntity( gentity_t *tent );
 void		COOP_PredictShot( centity_t *cent, qboolean alt );
 qboolean	COOP_SkipHostShot( const entityState_t *es, int event );
 void		COOP_NoteViewMuzzle( const vec3_t origin );
+// the guest's projectiles of player 2 drawn from the moment it fires until the host's arrive
+// (CG_AddPacketEntities), the host's then eased onto the drawn path (CG_Missile), and the view
+// weapon's firing animation run from the guest's own shots (CG_AddViewWeapon)
+void		COOP_AddPredictedMissiles( void );
+qboolean	COOP_MissileLerp( centity_t *cent );
+void		COOP_ViewWeaponFrames( clientInfo_t *ci, centity_t *cent, int *frame, int *oldframe, float *backlerp );
+// player 2's view bob on the guest (CG_CalcViewValues): its predicted moves don't step the bob (that
+// pmove has no entity), so it moves smoothly between the host's frames, one behind; -1 elsewhere
+float	COOP_ViewBobCycle( const playerState_t *ps );
+// player 2 in a Holomatch model (coop_holomatch.cpp): its models registered from models/players2/
+// (CG_RegisterClientModelname; -1: not one, the cgame's own way), and the nearest Holomatch
+// animation's frames drawn in place of Munro's (CG_Player, after CG_PlayerAnimation)
+int			COOP_RegisterHoloModels( clientInfo_t *ci, const char *headModel, const char *headSkin,
+				const char *torsoModel, const char *torsoSkin, const char *legsModel, const char *legsSkin );
+void		COOP_HoloFrames( centity_t *cent, int *legsOld, int *legs, float *legsBackLerp,
+				int *torsoOld, int *torso, float *torsoBackLerp );
 // a replica's player events: the ones its own moves make come from its prediction, the rest from the host
 void		COOP_PredictingEvents( qboolean predicting );
 qboolean	COOP_SkipPlayerstateEvent( int event );
@@ -156,6 +204,10 @@ qboolean	COOP_IsDowned( const gentity_t *ent );
 qboolean	COOP_AnyoneDown( void );
 void		COOP_ReviveAll( void );
 
+// ClientThink_real, after the buttons were taken (coop_use.cpp): Use with nothing to use: player 2's
+// hold teleports it to player 1, a double tap (either player) pings the aimed spot for both
+void		COOP_UseButtons( gentity_t *ent, usercmd_t *ucmd );
+
 // enemies and the two players (coop_ai.cpp): NPC_Pain notes which player hurt an NPC; a script
 // that names player 1 as an NPC's enemy gets the player that provoked it (or the nearer one,
 // Q3_SetEnemy); an NPC fighting one player turns on the other when that one is clearly the
@@ -164,6 +216,12 @@ void		COOP_NoteAttacker( gentity_t *victim, gentity_t *attacker );
 gentity_t	*COOP_ScriptEnemy( gentity_t *self, gentity_t *enemy );
 void		COOP_RethinkPlayerEnemy( void );
 void		COOP_TakePlayerEnemy( gentity_t *other );
+
+// G_Damage: targ was hurt by the other player (a shot, or an explosion the game puts down to that
+// player, such as their grenade's) and the host's coop_teamAttack ("Team attack" in the launcher) is
+// 1 (Half: half the damage, at least 1) or 2 (On). Returns that; 0 for Off and for every other hit,
+// which G_Damage then handles as it always has
+int			COOP_TeamAttack( const gentity_t *targ, const gentity_t *attacker );
 
 // the shooter's third-person setting (game code reads the host cgame's cvar for it)
 int			COOP_ThirdPerson( const gentity_t *e );
@@ -180,8 +238,10 @@ qboolean	COOP_P2ThinkGate( gentity_t *ent, usercmd_t *ucmd );
 void		COOP_P2DeadThink( gentity_t *ent, usercmd_t *ucmd );
 // player_die for P2: no game over, respawn next to P1 after a delay
 void		COOP_P2Die( gentity_t *ent, gentity_t *attacker );
-// WriteLevel: clear every saved pointer to P2 (P2 itself is never written)
+// WriteLevel: clear every saved pointer to P2 (P2 itself is never written); a downed player 1 is
+// written as revived, put back down by COOP_PostSave at the end of WriteLevel
 void		COOP_PreSave( void );
+void		COOP_PostSave( void );
 // CGCam_Enable / CGCam_Disable: P2 hidden and non-solid while a camera runs
 void		COOP_OnCameraEnable( void );
 void		COOP_OnCameraDisable( void );
@@ -189,6 +249,9 @@ void		COOP_OnCameraDisable( void );
 // the game's ClientCommand, which calls this. qtrue = handled
 void		COOP_RegisterCommands( void );
 qboolean	COOP_ConsoleCommand( const char *cmd );
+// the notarget cheat for player 2 (typed on the guest, run by the host's game): kept apart from
+// the notarget that hiding and going down give it, so neither undoes the other
+void		COOP_P2Notarget( gentity_t *ent );
 
 #endif // EF_COOP
 

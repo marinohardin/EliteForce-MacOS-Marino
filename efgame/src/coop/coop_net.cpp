@@ -37,6 +37,18 @@ const char *COOP_GuestSex( void )
 	return sex ? sex : "";
 }
 
+const char *COOP_GuestLook( void )
+{
+	const char *look = coop_bridge.GuestLook ? coop_bridge.GuestLook() : NULL;
+	return look ? look : "";
+}
+
+// without the engine's answer nothing counts as the game's own (player 2 stays Munro)
+qboolean COOP_CorePakFile( const char *qpath )
+{
+	return coop_bridge.CorePakFile ? coop_bridge.CorePakFile( qpath ) : qfalse;
+}
+
 qboolean COOP_GuestConnected( void )
 {
 	return coop_bridge.GuestConnected ? coop_bridge.GuestConnected() : qfalse;

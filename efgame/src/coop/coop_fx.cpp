@@ -3,7 +3,9 @@
 // Some game code draws an effect by calling the cgame itself (game/coop_fx.h lists them): a
 // breakable's fireball and debris (misc_model_breakable, func_breakable, turrets), the Borg head
 // bot's explosion, a stasis flier child's burst, the psycho bolt, the spawn shimmer, a turret's
-// laser. Nothing of it is in an entity, so the replica alone would never show it. The host draws it
+// laser, the Borg beam-in (an NPC spawn or the script event borgteleport), the sparks and green
+// flash of a shot on a Borg that has (or hasn't yet) adapted, an Etherian's charge, the Vohrsoth's
+// ground tendrils, and a camera shake started outside a cutscene (scripts, the warrior bot's steps). Nothing of it is in an entity, so the replica alone would never show it. The host draws it
 // as before and keeps it in a short numbered ring that goes with the level's globals, like the
 // direct sounds (coop_replica.cpp); the guest's cgame draws the ones it hasn't seen yet.
 //
@@ -23,6 +25,13 @@ extern void CG_PsychoJism( vec3_t start, vec3_t end, qboolean open );
 extern void CG_ShimmeryThing_Spawner( vec3_t start, vec3_t end, float radius, qboolean taper, int duration );
 extern void CG_FireLaser( vec3_t start, vec3_t end, vec3_t normal, vec4_t laserRGB, qboolean hit_ent );
 extern void CG_AimLaser( vec3_t start, vec3_t end, vec3_t normal );
+extern void FX_BorgTeleport( vec3_t origin );
+extern void FX_BorgHit( vec3_t origin, vec3_t dir );
+extern void FX_BorgShield( vec3_t position, vec3_t dir );
+extern void FX_StasisCharge( vec3_t origin, vec3_t dir, float perc_done );
+extern void FX_GroundTendrilSpawner( vec3_t start, vec3_t end );
+extern void FX_Vohrsoth_CreateGroundWarning( vec3_t origin );
+extern void CGCam_Shake( float intensity, int duration );
 
 typedef enum
 {
@@ -34,7 +43,14 @@ typedef enum
 	FX_PSYCHO_JISM,
 	FX_SHIMMER,
 	FX_FIRE_LASER,
-	FX_AIM_LASER
+	FX_AIM_LASER,
+	FX_BORG_TELEPORT,
+	FX_BORG_HIT,
+	FX_BORG_SHIELD,
+	FX_STASIS_CHARGE,
+	FX_GROUND_TENDRIL,
+	FX_GROUND_WARNING,
+	FX_CAMERA_SHAKE
 } coopFxType_t;
 
 #define REP_FX			32
@@ -104,6 +120,27 @@ static void FX_Draw( repFx_t *fx )
 		break;
 	case FX_AIM_LASER:
 		CG_AimLaser( fx->v[0], fx->v[1], fx->v[2] );
+		break;
+	case FX_BORG_TELEPORT:
+		FX_BorgTeleport( fx->v[0] );
+		break;
+	case FX_BORG_HIT:
+		FX_BorgHit( fx->v[0], fx->v[1] );
+		break;
+	case FX_BORG_SHIELD:
+		FX_BorgShield( fx->v[0], fx->v[1] );
+		break;
+	case FX_STASIS_CHARGE:
+		FX_StasisCharge( fx->v[0], fx->v[1], fx->f[0] );
+		break;
+	case FX_GROUND_TENDRIL:
+		FX_GroundTendrilSpawner( fx->v[0], fx->v[1] );
+		break;
+	case FX_GROUND_WARNING:
+		FX_Vohrsoth_CreateGroundWarning( fx->v[0] );
+		break;
+	case FX_CAMERA_SHAKE:
+		CGCam_Shake( fx->f[0], fx->i[0] );
 		break;
 	default:
 		break;
@@ -218,6 +255,69 @@ void COOP_FxAimLaser( vec3_t start, vec3_t end, vec3_t normal )
 		VectorCopy( normal, fx->v[2] );
 	}
 	CG_AimLaser( start, end, normal );
+}
+
+// one or two points (and a number): the Borg, stasis and Vohrsoth effects
+static void FX_KeepPoints( int type, const vec3_t a, const vec3_t b, float f )
+{
+	repFx_t *fx = FX_New( type );
+	if ( fx )
+	{
+		VectorCopy( a, fx->v[0] );
+		if ( b )
+		{
+			VectorCopy( b, fx->v[1] );
+		}
+		fx->f[0] = f;
+	}
+}
+
+void COOP_FxBorgTeleport( vec3_t origin )
+{
+	FX_KeepPoints( FX_BORG_TELEPORT, origin, NULL, 0 );
+	FX_BorgTeleport( origin );
+}
+
+void COOP_FxBorgHit( vec3_t origin, vec3_t dir )
+{
+	FX_KeepPoints( FX_BORG_HIT, origin, dir, 0 );
+	FX_BorgHit( origin, dir );
+}
+
+void COOP_FxBorgShield( vec3_t position, vec3_t dir )
+{
+	FX_KeepPoints( FX_BORG_SHIELD, position, dir, 0 );
+	FX_BorgShield( position, dir );
+}
+
+void COOP_FxStasisCharge( vec3_t origin, vec3_t dir, float perc_done )
+{
+	FX_KeepPoints( FX_STASIS_CHARGE, origin, dir, perc_done );
+	FX_StasisCharge( origin, dir, perc_done );
+}
+
+void COOP_FxGroundTendrilSpawner( vec3_t start, vec3_t end )
+{
+	FX_KeepPoints( FX_GROUND_TENDRIL, start, end, 0 );
+	FX_GroundTendrilSpawner( start, end );
+}
+
+void COOP_FxVohrsothGroundWarning( vec3_t origin )
+{
+	FX_KeepPoints( FX_GROUND_WARNING, origin, NULL, 0 );
+	FX_Vohrsoth_CreateGroundWarning( origin );
+}
+
+// A cutscene's shake also goes with the camera's state (coop_replica.cpp), which then replaces this one.
+void COOP_FxCameraShake( float intensity, int duration )
+{
+	repFx_t *fx = FX_New( FX_CAMERA_SHAKE );
+	if ( fx )
+	{
+		fx->f[0] = intensity;
+		fx->i[0] = duration;
+	}
+	CGCam_Shake( intensity, duration );
 }
 
 /*

@@ -3188,6 +3188,10 @@ void CG_Player( centity_t *cent ) {
 
 	cent->gent->client->renderInfo.legsFrame = cent->pe.legs.frame;
 	cent->gent->client->renderInfo.torsoFrame = cent->pe.torso.frame;
+#ifdef EF_COOP
+	// player 2 in a Holomatch model: that model's nearest frames (the game keeps the ones above)
+	COOP_HoloFrames( cent, &legs.oldframe, &legs.frame, &legs.backlerp, &torso.oldframe, &torso.frame, &torso.backlerp );
+#endif
 
 	// add powerups floating behind the player
 	CG_PlayerPowerups( cent );

@@ -13,6 +13,7 @@ typedef struct
 	int			levelFrames;		// game frames since this level started
 	int			respawnTime;		// dead P2 comes back next to P1 at this level.time
 	int			nextSpawnTry;		// no clear spot next to P1 yet: try again at this time
+	int			noSpotSince;		// level time the spawn first found no clear spot (0: it found one)
 	qboolean	hidden;				// a camera is running: P2 is not drawn and not solid
 	qboolean	passable;			// a scripted scene holds the players: people walk through P2 (COOP_UpdatePassable)
 	qboolean	follow;				// follow P1 when no console move is running
@@ -28,10 +29,22 @@ typedef struct
 	qboolean	haveAngles;
 	vec3_t		viewAngles;
 	int			weapon;				// > 0: switch to it
+	int			scriptWeapon;		// a script gave the players this weapon (COOP_OnScriptWeapon); 0: none pending
+	int			scriptGuestWeapon;	// the guest's own selection when it did (-1: not seen yet)
 
 	// the guest's input (coop_net.cpp) steers P2; its view angles were re-based on the guest's
 	qboolean	guestSteering;
 	int			shotViewTime;		// the host time the guest's screen showed for this command (0: not the guest's)
+
+	// player 1's armor when this level started (P2's first spawn without a carry-over gets the same)
+	qboolean	haveP1StartArmor;
+	int			p1StartArmor;
+
+	// out of the world (COOP_CatchOutOfWorld): since when P2 has been inside solid / falling fast (0: not)
+	int			voidSince;
+	int			fallSince;
+
+	qboolean	notarget;			// the notarget cheat (COOP_P2Notarget)
 } coopP2State_t;
 
 extern coopP2State_t	coop_p2;
@@ -47,15 +60,22 @@ void		COOP_ApplyHidden( gentity_t *ent, qboolean hidden );
 void		COOP_CameraRejoin( gentity_t *ent );		// coop_cutscene.cpp
 void		COOP_ReadCarry( void );						// coop_inventory.cpp
 void		COOP_ApplyCarry( gentity_t *ent );
+void		COOP_ApplyScriptTopUp( gentity_t *ent );
 void		COOP_CacheForSave( void );
+int			COOP_ReviveHealth( const gentity_t *ent );	// coop_down.cpp: health after a revive
+void		COOP_SaveP1Revived( qboolean revived );	// a save while P1 is down: write it as revived, then back
 void		COOP_PublishInfo( void );					// coop_info.cpp
 qboolean	COOP_GuestCmd( usercmd_t *cmd );			// coop_net.cpp
 const char	*COOP_GuestName( void );
 const char	*COOP_GuestSex( void );					// "male", "female", or "" (look like P1)
+void		COOP_ForgetAnimFrames( int num );		// coop_look.cpp
+const char	*COOP_GuestLook( void );					// the guest's character id, "" for Munro
+qboolean	COOP_CorePakFile( const char *qpath );		// qpath comes from pak0-pak2
 qboolean	COOP_GuestConnected( void );
 int			COOP_GuestViewTime( void );
 int			COOP_TakeShotTime( void );					// coop_predict.cpp
 void		COOP_LagRecord( void );						// coop_lagcomp.cpp
+void		COOP_LagCatchUp( void );					// coop_lagcomp.cpp
 void		COOP_TestTargetFrame( void );
 qboolean	COOP_TestTargetCommand( void );
 void		COOP_AIInit( void );						// coop_ai.cpp
@@ -67,7 +87,11 @@ void		COOP_FxPlay( qboolean cgameUp );
 void		COOP_DownInit( void );						// coop_down.cpp
 void		COOP_DownFrame( void );
 qboolean	COOP_GameIsOver( void );
+qboolean	COOP_CanReviveNow( gentity_t *reviver );		// the partner is down within reach
+void		COOP_UseInit( void );						// coop_use.cpp: hold to teleport, double-tap ping
 void		COOP_ListNPCs( void );
 void		COOP_ReplicaInit( void );					// coop_replica.cpp				// a guest is connected, steering or not
+void		COOP_FixesInit( void );						// coop_fixes.cpp: this map's fixes
+void		COOP_FixesFrame( void );
 
 #endif // COOP_LOCAL_H

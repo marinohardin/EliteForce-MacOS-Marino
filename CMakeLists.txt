@@ -18,8 +18,8 @@ if(APPLE)
 endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/EFPlatform.cmake)
 
-# co-op is macOS only for now: OFF by default everywhere (macos/make-app.sh turns it on for the Mac
-# app); a Windows/Linux build with it ON gets the launchers' Co-op button only with EF_SHOW_COOP=1
+# co-op: OFF by default; the releases turn it on (macos/make-app.sh for the Mac app, the windows-x64
+# and linux-x64 presets in CMakePresets.json for Windows and Linux), and with it the Co-op button
 option(EF_COOP "Single-player co-op (experimental)" OFF)
 option(EF_BUILD_ENGINE "Build the engine (efsp)" ON)
 option(EF_BUILD_GAME "Build the game modules (efgame, efui)" ON)

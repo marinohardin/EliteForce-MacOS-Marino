@@ -14,12 +14,12 @@ browser, masters, hosting, server config). Both share one portable C core.
    truly must change, guard the change so the Apple preprocessor output is
    byte-identical, and say so in the commit message. The core is written so the
    Mac launcher *could* adopt it later; nobody does that now.
-2. **Co-op**: write all of it (core + engine side + launcher UI sheet), but the
-   Co-op… button is hidden on Windows/Linux by default (`LC_COOP_UI_ENABLED` 0 in
-   `lc_common.h`; env `EF_SHOW_COOP=1` shows it, for testing). Since 2026-11-12 the
-   Windows/Linux builds default to `EF_COOP` off (co-op is a Mac-only experiment in
-   1.4.0), and without `EF_COOP` the button never shows, env or not (`LC_COOP_BUILT`).
-   To try co-op there: configure with `-DEF_COOP=ON`, then `EF_SHOW_COOP=1`.
+2. **Co-op**: write all of it (core + engine side + launcher UI sheet). The Co-op…
+   button shows whenever the engine has co-op (`lc_coop_ui_enabled()` =
+   `LC_COOP_BUILT`, set by CMake with `EF_COOP`). The CMake option defaults to OFF,
+   and since 1.5.0 the `windows-x64` and `linux-x64` presets (`CMakePresets.json`,
+   used by CI and the packaging scripts) turn it on, like `macos/make-app.sh` for the
+   Mac app. `EF_SHOW_COOP` is gone.
 3. Strings: use the exact user-visible texts of the specs. Replace "Mac" / "this Mac"
    with `LC_PLATFORM_NOUN` ("PC" on Windows, "Computer"/"computer" on Linux: "Play on
    This PC", "Play on This Computer"), "Finder" with "File Explorer" / "the file

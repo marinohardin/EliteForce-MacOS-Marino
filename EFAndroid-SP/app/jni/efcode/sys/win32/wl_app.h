@@ -25,7 +25,7 @@ extern "C" {
 }
 
 #ifndef EF_APP_VERSION
-#define EF_APP_VERSION "1.4.0"
+#define EF_APP_VERSION "1.5.0"
 #endif
 
 namespace wl {

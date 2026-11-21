@@ -88,7 +88,7 @@ COOP_ScriptEnemy
 
 A script made self's enemy enemy (Q3_SetEnemy). When that is player 1, the script means "the
 player": in co-op that is the player who hurt self last (pain scripts: "attack the one who shot
-me"), else the player self already fights, else the nearer one.
+me"), else the player self already fights, else player 1 unless player 2 is clearly nearer.
 */
 gentity_t *COOP_ScriptEnemy( gentity_t *self, gentity_t *enemy )
 {
@@ -121,7 +121,14 @@ gentity_t *COOP_ScriptEnemy( gentity_t *self, gentity_t *enemy )
 	{
 		return p2;
 	}
-	return DistanceSquared( self->currentOrigin, p2->currentOrigin ) < DistanceSquared( self->currentOrigin, enemy->currentOrigin ) ? p2 : enemy;
+	// player 2 only when it is clearly the nearer one. The scene was staged around player 1, and
+	// player 2 is placed right next to it after a camera: "a little nearer" is often just the side
+	// player 2 landed on, out in front of the squad that screens player 1 (forge2's reaver ambush:
+	// one reaver took player 2 at 351 units against 378 and shot it unopposed). If player 2 is the
+	// one it can see, or gets clearly nearer later, COOP_RethinkPlayerEnemy switches.
+	float dP1 = Distance( self->currentOrigin, enemy->currentOrigin );
+	float dP2 = Distance( self->currentOrigin, p2->currentOrigin );
+	return dP2 < dP1 * COOP_SWITCH_NEARER ? p2 : enemy;
 }
 
 // NPC (the one thinking) can see ent: in range, in the PVS and a clear line from its eyes

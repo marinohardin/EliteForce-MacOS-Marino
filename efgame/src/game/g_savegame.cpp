@@ -960,6 +960,8 @@ void WriteLevel(qboolean qbAutosave)
 	//
 	static int iDONE = 1234;
 	gi.AppendToSaveGame('DONE', &iDONE, sizeof(iDONE));
+
+	COOP_PostSave();
 }
 
 void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
@@ -1032,7 +1034,7 @@ void ReadLevel(qboolean qbAutosave, qboolean qbLoadTransition)
 
 qboolean GameAllowedToSaveHere(void)
 {
-	return !in_camera && !COOP_AnyoneDown();
+	return !in_camera;
 }
 
 //////////////////// eof /////////////////////

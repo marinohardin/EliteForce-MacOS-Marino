@@ -4,6 +4,7 @@
 // WriteGEntities; here every saved pointer to P2 in other entities is cleared first (saves
 // store pointers as entity numbers, which in plain SP would point at an empty slot). P2's own
 // health, armor and ammo go to a .coop file next to the .sav instead (coop_inventory.cpp).
+// A player that is down when the game is saved is kept as revived (coop_down.cpp).
 
 #include "g_local.h"
 #include "fields.h"
@@ -44,6 +45,7 @@ void COOP_PreSave( void )
 		return;
 	}
 	COOP_CacheForSave();
+	COOP_SaveP1Revived( qtrue );
 	if ( ( p2 = COOP_P2() ) == NULL )
 	{
 		return;
@@ -79,4 +81,10 @@ void COOP_PreSave( void )
 	}
 	// timers are saved for every slot, in use or not
 	g_timers[p2->s.number].clear();
+}
+
+// end of WriteLevel: a downed player 1 goes back down (see COOP_SaveP1Revived)
+void COOP_PostSave( void )
+{
+	COOP_SaveP1Revived( qfalse );
 }

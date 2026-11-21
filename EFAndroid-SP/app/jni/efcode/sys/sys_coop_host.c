@@ -13,7 +13,10 @@ The host's answer: single player runs with the engine's networking off
 (net_enabled is 0 there), so a co-op host opens a small UDP socket of its own on
 VSP_COOP_PORT (29760) while sp_coop is 1 and answers one connectionless query,
 polled once a frame from Com_Frame:
-  -> "\xff\xff\xff\xffgetcoopinfo [challenge]"
+  -> "\xff\xff\xff\xffgetcoopinfo [challenge] [lan]" ("lan": a guest's "Games on your
+     network" search, sent to the network's broadcast addresses; a host with coop_lanVisible 0,
+     the launcher's "Show this game on my network" unticked, ignores those and answers only
+     direct Checks of its address)
   <- "\xff\xff\xff\xffcoopInfoResponse\n" and an infostring with coopProtocol,
      version, hostname (the computer's name), paks (FS_CoopPaks), state (playing / menu), map,
      mission, skill, players, maxPlayers, time, player, needPassword, guest and
@@ -233,6 +236,14 @@ static void CoopOpenSocket( void )
 	sa.sin_family = AF_INET;
 	sa.sin_port = htons( (unsigned short)CoopHostPort() );
 	sa.sin_addr.s_addr = htonl( INADDR_ANY );
+#ifdef _WIN32
+	{
+		// Windows lets another program bind the same port with SO_REUSEADDR and take over
+		// some of the datagrams; exclusive use makes that bind fail instead
+		BOOL on = TRUE;
+		setsockopt( fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&on, sizeof( on ) );
+	}
+#endif
 	failed = bind( fd, (struct sockaddr *)&sa, sizeof( sa ) ) != 0;
 	if ( failed )
 		err = COOP_ERRNO();
@@ -274,6 +285,25 @@ static void CoopCloseSocket( void )
 	Com_Printf( "co-op: no longer answering co-op checks\n" );
 }
 
+// the rest of a co-op check after its challenge: "lan" among its words marks a network search
+static qboolean CoopQueryFromLan( const char *p )
+{
+	while ( *p )
+	{
+		const char *w;
+		while ( *p == ' ' )
+			p++;
+		w = p;
+		while ( *p && *p != ' ' && *p != '\n' )
+			p++;
+		if ( p - w == 3 && !strncmp( w, "lan", 3 ) )
+			return qtrue;
+		if ( *p == '\n' )
+			break;
+	}
+	return qfalse;
+}
+
 // A co-op check: answer it (unless rate limited) and return qtrue; qfalse for any other packet.
 static qboolean CoopAnswer( const char *packet, int len, const struct sockaddr_in *from )
 {
@@ -298,6 +328,11 @@ static qboolean CoopAnswer( const char *packet, int len, const struct sockaddr_i
 	for ( ; n < (int)sizeof( challenge ) - 1 && ( isalnum( (unsigned char)*p ) || *p == '-' || *p == '_' ); p++ )
 		challenge[n++] = *p;
 	challenge[n] = 0;
+	// a guest's "Games on your network" search adds " lan" (lc_coop.c / VSP_CoopLanScan): a host that
+	// isn't shown on the network (coop_lanVisible 0, the launcher's "Show this game on my network")
+	// stays silent to it, but still answers a Check of its address
+	if ( CoopQueryFromLan( p ) && !Cvar_VariableIntegerValue( "coop_lanVisible" ) )
+		return qtrue;
 
 	if ( CoopAddressLimited( (unsigned int)from->sin_addr.s_addr ) || CoopRateLimited( &coopOutbound, 10, 100 ) )
 		return qtrue;
@@ -407,6 +442,8 @@ void Sys_CoopFrame( void )
 		Cvar_Get( "coop_password", "", CVAR_TEMP );
 		Cvar_Get( "coop_name", "", CVAR_TEMP );		// "Your name" (empty: this computer's name)
 		Cvar_Get( "coop_sex", "", CVAR_TEMP );		// a guest's Munro: male / female (empty: like the host's)
+		Cvar_Get( "coop_look", "", CVAR_TEMP );		// a guest's character for player 2 (empty: Munro)
+		Cvar_Get( "coop_lanVisible", "1", CVAR_TEMP );	// a host: answer "Games on your network" searches (0: only Checks of its address)
 		coop_backgroundPlay = Cvar_Get( "coop_backgroundPlay", "1", CVAR_ARCHIVE );
 		CoopNet_AddCommands();
 	}
@@ -432,8 +469,11 @@ void Sys_CoopFrame( void )
 		if ( n < 0 )
 		{
 #ifdef _WIN32
-			// an ICMP "port unreachable" for an answer we sent shows up here; keep reading
-			if ( WSAGetLastError() == WSAECONNRESET )
+			// an ICMP "port unreachable" for an answer we sent shows up here; keep reading.
+			// A datagram bigger than the buffer fails with WSAEMSGSIZE (POSIX truncates it
+			// instead); Winsock has dropped it, so go on to the next one.
+			int e = WSAGetLastError();
+			if ( e == WSAECONNRESET || e == WSAEMSGSIZE )
 				continue;
 #endif
 			break;

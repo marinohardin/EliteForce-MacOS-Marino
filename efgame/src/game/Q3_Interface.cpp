@@ -22,6 +22,7 @@
 #include "../cgame/cg_local.h"
 #include "../game/speakers.h"
 #include "../speedrun/sound_skipping.hpp"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern int ICARUS_LinkEntity( int entID, CSequencer *sequencer, CTaskManager *taskManager );
 
@@ -1628,6 +1629,7 @@ static void Q3_SetOrigin( int entID, vec3_t origin )
 	}
 
 	gi.linkentity( ent );
+	COOP_OnScriptOrigin( ent );
 }
 
 
@@ -2723,6 +2725,7 @@ static void Q3_SetHealth( int entID, int data )
 		{
 			ent->health = ent->client->ps.stats[STAT_HEALTH] = ent->client->ps.stats[STAT_MAX_HEALTH];
 		}
+		COOP_OnScriptHealth( ent, ent->health );
 		if ( data <= 0 )
 		{//artificially "killing" the player", don't let him respawn right away
 			ent->client->ps.pm_type = PM_DEAD;
@@ -2769,6 +2772,7 @@ static void Q3_SetArmor( int entID, int data )
 		{
 			ent->client->ps.stats[STAT_ARMOR] = ent->client->ps.stats[STAT_MAX_HEALTH];
 		}
+		COOP_OnScriptArmor( ent, ent->client->ps.stats[STAT_ARMOR] );
 	}
 }
 
@@ -4224,6 +4228,7 @@ static void Q3_SetEvent( int entID, const char *event_name )
 			tent = G_TempEntity( ent->client->ps.origin, EV_PLAYER_TELEPORT_OUT );
 		}
 		tent->owner = ent;
+		COOP_OnScriptBeam( ent, EV_PLAYER_TELEPORT_OUT );
 		break;
 
 	case EV_BEAM_UP:
@@ -4244,6 +4249,7 @@ static void Q3_SetEvent( int entID, const char *event_name )
 			tent = G_TempEntity( ent->client->ps.origin, EV_PLAYER_TELEPORT_IN );
 		}
 		tent->owner = ent;
+		COOP_OnScriptBeam( ent, EV_PLAYER_TELEPORT_IN );
 		break;
 
 	case EV_SCAV_TELEPORT:
@@ -7382,6 +7388,9 @@ static void Q3_RemoveEnt( gentity_t *victim )
 	}
 	else
 	{
+		// as for clients above: nothing may find it by name in the 100 ms before it's freed (on
+		// _brig, a spawner the world script removed was still used and spawned its NPC)
+		victim->targetname = NULL;
 		victim->e_ThinkFunc = thinkF_G_FreeEntity;
 		victim->nextthink = level.time + 100;
 	}

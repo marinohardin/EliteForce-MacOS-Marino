@@ -21,10 +21,22 @@ int coopPort()
 	return p.isEmpty() ? LC_COOP_PORT : p.toInt();
 }
 
+/* The open sheet, for the router's answer. The mapping outlives the sheet (Host keeps it) and the sheet is a stack
+   local, so the worker's callback reaches the sheet only while it is open and only for its latest request. Never hold
+   g_natLock while calling lc_nat_release: that joins the worker, which may be waiting for the lock. */
+QMutex g_natLock;
+CoopDialog *g_natSheet = nullptr;
+int g_natGen = 0;
+
 }
 
-CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) : QDialog( parent ), m_canPlay( canPlay )
+CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address, const QString &dataFolder )
+	: QDialog( parent ), m_canPlay( canPlay ), m_dataFolder( dataFolder )
 {
+	{
+		QMutexLocker l( &g_natLock );
+		g_natSheet = this;
+	}
 	setWindowTitle( "Co-op" );
 	setModal( true );
 	const QString thisNoun = nounLc();
@@ -37,7 +49,6 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 	/* heading */
 	QHBoxLayout *hd = new QHBoxLayout;
 	hd->addWidget( label( "Co-op", 17, QFont::Bold ) );
-	hd->addWidget( label( "EXPERIMENTAL", 10, QFont::DemiBold, orange() ), 0, Qt::AlignBottom );
 	hd->addStretch( 1 );
 	root->addLayout( hd );
 	root->addSpacing( -px( 8 ) );
@@ -99,11 +110,30 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 	pw->addStretch( 1 );
 	hl->addLayout( pw );
 
+	QHBoxLayout *ta = new QHBoxLayout;
+	ta->addWidget( label( "Team attack", 12 ) );
+	m_teamAttack = new Segmented( QStringList() << "Off" << "Half" << "On" );
+	m_teamAttack->setToolTip( "Whether you and player 2 can hurt each other with your shots and grenades: "
+		"not at all, half the damage, or full damage" );
+	m_teamAttack->setFixedWidth( px( 160 ) );
+	{
+		const int saved = lc_store_get_int( st, LC_KEY_COOP_TEAM_ATTACK, 0 );
+		m_teamAttack->setCurrent( saved >= 0 && saved <= 2 ? saved : 0 );
+	}
+	ta->addWidget( m_teamAttack );
+	ta->addStretch( 1 );
+	hl->addLayout( ta );
+
 	m_background = new QCheckBox( "Keep playing in the background" );
 	m_background->setChecked( lc_store_get_bool( st, LC_KEY_COOP_BACKGROUND, 1 ) != 0 );
 	m_background->setToolTip( QString::fromUtf8( "The game goes on while its window isn\xe2\x80\x99t in front, e.g. while you click into a second copy "
 		"on this %1 (keys and the mouse still go only to the window in front)" ).arg( thisNoun ) );
 	hl->addWidget( m_background );
+	m_showLan = new QCheckBox( "Show this game on my network" );
+	m_showLan->setChecked( lc_store_get_bool( st, LC_KEY_COOP_LAN_VISIBLE, 1 ) != 0 );
+	m_showLan->setToolTip( QString::fromUtf8( "Friends on the same network see it under \xe2\x80\x9cGames on your network\xe2\x80\x9d. "
+		"Off: only someone who types this %1\xe2\x80\x99s address finds it" ).arg( thisNoun ) );
+	hl->addWidget( m_showLan );
 	m_router = new QCheckBox( "Open the port on my router (for a friend on the internet)" );
 	hl->addWidget( m_router );
 	m_internetStatus = label( QString(), 11, QFont::Normal, secondary(), 400 );
@@ -126,6 +156,29 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 	Group *jg = new Group( "Join" );
 	QVBoxLayout *jl = new QVBoxLayout;
 	jl->setSpacing( px( 12 ) );
+
+	/* Games on your network: answers to a broadcast search (lc_coop_lan_scan); a click fills the address and checks it */
+	QVBoxLayout *gl = new QVBoxLayout;
+	gl->setSpacing( px( 6 ) );
+	QHBoxLayout *gh = new QHBoxLayout;
+	gh->addWidget( label( "Games on your network", 12, QFont::DemiBold ) );
+	gh->addStretch( 1 );
+	m_gamesRefresh = button( "Refresh", "Look again for co-op games on your network (it also looks every few seconds)" );
+	m_gamesRefresh->setMinimumWidth( px( 80 ) );
+	gh->addWidget( m_gamesRefresh );
+	gl->addLayout( gh );
+	m_games = new QListWidget;
+	styleView( m_games );
+	m_games->setFrameShape( QFrame::StyledPanel );
+	m_games->setSelectionMode( QAbstractItemView::SingleSelection );
+	m_games->setHorizontalScrollBarPolicy( Qt::ScrollBarAlwaysOff );
+	m_games->setFixedHeight( px( 3 * 40 + 4 ) );
+	gl->addWidget( m_games );
+	m_gamesStatus = label( QString(), 11, QFont::Normal, secondary(), 500 );
+	m_gamesStatus->setTextInteractionFlags( Qt::TextSelectableByMouse );
+	gl->addWidget( m_gamesStatus );
+	jl->addLayout( gl );
+
 	QHBoxLayout *ar = new QHBoxLayout;
 	ar->addWidget( label( QString::fromUtf8( "Host\xe2\x80\x99s address" ), 12 ) );
 	m_address = new QLineEdit;
@@ -159,6 +212,42 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 	r2->addLayout( jm );
 	r2->addStretch( 1 );
 	jl->addLayout( r2 );
+
+	/* player 2's character (coop_characters.h): Munro, or one of the crew / the Hazard Team / Experimental */
+	QHBoxLayout *lr = new QHBoxLayout;
+	lr->addWidget( label( "Character", 12 ) );
+	m_look = new QComboBox;
+	m_look->setFixedWidth( px( 220 ) );
+	m_look->setToolTip( QString::fromUtf8( "Player 2\xe2\x80\x99s look on both screens: Munro, or a member of Voyager\xe2\x80\x99s crew or the Hazard Team. "
+		"Only characters from the game\xe2\x80\x99s own files, so the host has them too." ) );
+	m_look->addItem( "Munro (default)", QString() );
+	{
+		const char *saved = lc_store_get( st, LC_KEY_COOP_LOOK );
+		const char *lastGroup = "";
+		int select = 0;
+		for ( int i = 0; i < lc_coop_character_count(); ++i ) {
+			const char *id, *name, *group;
+			if ( !lc_coop_character( i, &id, &name, &group ) )
+				continue;
+			if ( strcmp( group, lastGroup ) ) {
+				lastGroup = group;
+				m_look->insertSeparator( m_look->count() );
+				m_look->addItem( QString::fromUtf8( !strcmp( group, "crew" ) ? "Voyager crew" :
+					!strcmp( group, "hazard" ) ? "Hazard Team" : "Experimental" ) );
+				if ( QStandardItemModel *m = qobject_cast<QStandardItemModel *>( m_look->model() ) )
+					if ( QStandardItem *it = m->item( m_look->count() - 1 ) )
+						it->setFlags( it->flags() & ~( Qt::ItemIsSelectable | Qt::ItemIsEnabled ) );
+			}
+			m_look->addItem( QString( "    " ) + U( name ), U( id ) );
+			if ( saved && !strcmp( saved, id ) )
+				select = m_look->count() - 1;
+		}
+		m_look->setCurrentIndex( select );
+	}
+	lr->addWidget( m_look );
+	lr->addWidget( label( "with the voice of the Munro above", 11, QFont::Normal, secondary() ) );
+	lr->addStretch( 1 );
+	jl->addLayout( lr );
 
 	/* result row */
 	QWidget *result = new QWidget;
@@ -227,7 +316,12 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 	resize( sh.width() + px( 20 ), qMin( sh.height() + px( 60 ), avail.height() - px( 60 ) ) );
 
 	connect( m_check, &QPushButton::clicked, this, &CoopDialog::doCheck );
-	connect( m_address, &QLineEdit::returnPressed, this, &CoopDialog::doCheck );
+	/* Return in the host's address checks it, unless a Check found a game there and it wasn't edited since: then
+	   Connect is the default button, and the dialog presses it (QLineEdit passes Return on to the dialog) */
+	connect( m_address, &QLineEdit::returnPressed, this, [this]() {
+		if ( !( m_connect->isDefault() && m_connect->isEnabled() ) )
+			doCheck();
+	} );
 	connect( m_address, &QLineEdit::textEdited, this, [this]() {
 		m_status.clear();
 		updateConnect();
@@ -247,6 +341,23 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 			showInternet();
 		}
 	} );
+	connect( m_games, &QListWidget::itemClicked, this, &CoopDialog::pickGame );
+	connect( m_gamesRefresh, &QPushButton::clicked, this, &CoopDialog::doScan );
+	m_lanTimer = new QTimer( this );
+	m_lanTimer->setInterval( 5000 );
+	// 3 searches by itself (now, +5 s, +10 s), then only on Refresh, so the sheet stops changing
+	connect( m_lanTimer, &QTimer::timeout, this, [this]() {
+		if ( ++m_lanAutoScans >= 3 )
+			m_lanTimer->stop();
+		doScan();
+	} );
+	m_lanTimer->start();
+	m_lanAutoScans = 1;
+	QTimer::singleShot( 0, this, &CoopDialog::doScan );
+	/* "Open the port on my router" is on by default (remembered when unticked): ask the router as the window
+	   opens; test runs only with a pretend router */
+	if ( lc_store_get_bool( st, LC_KEY_COOP_ROUTER, 1 ) && !( lc_test_env( "VOYAGERSP_TEST_BACKGROUND" ) && !lc_env( "VOYAGERSP_TEST_NAT" ) ) )
+		startNat();
 	showInternet();
 	m_address->setFocus();
 	if ( !address.isEmpty() ) {
@@ -257,7 +368,10 @@ CoopDialog::CoopDialog( QWidget *parent, bool canPlay, const QString &address ) 
 
 CoopDialog::~CoopDialog()
 {
-	/* the NAT mapping is released by Cancel / Connect; Host keeps it */
+	/* the NAT mapping is released by Cancel / Connect; Host keeps it, so its answer may still come: drop it from now on */
+	QMutexLocker l( &g_natLock );
+	if ( g_natSheet == this )
+		g_natSheet = nullptr;
 }
 
 /* ---- internet / NAT ------------------------------------------------------------------------------------------ */
@@ -308,17 +422,33 @@ void CoopDialog::showInternet()
 
 void CoopDialog::natToggled( bool on )
 {
-	if ( !on ) {
+	lc_store *st = lc_store_shared();
+	lc_store_set_int( st, LC_KEY_COOP_ROUTER, on ? 1 : 0 );
+	lc_store_save( st );
+	if ( on )
+		startNat();
+	else {
 		releaseNat();
 		showInternet();
-		return;
 	}
+}
+
+void CoopDialog::startNat()
+{
+	releaseNat();
 	m_natState = NatAsking;
 	m_natReason.clear();
 	m_natPublic.clear();
+	int gen;
+	{
+		QMutexLocker l( &g_natLock );
+		gen = ++g_natGen;
+	}
 	m_nat = lc_nat_map_udp( coopPort(), []( lc_nat_result r, const char *ip, int ext, int err, void *u ) {
-		emit static_cast<CoopDialog *>( u )->natResultSignal( int( r ), U( ip ), ext, err );
-	}, this );
+		QMutexLocker l( &g_natLock );
+		if ( g_natSheet && int( intptr_t( u ) ) == g_natGen )
+			emit g_natSheet->natResultSignal( int( r ), U( ip ), ext, err );	/* queued: dropped if the sheet goes first */
+	}, reinterpret_cast<void *>( intptr_t( gen ) ) );
 	m_natTimer->start( 15000 );
 	showInternet();
 }
@@ -413,6 +543,8 @@ void CoopDialog::updateConnect()
 {
 	const bool ok = m_status == "ok" && m_canPlay;
 	m_connect->setEnabled( ok );
+	m_connect->setDefault( ok );		/* Connect is the default button (Return) only while a Check found a game */
+	m_connect->setText( ok && !m_warning.isEmpty() ? "Join Anyway" : "Connect" );
 	m_connect->setToolTip( ok ? QString( "Join %1 as player 2" ).arg( m_foundAddress ) : QString( "Check the address first" ) );
 }
 
@@ -433,7 +565,11 @@ void CoopDialog::doCheck()
 	auto *q = new lc_coop_query;
 	memset( q, 0, sizeof *q );
 	const QByteArray ab = B( addr );
-	async( this, [q, ab]() { lc_coop_query_run( ab.constData(), 2.0, q ); }, [this, q, addr]() {
+	const QByteArray df = B( m_dataFolder );
+	async( this, [q, ab, df]() {
+		lc_coop_query_run( ab.constData(), 2.0, q );
+		lc_coop_check_paks( q, df.isEmpty() ? nullptr : df.constData() );		/* only after an "ok" */
+	}, [this, q, addr]() {
 		m_checking = false;
 		m_check->setEnabled( true );
 		const QString status = U( q->status );
@@ -446,19 +582,28 @@ void CoopDialog::doCheck()
 		const QString hostname = U( host );
 		const QString on = hostname.isEmpty() ? QString() : QString::fromUtf8( " on \xe2\x80\x9c%1\xe2\x80\x9d" ).arg( hostname );
 		QString shown = status;
+		const QString more = desc[0] ? "\n\n" + U( desc ) : QString();
+		m_warning = U( q->warning );
 		if ( status == "ok" ) {
 			m_status = "ok";
 			m_foundAddress = address;
 			m_foundHostname = hostname;
 			m_needsPassword = !strcmp( needPw, "1" );
-			showResult( "check.circle.fill", green(), QString( "Co-op game found%1 (%2)" ).arg( on, address ), U( desc ) );
-		} else if ( status == "error" ) {
+			if ( !m_warning.isEmpty() )
+				showResult( "exclamationmark.triangle.fill", yellow(),
+					QString( "Co-op game found%1 (%2), but the Expansion Pack differs" ).arg( on, address ), m_warning + more );
+			else
+				showResult( "check.circle.fill", green(), QString( "Co-op game found%1 (%2)" ).arg( on, address ), U( desc ) );
+		} else if ( status == "paks" ) {
+			m_status = "paks";
+			showResult( "xmark.circle.fill", red(),
+				QString::fromUtf8( "Your game files don\xe2\x80\x99t match the host\xe2\x80\x99s%1 (%2)" ).arg( on, address ), U( q->error ) + more );
+		} else if ( status == "mismatch" ) {
 			m_status = "mismatch";
 			showResult( "exclamationmark.triangle.fill", orange(),
 				QString::fromUtf8( "Version mismatch: the co-op game%1 (%2) can\xe2\x80\x99t be joined from this %3" ).arg( on, address, nounLc() ),
-				U( q->error ) + ( desc[0] ? "\n\n" + U( desc ) : QString() ) );
-			shown = "mismatch";
-		} else if ( status == "noanswer" ) {
+				U( q->error ) + more );
+		} else if ( status == "noanswer" || status == "error" ) {
 			m_status = "none";
 			showResult( "xmark.circle.fill", secondary(), QString( "No co-op game found at %1" ).arg( address.isEmpty() ? addr : address ),
 				q->error[0] ? U( q->error ) : QString( "Nothing answered within 2 seconds. Check the address, that the host pressed Host and is running co-op, "
@@ -466,7 +611,7 @@ void CoopDialog::doCheck()
 			shown = "none";
 		} else {
 			m_status = "bad";
-			showResult( "exclamationmark.circle.fill", red(), "This address can\xe2\x80\x99t be used", U( q->error ) );
+			showResult( "exclamationmark.circle.fill", red(), QString::fromUtf8( "This address can\xe2\x80\x99t be used" ), U( q->error ) );
 			shown = "bad";
 		}
 		log( QString( "Co-op: check %1 -> %2" ).arg( addr, shown ) );
@@ -475,6 +620,105 @@ void CoopDialog::doCheck()
 		updateConnect();
 		delete q;
 	} );
+}
+
+/* ---- Games on your network ------------------------------------------------------------------------------------------ */
+
+void CoopDialog::doScan()
+{
+	if ( m_scanning )
+		return;
+	m_scanning = true;
+	m_gamesRefresh->setEnabled( false );
+	if ( !m_lanSearched ) {
+		m_gamesStatus->setText( QString::fromUtf8( "Looking for co-op games on your network\xe2\x80\xa6" ) );
+		setColor( m_gamesStatus, secondary() );
+	}
+	auto *r = new lc_coop_lan_result;
+	memset( r, 0, sizeof *r );
+	const QByteArray df = B( m_dataFolder );
+	async( this, [r, df]() {
+		lc_coop_lan_scan( 1.5, df.isEmpty() ? nullptr : df.constData(), r );
+	}, [this, r]() {
+		onScanned( r );
+		delete r;
+	} );
+	/* async() drops done() when the dialog is gone; the result then leaks once (a few KB), as the Check's query does */
+}
+
+void CoopDialog::onScanned( const lc_coop_lan_result *r )
+{
+	m_scanning = false;
+	m_lanSearched = true;
+	m_gamesRefresh->setEnabled( true );
+	const QString selAddr = m_games->currentItem() ? m_games->currentItem()->data( Qt::UserRole ).toString() : QString();
+	QSignalBlocker block( m_games );
+	m_games->clear();
+	for ( int i = 0; i < r->count; ++i ) {
+		const lc_coop_lan_game *g = &r->games[i];
+		char title[512] = "", detail[768] = "";
+		int needPw = 0;
+		lc_coop_lan_row( g, title, sizeof title, detail, sizeof detail, &needPw );
+		/* two lines: the title (who and where), then the level or why it can't be joined; unusable rows are greyed */
+		QWidget *w = new QWidget;
+		QHBoxLayout *h = new QHBoxLayout( w );
+		h->setContentsMargins( px( 8 ), px( 3 ), px( 8 ), px( 3 ) );
+		h->setSpacing( px( 6 ) );
+		QVBoxLayout *v = new QVBoxLayout;
+		v->setSpacing( 0 );
+		QHBoxLayout *tl = new QHBoxLayout;
+		tl->setSpacing( px( 4 ) );
+		const QColor tc = g->usable ? QColor() : tertiary();
+		tl->addWidget( elidedLabel( U( title ), 12, QFont::DemiBold, tc ) );
+		if ( needPw ) {
+			QLabel *lock = new QLabel;
+			lock->setPixmap( iconPixmap( "lock.fill", g->usable ? secondary() : tertiary(), 11 ) );
+			lock->setToolTip( "The host set a password" );
+			tl->addWidget( lock );
+		}
+		tl->addStretch( 1 );
+		v->addLayout( tl );
+		v->addWidget( elidedLabel( U( detail ), 11, QFont::Normal, g->usable ? secondary() : tertiary() ) );
+		h->addLayout( v, 1 );
+		w->setAttribute( Qt::WA_TransparentForMouseEvents );
+		QListWidgetItem *it = new QListWidgetItem( m_games );
+		it->setData( Qt::UserRole, U( g->address ) );
+		it->setToolTip( g->usable ? QString( "Check %1" ).arg( U( g->address ) ) : U( g->reason ) );
+		/* tall enough for both lines at the screen's scale (a fixed height cut the title off on the Steam Deck) */
+		it->setSizeHint( QSize( 0, qMax( px( 40 ), w->sizeHint().height() ) ) );
+		m_games->setItemWidget( it, w );
+		if ( !selAddr.isEmpty() && selAddr == U( g->address ) )
+			m_games->setCurrentItem( it );
+	}
+	if ( r->error[0] ) {
+		m_gamesStatus->setText( U( r->error ) );
+		setColor( m_gamesStatus, orange() );
+	} else if ( r->count == 0 ) {
+		m_gamesStatus->setText( QString::fromUtf8( "None found yet. Have host show, or enter address manually below." ) );
+		setColor( m_gamesStatus, secondary() );
+	} else {
+		m_gamesStatus->setText( "Click a game to check it." );
+		setColor( m_gamesStatus, secondary() );
+	}
+	if ( testSet( "VOYAGERSP_TEST_COOP_SHEET" ) || !testEnv( "VOYAGERSP_TEST_COOP_SCAN_PORTS" ).isEmpty() ) {
+		log( QString( "[test] co-op lan: %1 game(s)%2" ).arg( r->count ).arg( r->error[0] ? QString( ", " ) + U( r->error ) : QString() ) );
+		for ( int i = 0; i < r->count; ++i ) {
+			char title[512] = "", detail[768] = "";
+			int needPw = 0;
+			lc_coop_lan_row( &r->games[i], title, sizeof title, detail, sizeof detail, &needPw );
+			log( QString( "[test] co-op lan row: %1 | %2%3" ).arg( U( title ), U( detail ), needPw ? " | lock" : "" ) );
+		}
+	}
+}
+
+void CoopDialog::pickGame( QListWidgetItem *item )
+{
+	if ( !item )
+		return;
+	m_address->setText( item->data( Qt::UserRole ).toString() );
+	m_status.clear();
+	updateConnect();
+	doCheck();
 }
 
 /* ---- Host / Connect ----------------------------------------------------------------------------------------------- */
@@ -488,11 +732,16 @@ void CoopDialog::doHost()
 	lc_coop_safe_name( B( m_name->text() ).constData(), name, sizeof name );
 	lc_store_set_int( st, LC_KEY_COOP_BACKGROUND, m_background->isChecked() ? 1 : 0 );
 	lc_store_set( st, LC_KEY_COOP_NAME, name[0] ? name : nullptr );
+	lc_store_set_int( st, LC_KEY_COOP_LAN_VISIBLE, m_showLan->isChecked() ? 1 : 0 );
+	const int teamAttack = m_teamAttack->current() >= 0 && m_teamAttack->current() <= 2 ? m_teamAttack->current() : 0;
+	lc_store_set_int( st, LC_KEY_COOP_TEAM_ATTACK, teamAttack );
 	lc_store_save( st );
 	m_playName = U( name );
-	lc_coop_choose_host( m_background->isChecked(), name, B( m_hostPw->text() ).constData() );
-	log( QString( "Co-op: hosting (single player with sp_coop 1) as %1%2" ).arg( name[0] ? U( name ) : U( lc_computer_name() ),
-		m_hostPw->text().isEmpty() ? QString() : QString( ", with a password" ) ) );
+	lc_coop_choose_host( m_background->isChecked(), m_showLan->isChecked(), teamAttack, name, B( m_hostPw->text() ).constData() );
+	log( QString( "Co-op: hosting (single player with sp_coop 1) as %1%2%3%4" ).arg( name[0] ? U( name ) : U( lc_computer_name() ),
+		m_hostPw->text().isEmpty() ? QString() : QString( ", with a password" ),
+		m_showLan->isChecked() ? QString() : QString( ", not shown on the network" ),
+		teamAttack == 2 ? QString( ", team attack on" ) : teamAttack == 1 ? QString( ", team attack half" ) : QString() ) );
 	m_choice = Host;
 	accept();
 }
@@ -512,11 +761,14 @@ void CoopDialog::doConnect()
 	lc_coop_safe_name( B( m_name->text() ).constData(), name, sizeof name );
 	const char *sex = m_munro->current() == 1 ? "female" : "male";
 	lc_store_set( st, LC_KEY_COOP_NAME, name[0] ? name : nullptr );
+	const QByteArray look = B( m_look->currentData().toString() );
 	lc_store_set( st, LC_KEY_COOP_MUNRO, sex );
+	lc_store_set( st, LC_KEY_COOP_LOOK, look.isEmpty() ? nullptr : look.constData() );
 	lc_store_save( st );
-	lc_coop_choose_join( B( m_foundAddress ).constData(), sex, name, B( m_joinPw->text() ).constData() );
-	log( QString( "Co-op: joining %1 as player 2 (single player with coop_connect), %2, %3 Munro" )
-		.arg( m_foundAddress, name[0] ? U( name ) : U( lc_computer_name() ), U( sex ) ) );
+	lc_coop_choose_join( B( m_foundAddress ).constData(), sex, look.constData(), name, B( m_joinPw->text() ).constData() );
+	log( QString( "Co-op: joining %1 as player 2 (single player with coop_connect), %2, %3 Munro%4" )
+		.arg( m_foundAddress, name[0] ? U( name ) : U( lc_computer_name() ), U( sex ),
+			look.isEmpty() ? QString() : QString( " as %1" ).arg( U( look.constData() ) ) ) );
 	m_choice = Connect;
 	accept();
 }

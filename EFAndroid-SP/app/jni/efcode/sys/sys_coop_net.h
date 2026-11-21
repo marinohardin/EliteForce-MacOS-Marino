@@ -25,11 +25,13 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 // 4: one guest command per host frame, acknowledged for prediction; 5: the guest says which host
 // level it has up, movies, cutscene skips; 6: each guest command says what host time the guest was
 // looking at, for its shots; 7: the game's own paks by name and checksum in the check's answer,
-// the connect and the accept)
-#define VSP_COOP_PROTOCOL	7
+// the connect and the accept;
+// 8: the commands slot carries the credits number, the look key, guest console commands)
+#define VSP_COOP_PROTOCOL	8
 
 // the longest player name co-op sends (coop_name; the launcher's "Your name")
 #define COOP_NAME_MAX		31
+#define COOP_LOOK_MAX		24	// a player 2 character id with its terminator (= COOP_CHARACTER_MAX)
 
 // the biggest co-op packet (fits a usual Ethernet/Wi-Fi MTU with room to spare)
 #define COOP_MAX_PACKET		1400
@@ -73,10 +75,19 @@ int			CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *f
 // the host level time the guest's screen showed when it made the command CoopNet_GuestInput
 // returned last (its shots are checked against the world as it was then); 0 when unknown
 int			CoopNet_GuestViewTime( void );
+// the guest's oldest console command for player 2 not run yet (a cheat; the bridge checks which),
+// 0 when there is none
+int			CoopNet_HostTakeCommand( char *out, int size );
 // the guest's name, "" without a guest
 const char	*CoopNet_GuestName( void );
 // how the guest wants player 2 to look: "male", "female", or "" (like player 1, or no guest)
 const char	*CoopNet_GuestSex( void );
+// the character the guest chose for player 2 (an id from the game's coop_characters.h), "" for
+// the default Munro or without a guest
+const char	*CoopNet_GuestLook( void );
+// qpath, as the game would load it, comes from the game's own pak0-pak2 (not from a folder or
+// another pack)
+qboolean	CoopNet_CorePakFile( const char *qpath );
 
 // The host's replica frames (sp/sp_bridge.cpp, after every game frame while a guest is here):
 // Begin returns 0 when no guest wants one; then every slot that isn't empty, then End sends it.
@@ -104,6 +115,8 @@ int			CoopNet_GuestHostPaused( void );
 // at once; 0 when this player has no input now
 int			CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
 				int forwardmove, int rightmove, int upmove, int viewTime );
+// a console command for player 2 on the host (a cheat), sent now; 0 when not connected
+int			CoopNet_GuestSendCommand( const char *text );
 
 // The guest. Once a frame (sys_osx_coop.m, before anything of the host): connects when
 // the coop_connect cvar names a host, sends this player's input, disconnects when the

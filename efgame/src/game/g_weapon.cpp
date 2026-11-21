@@ -8,6 +8,7 @@
 #include "b_local.h"
 #include "objectives.h"
 #include "../cgame/cg_text.h"
+#include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
 
 extern vmCvar_t cg_thirdPerson;
 
@@ -555,7 +556,7 @@ void FireScavengerGrenade( gentity_t *ent, vec3_t start, vec3_t dir )
 	grenade->s.pos.trTime = level.time;		// move a bit on the very first frame
 	
 	VectorCopy( start, grenade->s.pos.trBase );
-	VectorScale( dir, random() * 100 + SCAV_ALT_VELOCITY, grenade->s.pos.trDelta );
+	VectorScale( dir, COOP_WeaponRandom() * 100 + SCAV_ALT_VELOCITY, grenade->s.pos.trDelta );
 	grenade->s.pos.trDelta[2] += 140;
 
 	SnapVector( grenade->s.pos.trDelta );			// save net bandwidth
@@ -602,13 +603,13 @@ void WP_FireScavenger( gentity_t *ent, qboolean alt_fire, qboolean greyscale )
 		}
 		else
 		{
-			VectorSet( temp_ang, angles[0] + (crandom() * SCAV_SPREAD), angles[1] + (crandom() * SCAV_SPREAD), angles[2] );
+			VectorSet( temp_ang, angles[0] + (COOP_WeaponCrandom() * SCAV_SPREAD), angles[1] + (COOP_WeaponCrandom() * SCAV_SPREAD), angles[2] );
 		}
 
 		AngleVectors( temp_ang, dir, NULL, NULL );
 
 		// try to make the shot alternate between barrels
-		offset = Q_irand(0, 1) * 2 + 1;
+		offset = COOP_WeaponIrand(0, 1) * 2 + 1;
 
 		VectorMA( start, offset, vright, temp_org );
 		VectorMA( temp_org, offset, up, temp_org );
@@ -1046,8 +1047,8 @@ void FireTetrionBullet( gentity_t *ent, vec3_t start, vec3_t dir )
 	for ( int i = 0; i < NUM_TETRION_SHOTS; i ++ )
 	{
 		// Add some sloppiness to the shot so it's harder to hit when you are far away
-		r = crandom()*TETRION_SPREAD;
-		u = crandom()*TETRION_SPREAD;
+		r = COOP_WeaponCrandom()*TETRION_SPREAD;
+		u = COOP_WeaponCrandom()*TETRION_SPREAD;
 
 		VectorMA (start, 8192, _forward, end);
 
@@ -1065,7 +1066,7 @@ void FireTetrionBullet( gentity_t *ent, vec3_t start, vec3_t dir )
 		traceEnt = &g_entities[ tr.entityNum ];
 
 		// Don't always draw a tracer line
-		if ( random() > 0.1 )
+		if ( COOP_WeaponRandom() > 0.1 )
 		{
 			// Create the trace effect
 			tent = G_TempEntity( tr.endpos, EV_TETRION );
@@ -2905,7 +2906,10 @@ void CalcMuzzlePoint( gentity_t *ent, vec3_t forward, vec3_t right, vec3_t up, v
 {
 	if((ent->client->ps.weapon != WP_BORG_ASSIMILATOR) && (!lead_in)) //&& ent->s.number != 0 
 	{//Not players or melee
-		if( ent->client )
+		// co-op player 2: the host only has the third-person model's gun, at the hip and well below
+		// the eye, so its shots would fly under the crosshair (and into ledges); fire from the eye
+		// like player 1's view weapon (and where player 2's own screen expects the shot)
+		if( ent->client && !( COOP_IsP2( ent ) && ent->s.weapon != WP_PHASER ) )
 		{
 			if ( ent->client->renderInfo.mPCalcTime >= level.time - FRAMETIME*2 )
 			{//Our muzz point was calced no more than 2 frames ago

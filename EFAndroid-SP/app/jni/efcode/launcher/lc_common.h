@@ -27,16 +27,23 @@ extern "C" {
 #	define LC_PLATFORM_NOUN_LC	"PC"
 #	define LC_TRASH_NAME		"Recycle Bin"
 #	define LC_FILE_MANAGER		"File Explorer"
-#	define LC_UPDATE_TAG_PREFIX	"windows-v"
+#	define LC_UPDATE_LEGACY_TAG_PREFIX	"windows-v"	/* 1.4.0's own Windows releases */
+#	define LC_UPDATE_ASSET_SUFFIXES	"-setup.exe", "-windows-x64.zip"	/* this platform's downloads */
 #	define LC_PATH_SEP			'\\'
 #else
 #	define LC_PLATFORM_NOUN		"Computer"		/* "Play on This Computer" */
 #	define LC_PLATFORM_NOUN_LC	"computer"		/* "on this computer" */
 #	define LC_TRASH_NAME		"Trash"
 #	define LC_FILE_MANAGER		"the file manager"
-#	define LC_UPDATE_TAG_PREFIX	"linux-v"
+#	define LC_UPDATE_LEGACY_TAG_PREFIX	"linux-v"
+#	define LC_UPDATE_ASSET_SUFFIXES	".AppImage"
 #	define LC_PATH_SEP			'/'
 #endif
+
+/* Updates: each version is one GitHub release, tagged macos-v<version> (the tag the Mac
+   app's update check knows), with every platform's downloads. A release counts here only
+   when it has one of LC_UPDATE_ASSET_SUFFIXES; LC_UPDATE_LEGACY_TAG_PREFIX releases count too. */
+#define LC_UPDATE_TAG_PREFIX	"macos-v"
 
 #define LC_BASEGAME			"baseEF"
 #define LC_GITHUB_REPO		"marinohardin/EliteForce-MacOS-Marino"
@@ -46,13 +53,9 @@ extern "C" {
 #define LC_MAX_PATH			1024
 #define LC_CMDLINE_SIZE		1024	/* MAX_STRING_CHARS: the engine's command-line buffer */
 
-/* Co-op button in the launcher: code is complete, button hidden by default.
-   lc_coop_ui_enabled() is 1 when this is 1 or env EF_SHOW_COOP=1, and only ever
-   when the engine has co-op (LC_COOP_BUILT: CMake sets it in EF_COOP builds; the
-   Windows/Linux releases are built without it, so they never show the button). */
-#ifndef LC_COOP_UI_ENABLED
-#	define LC_COOP_UI_ENABLED	0
-#endif
+/* Co-op button in the launcher: lc_coop_ui_enabled() is 1 when the engine has co-op
+   (LC_COOP_BUILT: CMake sets it in EF_COOP builds, which the Windows and Linux
+   releases are, like the Mac's), and 0 otherwise (nothing to start). */
 #ifndef LC_COOP_BUILT
 #	define LC_COOP_BUILT		0
 #endif
@@ -103,6 +106,9 @@ int lc_mkdir( const char *path );					/* 1 ok or exists */
 int lc_mkdir_p( const char *path );
 int lc_remove( const char *path );					/* file or empty dir */
 int lc_rename( const char *from, const char *to );	/* replaces an existing file */
+/* why the last file call above failed: GetLastError's text on Windows, strerror( errno ) elsewhere.
+   Call it right after the failure. *inUse is set when the file is open elsewhere (Windows). */
+void lc_file_error( char *err, size_t errSize, int *inUse );
 /* read a whole file (NUL-terminated, *len without the NUL); free() it */
 char *lc_read_file( const char *path, size_t *len );
 /* write via <path>.tmp + rename */

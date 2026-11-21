@@ -140,6 +140,37 @@ static float mouse640Y = 0.0f;
 static qboolean in_showUICursor = qfalse;
 #endif
 
+/*
+in_menuRelativeMouse (Linux addition): menus normally free the pointer and
+follow its absolute position. Under gamescope (Steam Deck Gaming Mode) the
+Steam Input trackpad moves the view in play, where the pointer is captured in
+relative mode, but not the menu cursor, which reads the free pointer's
+position. With this on, the pointer stays captured in menus too and the menu
+cursor follows SDL's position for it (the sum of the relative motion, kept
+inside the window), so a menu reads the trackpad the same way play does.
+Touch-screen taps still land where they touch: the click carries the touch
+position. 0 (default) = off, 1 = on.
+Off by default: on the Steam Deck it made touch-screen drags move the cursor
+proportionally instead of under the finger.
+in_mouseTrace 1 prints every mouse motion and button event SDL delivers.
+*/
+#if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
+static cvar_t *in_menuRelativeMouse = NULL;
+
+static qboolean IN_MenuRelativeMouse( void )
+{
+	// only 1 turns it on: a test build's -1 ("under gamescope") may be in a saved config
+	return ( in_menuRelativeMouse && cl_flexibleDisplay && cl_flexibleDisplay->integer
+		&& in_menuRelativeMouse->integer == 1 ) ? qtrue : qfalse;
+}
+#else
+#define IN_MenuRelativeMouse( ) qfalse
+#endif
+// true while a menu is up and the menu cursor is driven from relative mode
+#define IN_MenuRelativeNow( ) ( IN_MenuRelativeMouse( ) && ( Key_GetCatcher( ) & KEYCATCH_UI ) )
+
+static cvar_t *in_mouseTrace        = NULL;
+
 static cvar_t *in_mouse             = NULL;
 static cvar_t *in_nograb;
 
@@ -2155,7 +2186,12 @@ static void IN_ProcessEvents( void )
 				if( mouseActive && e.motion.which == SDL_TOUCH_MOUSEID )
 					break;
 #endif
-				if( mouseActive )
+				if( in_mouseTrace && in_mouseTrace->integer )
+					Com_Printf( "[mouse] t=%u motion which %d pos %d,%d rel %d,%d | active %d catcher 0x%x\n",
+						(unsigned)e.motion.timestamp, (int)e.motion.which, e.motion.x, e.motion.y,
+						e.motion.xrel, e.motion.yrel, mouseActive, Key_GetCatcher( ) );
+				// a menu under in_menuRelativeMouse reads the position (below), not the deltas
+				if( mouseActive && !IN_MenuRelativeNow( ) )
 				{
 					if( !e.motion.xrel && !e.motion.yrel )
 						break;
@@ -2195,6 +2231,21 @@ static void IN_ProcessEvents( void )
 					   double-fires. (Menus still use touch clicks.) */
 					if ( e.button.which == SDL_TOUCH_MOUSEID && Key_GetCatcher( ) == 0 )
 						break;
+#endif
+					if( in_mouseTrace && in_mouseTrace->integer )
+						Com_Printf( "[mouse] t=%u button %d %s which %d pos %d,%d | active %d catcher 0x%x\n",
+							(unsigned)e.button.timestamp, e.button.button, e.type == SDL_MOUSEBUTTONDOWN ? "down" : "up",
+							(int)e.button.which, e.button.x, e.button.y, mouseActive, Key_GetCatcher( ) );
+#if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
+					// in_menuRelativeMouse: SDL drops a touch's absolute motion in relative mode, but
+					// its click carries the touch position; move the menu cursor there first
+					if( e.button.which == SDL_TOUCH_MOUSEID && mouseActive && IN_MenuRelativeNow( ) )
+					{
+						int xrel, yrel;
+						IN_UpdateMouseMenuPosition( e.button.x, e.button.y, &xrel, &yrel );
+						if( xrel || yrel )
+							Com_QueueEvent( in_eventTime, SE_MOUSE, xrel, yrel, 0, NULL );
+					}
 #endif
 					switch( e.button.button )
 					{
@@ -2440,7 +2491,7 @@ void IN_Frame( void )
 		IN_DeactivateMouse( cls.glconfig.isFullscreen, qtrue );
 	}
 #ifdef USE_FLEXIBLE_DISPLAY
-	else if ( cl_flexibleDisplay->integer && ( Key_GetCatcher( ) & KEYCATCH_UI ) )
+	else if ( cl_flexibleDisplay->integer && ( Key_GetCatcher( ) & KEYCATCH_UI ) && !IN_MenuRelativeMouse( ) )
 	{
 		IN_DeactivateMouse( cls.glconfig.isFullscreen, in_showUICursor );
 	}
@@ -2496,6 +2547,10 @@ void IN_Init( void *windowData )
 	// mouse variables
 	in_mouse = Cvar_Get( "in_mouse", "1", CVAR_ARCHIVE );
 	in_nograb = Cvar_Get( "in_nograb", "0", CVAR_ARCHIVE );
+	in_mouseTrace = Cvar_Get( "in_mouseTrace", "0", CVAR_TEMP );
+#if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
+	in_menuRelativeMouse = Cvar_Get( "in_menuRelativeMouse", "0", CVAR_ARCHIVE );
+#endif
 
 #ifdef __ANDROID__
 	in_joystick = Cvar_Get( "in_joystick", "1", CVAR_ARCHIVE|CVAR_LATCH );

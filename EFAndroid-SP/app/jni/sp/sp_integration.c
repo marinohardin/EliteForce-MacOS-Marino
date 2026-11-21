@@ -344,6 +344,7 @@ static void SP_FinishTrans_f(void){
 static void SP_Use_f(void){ extern int SP_GameConsoleCommand(void); SP_GameConsoleCommand(); }
 extern void SP_SaveGame( const char *name );
 extern void SP_LoadGameFile( const char *name );
+extern const char *SP_RespawnSave( void );
 static void SP_Save_f(void){
     // Retail's `save` strips the trailing '*' autosave/thumbnail marker (g_target.cpp emits "save auto*").
     // Without this the autosave lands as saves/auto*.sav -> the Load menu's AUTOSAVE button (`load auto`)
@@ -359,7 +360,9 @@ static void SP_Load_f(void){
     // normal (non-holodeck) level sends `load *respawn`. Retail's `*respawn` reloads the `auto` autosave
     // (there is NO respawn.sav; the leading `*` is a special load sentinel, NOT a strippable suffix). The
     // port previously opened saves/*respawn.sav -> not found -> silent no-op, so pressing attack did nothing.
-    if( !Q_stricmp( arg, "*respawn" ) ) arg = "auto";
+    // The port reloads the save loaded last instead, until an autosave is written after it (SP_RespawnSave,
+    // sp_bridge.cpp), so a death after loading a save goes back to that save, not an older map's `auto`.
+    if( !Q_stricmp( arg, "*respawn" ) ) arg = SP_RespawnSave();
     else if( arg[0] == '*' )           arg = arg + 1;   // strip the sentinel for any other *<name> load
     SP_LoadGameFile( arg );
 }

@@ -28,7 +28,15 @@ LAN parties: everyone picks Holomatch. One person hosts (Host a Server in the la
 or Servers > Create Server in the game); the others find it under Servers > Local.
 Allow access when Windows Defender Firewall asks.
 
-Co-op is not in the Windows version (Mac only for now).
+Co-op: play the single-player campaign with a friend. Click Co-op... on the
+Single Player card. One PC hosts (Host, then New Game or Load as usual); the friend clicks the
+game under "Games on your network" (or types the host's address and clicks Check), then Connect,
+and plays player 2. The host can untick "Show this game on my network" to stay off that list.
+Both need the same version of Elite Force (Marino's Build) and the game's own pak0.pk3-pak2.pk3;
+a Mac or Linux player of the same version should be able to join too. Co-op uses UDP port 29760:
+allow access when Windows Defender Firewall asks on the host. For a friend on the internet,
+"Open the port on my router" (on by default) opens it, then send them the Copy Invite link. Co-op hasn't been tested on
+Windows yet.
 
 Without the launcher (shortcuts, scripts):
   Single player:    EliteForce.exe +set com_holomatch 0

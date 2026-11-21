@@ -10,9 +10,13 @@
 // Player 2 goes down only while a guest steers it; the local puppet (no guest) keeps its old
 // death and respawn next to player 1, and revives player 1 by itself when it is next to them.
 //
-// Saving is refused while a player is down (GameAllowedToSaveHere): a save holds player 1 only,
-// and loading one with player 1 at 0 health would be a death the game can't recover from; a
-// checkpoint autosave waits until both are up again.
+// Saving works while a player is down: a save keeps a downed player as revived (a quarter of their
+// health, armor and ammo as they are), so loading it brings both back standing. Player 2 goes to the
+// .coop file that way (coop_inventory.cpp); player 1 is put in the .sav as revived for the moment of
+// writing it and back down after (COOP_SaveP1Revived), so the game goes on as before the save.
+//
+// The reviver can stand on (in) the body, which is not solid; a revive there leaves the two inside
+// each other until they have walked apart, not solid to each other (COOP_SeparateFrame).
 
 #include "g_local.h"
 #include "g_functions.h"
@@ -31,6 +35,7 @@ extern void		PM_SetTorsoAnimTimer( gentity_t *ent, int *torsoAnimTimer, int time
 #define COOP_REVIVE_RANGE_BOT	128		// the puppet stops further away when it follows
 #define COOP_REVIVE_HEALTH		25		// percent of max health after a revive
 #define COOP_DOWN_MSG_TIME		250		// ms between the on-screen updates
+#define COOP_CUTOFF_TIME		2000	// ms a level barrier must stand between the bodies before the body is moved
 
 // what a body lies on and what a revive can't reach through: walls, closed doors, forcefields and
 // other movers, player clips; not people (an NPC standing over a downed player isn't a floor or a wall)
@@ -43,6 +48,7 @@ typedef struct
 	int			reviveStart;	// level.time the partner started holding Use, 0: not reviving
 	int			nextMsg;
 	int			oldFlags;		// FL_NOTARGET as it was before going down (the death set FL_NO_KNOCKBACK)
+	int			cutOffSince;	// level.time a level barrier first stood between the bodies (0: it doesn't)
 	gentity_t	*attacker;		// for the mission status text if this ends the game
 } coopDown_t;
 
@@ -51,10 +57,12 @@ static qboolean		coop_gameOver;
 static int			coop_downLastTime;
 static cvar_t		*coop_bleedout;
 static cvar_t		*coop_revivetime;
+static int			coop_separate = -1;	// a revive left this player inside someone: not solid until out (-1: none)
 
 void COOP_DownInit( void )
 {
 	memset( coop_down, 0, sizeof( coop_down ) );
+	coop_separate = -1;
 	coop_gameOver = qfalse;
 	coop_downLastTime = 0;
 	coop_bleedout = gi.cvar( "coop_bleedout", "30", 0 );
@@ -200,6 +208,63 @@ static void COOP_DropToFloor( gentity_t *ent )
 static void COOP_GameOver( gentity_t *attacker );
 
 /*
+COOP_IsBarrier
+
+A brush the level itself opens and closes (a script or a trigger), which a player can't open by
+walking up to it, using it or shooting it: forcefields and walls that switch on and off, and doors
+that only the level opens.
+*/
+static qboolean COOP_IsBarrier( gentity_t *e )
+{
+	if ( !e->inuse || e->client || !e->classname )
+	{
+		return qfalse;
+	}
+	if ( !Q_stricmp( e->classname, "func_usable" ) || !Q_stricmp( e->classname, "func_wall" )
+		|| !Q_stricmp( e->classname, "func_static" ) || !Q_stricmp( e->classname, "func_stasis_door" ) )
+	{
+		return qtrue;
+	}
+	if ( !Q_stricmp( e->classname, "func_door" ) )
+	{
+		gentity_t *master = ( ( e->flags & FL_TEAMSLAVE ) && e->teammaster ) ? e->teammaster : e;
+		// a door with a name opens only when the level uses it; not one a player can use or shoot open
+		return (qboolean)( master->targetname && !( master->spawnflags & 128 ) && !master->takedamage );
+	}
+	return qfalse;
+}
+
+/*
+COOP_CutOff
+
+A barrier of the level (COOP_IsBarrier) stands between the downed player and the partner: on both
+lines between the bodies (as for a revive) the first thing hit is such a barrier. A player an enemy
+downed stays where they fell, but when the story then closes a forcefield or door between the two,
+nobody can get to them any more and they would bleed out (game over).
+*/
+static qboolean COOP_CutOff( gentity_t *partner, gentity_t *downed )
+{
+	trace_t	tr;
+	vec3_t	from, to;
+
+	for ( int i = 0; i < 2; i++ )
+	{
+		float up = i ? 20.0f : 0.0f;
+		VectorCopy( partner->currentOrigin, from );
+		VectorCopy( downed->currentOrigin, to );
+		from[2] += up;
+		to[2] += up;
+		gi.trace( &tr, from, NULL, NULL, to, partner->s.number, COOP_WORLD_MASK );
+		if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f || tr.entityNum == downed->s.number
+			|| tr.entityNum >= ENTITYNUM_WORLD || !COOP_IsBarrier( &g_entities[tr.entityNum] ) )
+		{
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+/*
 COOP_CanReach
 
 The reviver must be next to the downed player with nothing solid between them: no wall, closed door,
@@ -230,6 +295,20 @@ static qboolean COOP_CanReach( gentity_t *reviver, gentity_t *downed, float rang
 		}
 	}
 	return qfalse;
+}
+
+// a revive is what this player's Use does now: the partner is down and within reach (coop_use.cpp:
+// the teleport hold and the double tap leave such a press alone)
+qboolean COOP_CanReviveNow( gentity_t *reviver )
+{
+	int idx = COOP_DownIndex( reviver );
+
+	if ( !coop_enabled || idx < 0 || !coop_down[idx ^ 1].down || !COOP_PlayerUp( idx ) )
+	{
+		return qfalse;
+	}
+	gentity_t *downed = COOP_DownPlayer( idx ^ 1 );
+	return (qboolean)( downed && COOP_CanReach( reviver, downed, COOP_REVIVE_RANGE ) );
 }
 
 /*
@@ -298,6 +377,7 @@ qboolean COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod )
 	}
 	coop_down[idx].reviveStart = 0;
 	coop_down[idx].nextMsg = 0;
+	coop_down[idx].cutOffSince = 0;
 	coop_down[idx].oldFlags = ent->flags & FL_NOTARGET;
 	coop_down[idx].attacker = attacker;
 
@@ -322,11 +402,126 @@ qboolean COOP_PlayerDown( gentity_t *ent, gentity_t *attacker, int mod )
 	return qtrue;
 }
 
+// the health a revive gives this player (also what a save keeps for a downed or dead one)
+int COOP_ReviveHealth( const gentity_t *ent )
+{
+	int maxHealth = ( ent->client && ent->client->ps.stats[STAT_MAX_HEALTH] > 0 ) ? ent->client->ps.stats[STAT_MAX_HEALTH] : 100;
+	int health = maxHealth * COOP_REVIVE_HEALTH / 100;
+	return health < 1 ? 1 : health;
+}
+
+/*
+COOP_SeparateFrame
+
+The body isn't solid, so the reviver can stand right on it (in it); revived there, both would be
+solid inside each other and neither could move (crouching or jumping got them out only sometimes).
+So a revived player that is inside someone stays out of the way until they are apart: corpse contents
+(shots still hit it) and passing through people, and the partner it is inside is a corpse too for
+that time. The partner has to be as well: a guest predicts player 2's moves against the host's
+entities as they are solid there, so a solid player 1 would still hold player 2 on the guest's
+screen. Both are solid again as soon as the revived player is inside nobody, or when either of them
+goes down, dies or is hidden.
+*/
+// a player's box in the world
+static void COOP_AbsBox( const gentity_t *ent, vec3_t mins, vec3_t maxs )
+{
+	VectorAdd( ent->currentOrigin, ent->mins, mins );
+	VectorAdd( ent->currentOrigin, ent->maxs, maxs );
+}
+
+static qboolean COOP_BoxesOverlap( const gentity_t *a, const gentity_t *b )
+{
+	vec3_t amins, amaxs, bmins, bmaxs;
+
+	COOP_AbsBox( a, amins, amaxs );
+	COOP_AbsBox( b, bmins, bmaxs );
+	for ( int i = 0; i < 3; i++ )
+	{
+		// boxes that only touch don't hold each other
+		if ( amins[i] >= bmaxs[i] - 0.5f || bmins[i] >= amaxs[i] - 0.5f )
+		{
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+// idx is inside the partner, or inside someone solid (an NPC standing over the body)
+static qboolean COOP_InsideSomeone( int idx, qboolean *inPartner )
+{
+	gentity_t	*ent = COOP_DownPlayer( idx );
+	gentity_t	*pent = COOP_DownPlayer( idx ^ 1 );
+	trace_t		tr;
+
+	*inPartner = (qboolean)( pent && pent->inuse && pent->client && COOP_PlayerUp( idx ^ 1 ) && COOP_BoxesOverlap( ent, pent ) );
+	if ( *inPartner )
+	{
+		return qtrue;
+	}
+	gi.trace( &tr, ent->currentOrigin, ent->mins, ent->maxs, ent->currentOrigin, ent->s.number, CONTENTS_BODY );
+	return (qboolean)( tr.startsolid || tr.allsolid );
+}
+
+// solid again (player 2's contents stay the scripted scene's while one holds it: COOP_UpdatePassable)
+static void COOP_MakeSolid( int idx )
+{
+	gentity_t *ent = COOP_DownPlayer( idx );
+
+	if ( !ent || !ent->inuse || !COOP_PlayerUp( idx ) || ent->contents != CONTENTS_CORPSE || ( idx == 1 && coop_p2.passable ) )
+	{
+		return;	// down, dead, hidden or respawned since: that code set the contents
+	}
+	ent->contents = CONTENTS_BODY;
+	ent->clipmask = MASK_PLAYERSOLID;
+	gi.linkentity( ent );
+}
+
+static void COOP_StartSeparate( int idx )
+{
+	gentity_t	*ent = COOP_DownPlayer( idx );
+	gentity_t	*pent = COOP_DownPlayer( idx ^ 1 );
+	qboolean	inPartner;
+
+	if ( !COOP_InsideSomeone( idx, &inPartner ) )
+	{
+		return;
+	}
+	coop_separate = idx;
+	ent->contents = CONTENTS_CORPSE;
+	ent->clipmask = MASK_PLAYERSOLID & ~CONTENTS_BODY;
+	gi.linkentity( ent );
+	if ( inPartner && pent->contents == CONTENTS_BODY )
+	{
+		pent->contents = CONTENTS_CORPSE;
+		gi.linkentity( pent );
+	}
+	gi.Printf( "co-op: player %d was revived inside %s: not solid until they are apart\n", idx + 1,
+		inPartner ? ( idx ? "player 1" : "player 2" ) : "someone" );
+}
+
+static void COOP_SeparateFrame( void )
+{
+	int			idx = coop_separate;
+	qboolean	inPartner;
+
+	if ( idx < 0 )
+	{
+		return;
+	}
+	if ( COOP_PlayerUp( idx ) && COOP_InsideSomeone( idx, &inPartner ) )
+	{
+		return;
+	}
+	coop_separate = -1;
+	COOP_MakeSolid( 0 );
+	COOP_MakeSolid( 1 );
+	gi.Printf( "co-op: player %d is out: solid again\n", idx + 1 );
+}
+
 static void COOP_Revive( int idx )
 {
 	gentity_t	*ent = COOP_DownPlayer( idx );
 	gclient_t	*cl;
-	int			maxHealth;
 
 	coop_down[idx].down = qfalse;
 	if ( !ent || !ent->client )
@@ -334,16 +529,16 @@ static void COOP_Revive( int idx )
 		return;
 	}
 	cl = ent->client;
-	maxHealth = cl->ps.stats[STAT_MAX_HEALTH] > 0 ? cl->ps.stats[STAT_MAX_HEALTH] : 100;
-	ent->health = maxHealth * COOP_REVIVE_HEALTH / 100;
-	if ( ent->health < 1 )
-	{
-		ent->health = 1;
-	}
+	ent->health = COOP_ReviveHealth( ent );
 	cl->ps.stats[STAT_HEALTH] = ent->health;
 	ent->takedamage = qtrue;
 	ent->flags = ( ent->flags & ~( FL_NOTARGET | FL_NO_KNOCKBACK ) ) | coop_down[idx].oldFlags;
+	if ( idx == 1 )
+	{
+		ent->flags = coop_p2.notarget ? ( ent->flags | FL_NOTARGET ) : ( ent->flags & ~FL_NOTARGET );	// (the cheat may have changed meanwhile)
+	}
 	ent->contents = CONTENTS_BODY;
+	ent->clipmask = MASK_PLAYERSOLID;
 	VectorCopy( playerMins, ent->mins );
 	VectorCopy( playerMaxs, ent->maxs );
 	cl->ps.pm_type = PM_NORMAL;
@@ -354,6 +549,112 @@ static void COOP_Revive( int idx )
 	COOP_Tell( idx, "" );
 	COOP_Tell( idx ^ 1, "" );
 	gi.Printf( "co-op: player %d revived (health %d)\n", idx + 1, ent->health );
+	COOP_StartSeparate( idx );
+}
+
+/*
+COOP_SaveP1Revived
+
+A save while player 1 is down. The .sav has player 1 only and no downed state (a load starts the
+co-op state afresh), so player 1 is written the way a revive leaves them: up, a quarter of their
+health, solid, a target again, standing. Nothing else changes: COOP_PreSave calls this with qtrue
+before WriteLevel writes anything and COOP_PostSave with qfalse after it, which puts back exactly
+what was there, so the game goes on with player 1 still down. Fields only (no linking, no
+animation calls: those could finish a script's wait).
+*/
+static struct
+{
+	qboolean	active;
+	int			health, statHealth, flags, contents, pmType;
+	qboolean	takedamage;
+	int			legsAnim, torsoAnim, legsAnimTimer, torsoAnimTimer, sLegsAnim, sTorsoAnim;
+	vec3_t		mins, maxs;		// a frozen player's box is empty (the load would put them in the floor)
+	qboolean	separating;		// up, but not solid while a revive's two players walk apart (COOP_SeparateFrame)
+	int			sepContents, sepClipmask;
+} coop_saveP1;
+
+void COOP_SaveP1Revived( qboolean revived )
+{
+	gentity_t	*ent = &g_entities[0];
+	gclient_t	*cl = ent->client;
+
+	if ( !revived )
+	{
+		if ( coop_saveP1.separating )
+		{
+			ent->contents = coop_saveP1.sepContents;
+			ent->clipmask = coop_saveP1.sepClipmask;
+			coop_saveP1.separating = qfalse;
+		}
+		if ( coop_saveP1.active && cl )
+		{
+			ent->health = coop_saveP1.health;
+			cl->ps.stats[STAT_HEALTH] = coop_saveP1.statHealth;
+			ent->takedamage = coop_saveP1.takedamage;
+			ent->flags = coop_saveP1.flags;
+			ent->contents = coop_saveP1.contents;
+			cl->ps.pm_type = coop_saveP1.pmType;
+			cl->ps.legsAnim = coop_saveP1.legsAnim;
+			cl->ps.torsoAnim = coop_saveP1.torsoAnim;
+			cl->ps.legsAnimTimer = coop_saveP1.legsAnimTimer;
+			cl->ps.torsoAnimTimer = coop_saveP1.torsoAnimTimer;
+			ent->s.legsAnim = coop_saveP1.sLegsAnim;
+			ent->s.torsoAnim = coop_saveP1.sTorsoAnim;
+			VectorCopy( coop_saveP1.mins, ent->mins );
+			VectorCopy( coop_saveP1.maxs, ent->maxs );
+		}
+		coop_saveP1.active = qfalse;
+		return;
+	}
+	coop_saveP1.active = qfalse;
+	coop_saveP1.separating = qfalse;
+	if ( coop_enabled && coop_separate >= 0 && !coop_down[0].down && cl )
+	{
+		// the load starts the co-op state afresh: player 1 must be written solid
+		coop_saveP1.separating = qtrue;
+		coop_saveP1.sepContents = ent->contents;
+		coop_saveP1.sepClipmask = ent->clipmask;
+		if ( ent->contents == CONTENTS_CORPSE )
+		{
+			ent->contents = CONTENTS_BODY;
+		}
+		ent->clipmask = MASK_PLAYERSOLID;
+	}
+	if ( !coop_enabled || !coop_down[0].down || !cl || coop_gameOver )
+	{
+		return;
+	}
+	coop_saveP1.active = qtrue;
+	coop_saveP1.health = ent->health;
+	coop_saveP1.statHealth = cl->ps.stats[STAT_HEALTH];
+	coop_saveP1.takedamage = ent->takedamage;
+	coop_saveP1.flags = ent->flags;
+	coop_saveP1.contents = ent->contents;
+	coop_saveP1.pmType = cl->ps.pm_type;
+	coop_saveP1.legsAnim = cl->ps.legsAnim;
+	coop_saveP1.torsoAnim = cl->ps.torsoAnim;
+	coop_saveP1.legsAnimTimer = cl->ps.legsAnimTimer;
+	coop_saveP1.torsoAnimTimer = cl->ps.torsoAnimTimer;
+	coop_saveP1.sLegsAnim = ent->s.legsAnim;
+	coop_saveP1.sTorsoAnim = ent->s.torsoAnim;
+	VectorCopy( ent->mins, coop_saveP1.mins );
+	VectorCopy( ent->maxs, coop_saveP1.maxs );
+
+	// as COOP_Revive leaves them
+	ent->health = cl->ps.stats[STAT_HEALTH] = COOP_ReviveHealth( ent );
+	ent->takedamage = qtrue;
+	ent->flags = ( ent->flags & ~( FL_NOTARGET | FL_NO_KNOCKBACK ) ) | coop_down[0].oldFlags;
+	ent->contents = CONTENTS_BODY;
+	VectorCopy( playerMins, ent->mins );
+	VectorCopy( playerMaxs, ent->maxs );
+	cl->ps.pm_type = PM_NORMAL;
+	cl->ps.legsAnim = ( ( cl->ps.legsAnim & ANIM_TOGGLEBIT ) ^ ANIM_TOGGLEBIT ) | BOTH_STAND2;
+	cl->ps.torsoAnim = ( ( cl->ps.torsoAnim & ANIM_TOGGLEBIT ) ^ ANIM_TOGGLEBIT ) | BOTH_STAND2;
+	cl->ps.legsAnimTimer = 0;
+	cl->ps.torsoAnimTimer = 0;
+	ent->s.legsAnim = cl->ps.legsAnim;
+	ent->s.torsoAnim = cl->ps.torsoAnim;
+	gi.Printf( "co-op: player 1 is down: saved as revived (health %d)\n", ent->health );
 }
 
 // level change while someone is down: they get up (the next level must not start with a dead player)
@@ -479,6 +780,7 @@ void COOP_DownFrame( void )
 	{
 		return;
 	}
+	COOP_SeparateFrame();
 	elapsed = coop_downLastTime ? level.time - coop_downLastTime : 0;
 	coop_downLastTime = level.time;
 
@@ -563,6 +865,33 @@ void COOP_DownFrame( void )
 					}
 				}
 			}
+		}
+		// a barrier of the level closed between them: put the body next to the partner
+		if ( progress < 0 && reviver < 0 && COOP_PlayerUp( partner ) && pent && COOP_CutOff( pent, ent ) )
+		{
+			if ( !d->cutOffSince )
+			{
+				d->cutOffSince = level.time;
+			}
+			else if ( level.time - d->cutOffSince >= COOP_CUTOFF_TIME )
+			{
+				vec3_t	org;
+				int		contents = ent->contents;
+				ent->contents = 0;
+				qboolean found = COOP_FindSpotNear( pent, org );
+				ent->contents = contents;
+				if ( found )
+				{
+					COOP_MovePlayer( ent, org );
+					COOP_DropToFloor( ent );
+					gi.Printf( "co-op: player %d was cut off behind a barrier: moved next to player %d\n", idx + 1, partner + 1 );
+				}
+				d->cutOffSince = 0;
+			}
+		}
+		else
+		{
+			d->cutOffSince = 0;
 		}
 		if ( progress < 0 && d->reviveStart )
 		{

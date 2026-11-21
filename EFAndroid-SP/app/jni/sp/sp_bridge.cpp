@@ -149,6 +149,8 @@ extern "C" {
                                     signed char *rightmove, signed char *upmove );
     const char *CoopNet_GuestName( void );
     const char *CoopNet_GuestSex( void );
+    const char *CoopNet_GuestLook( void );
+    int         CoopNet_CorePakFile( const char *qpath );
     int         CoopNet_HostHasGuest( void );
     int         CoopNet_GuestViewTime( void );
 }
@@ -161,10 +163,11 @@ static qboolean SP_CoopGuestCmd( usercmd_t *cmd ){
     return qtrue;
 }
 static qboolean SP_CoopGuestConnected( void ){ return CoopNet_HostHasGuest() ? qtrue : qfalse; }
+static qboolean SP_CoopCorePakFile( const char *qpath ){ return CoopNet_CorePakFile( qpath ) ? qtrue : qfalse; }
 static void SP_CoopSetBridge( void ){
     typedef void (*coopSetBridge_t)( const coopBridge_t * );
     static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName, SP_CoopGuestConnected,
-                                   CoopNet_GuestViewTime, CoopNet_GuestSex };
+                                   CoopNet_GuestViewTime, CoopNet_GuestSex, CoopNet_GuestLook, SP_CoopCorePakFile };
     coopSetBridge_t set = (coopSetBridge_t)SP_ModuleSym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
     if( set ) set( &bridge );
 }
@@ -189,11 +192,13 @@ static int  g_coopHoldSent = 0;     // ...and the last frame sent meanwhile
 #define COOP_CMDS 64
 static int  g_coopSeq = 0;          // guest: its commands (never reset: the host takes only newer numbers)
 static int  g_coopAck = 0;          // guest: the newest of them the host applied (see SP_CoopMakeCmd)
+static void SP_CoopClockReset( void );   // (the guest's clock, with SP_CoopMakeCmd)
 static int  SP_CoopCurrentCmd( void );
 // Co-op saves. The .sav stays a plain single-player save (player 2 isn't in it, see the game's
 // coop_save.cpp); player 2's health, armor, weapon and ammo go to <name>.coop next to it, which single
 // player never reads. Loading the save hands them to the game the way a map change does (coop_p2save,
-// read at the level start). A save without player 2 removes an old .coop of the same name.
+// read at the level start). The co-op game always fills it in ("new" when player 2 starts afresh); a
+// plain single-player save leaves it empty and removes an old .coop of the same name.
 extern "C" {
     void  FS_WriteFile( const char *qpath, const void *buffer, int size );
     void  FS_HomeRemove( const char *homePath );
@@ -578,6 +583,8 @@ static int   g_spMovieQueued = 0;   // the game queued "inGameCinematic" this fr
 static int   g_coopMovieSeq = 0;    // host: counts the in-game movies the game started (the guest plays them too)
 static char  g_coopMovie[64];       // ...and its name
 static void  SP_CoopNoteMovie( const char *t );
+static int   g_coopCreditsSeq = 0;  // host: counts the closing credits the game started (the guest shows them too)
+static int   g_coopCreditsUp = 0;   // ...they started with a guest here; when they end, so does the game
 #endif
 static void  I_SendConsole( const char *t ){
     if( t && !sp_stricmpn( t, "inGameCinematic", 15 ) ){
@@ -586,6 +593,13 @@ static void  I_SendConsole( const char *t ){
         SP_CoopNoteMovie( t );
 #endif
     }
+#ifdef EF_COOP
+    // the closing credits (a script's SET_CLOSINGCREDITS): a menu that pauses this game and ends it
+    if( t && !sp_stricmpn( t, "ui_closingcredits", 17 ) && g_coopRep && !g_coopReplica && CoopNet_HostHasGuest() ){
+        g_coopCreditsSeq++;
+        g_coopCreditsUp = 1;
+    }
+#endif
     Cbuf_AddText(t);
 }
 static void  I_DropClient( int n, const char *r ){ (void)n;(void)r; }
@@ -779,11 +793,56 @@ static void SP_UpdateVoiceOverride(void){
     SP_UpdateVisemes();
 }
 
+#ifdef EF_COOP
+// Cheats in co-op. The guest's world is a copy of the host's, so a cheat run there changes nothing
+// that lasts (its "god" said "godmode ON" while player 2 still took the host's damage). The guest
+// sends these to the host, whose game runs them for player 2 with the host's cheat rules (CheatsOk:
+// sv_cheats, and alive); the answer ("godmode ON") comes back as player 2's message. The other
+// cheats act on the world itself and only work on the host.
+static const char *const s_coopP2Cheats[] = { "god", "noclip", "give", "notarget", "undying", NULL };
+static const char *const s_coopHostCheats[] = { "spawn", "kill", "levelshot", "setviewpos", "setobjective", NULL };
+static qboolean SP_CoopListed( const char *const *list, const char *cmd ){
+    for( ; *list; list++ ) if( !sp_stricmpn( *list, cmd, 64 ) ) return qtrue;
+    return qfalse;
+}
+// guest: a game console command typed here (tokenized); qtrue when it was handled here
+static qboolean SP_CoopGuestConsoleCmd( void ){
+    if( !g_coopReplica ) return qfalse;
+    const char *cmd = Cmd_Argv( 0 );
+    if( SP_CoopListed( s_coopP2Cheats, cmd ) ){
+        char text[128]; int n = snprintf( text, sizeof(text), "%s", cmd );
+        for( int i = 1; i < Cmd_Argc() && n < (int)sizeof(text) - 1; i++ )
+            n += snprintf( text + n, sizeof(text) - n, " %s", Cmd_Argv( i ) );
+        if( !CoopNet_GuestSendCommand( text ) ) SP_ComPrintf()( "co-op: not connected to the host\n" );
+        return qtrue;
+    }
+    if( SP_CoopListed( s_coopHostCheats, cmd ) ){
+        SP_ComPrintf()( "co-op: %s only works in the host's game\n", cmd );
+        return qtrue;
+    }
+    return qfalse;
+}
+// host, before a game frame: the guest's cheats, for player 2
+static void SP_CoopHostConsoleCmds( void ){
+    char text[128];
+    if( !g_coopRep || g_coopReplica || !ge || !g_spActive ) return;
+    while( CoopNet_HostTakeCommand( text, sizeof(text) ) ){
+        Cmd_TokenizeString( text );
+        int p2 = g_coopRep->ViewEntity();
+        if( p2 <= 0 || !SP_CoopListed( s_coopP2Cheats, Cmd_Argv( 0 ) ) ) continue;   // (only those)
+        blog("co-op: player 2's console command: %s\n", text);
+        ge->ClientCommand( p2 );
+    }
+}
+#endif
 // One game frame at g_levelTime. With the regression harness on (qcommon/regress.c), rand() is
 // reseeded first and the game's state is logged after; otherwise this is just the voice update +
 // ge->RunFrame it always was.
 static void SP_GameRunFrame(void){
     Regress_SeedRand( g_levelTime );
+#ifdef EF_COOP
+    SP_CoopHostConsoleCmds();
+#endif
     SP_UpdateVoiceOverride(); ge->RunFrame(g_levelTime);
     if( Regress_Active() && g_regressDump ){
         Regress_BeginFrame( g_curMap, g_levelTime );
@@ -935,6 +994,7 @@ extern "C" qboolean SP_SpawnServer( const char *mapname ){
 #ifdef EF_COOP
     g_coopLevelId++;
     g_coopApplied = 0; g_coopCmdSeen = 0;
+    SP_CoopClockReset();
     // a guest's replica level (sp_coop 2, applied by InitGame): no game frames, the host's come instead
     g_coopReplica = ( g_coopRep && Cvar_VariableIntegerValue( "sp_coop" ) == 2 ) ? 1 : 0;
     SP_CoopHoldStart();
@@ -1124,6 +1184,9 @@ static void SP_CgameConsoleCmd(void){
     // qfalse, and they must be forwarded to the game's ClientCommand (mirrors retail CL_GameCommand ->
     // CL_ForwardCommandToServer). argv is already tokenized; gi.argv==Cmd_Argv so ClientCommand reads it.
     if(g_vmMain && SP_VmMain(CG_CONSOLE_COMMAND, 0,0,0)) return;
+#ifdef EF_COOP
+    if(SP_CoopGuestConsoleCmd()) return;
+#endif
     if(ge && g_spActive) ge->ClientCommand(0);
 }
 
@@ -1819,7 +1882,12 @@ extern "C" qboolean SP_FinishTransition(void){
 }
 
 // 'use <targetname>' and other game console commands -> the game's ClientCommand (turbolift, triggers).
-extern "C" void SP_ClientCommand(void){ if(ge && g_spActive) ge->ClientCommand(0); }
+extern "C" void SP_ClientCommand(void){
+#ifdef EF_COOP
+    if(SP_CoopGuestConsoleCmd()) return;
+#endif
+    if(ge && g_spActive) ge->ClientCommand(0);
+}
 
 // ---- user save / load (Phase 2). Retail-byte-compatible framing chunks around ge->WriteLevel/ReadLevel.
 // Retail's save gate: SV_SaveGame calls SV_CanSave, which
@@ -1833,6 +1901,26 @@ extern "C" qboolean SP_GameAllowedToSaveHere(void){
 // Set when an AUTOSAVE was requested during a cutscene (in_camera): SP_DrawFrame writes it on the first
 // non-cinematic frame. See SP_SaveGame / the death-respawn-into-cutscene fix below.
 static int g_pendingAutosave = 0;
+
+// The save the death screen's reload (`load *respawn`) goes back to: the save loaded last, until an
+// autosave is written after it (a checkpoint, a level change or a new game); then `auto`, as before.
+// Reloading only `auto` meant that loading save A, then save B, then dying went back to `auto`, often
+// A's map. A save deleted since falls back to `auto`.
+extern "C" qboolean FS_FileExists( const char *file );
+static char g_respawnSave[64];
+static void SP_NoteLoad( const char *name ){
+    if( name == g_respawnSave ) return;   // the death reload of it
+    if( !sp_stricmpn( name, "auto", 5 ) ) g_respawnSave[0] = 0;
+    else snprintf( g_respawnSave, sizeof(g_respawnSave), "%s", name );
+}
+extern "C" const char *SP_RespawnSave( void ){
+    char path[96];
+    if( !g_respawnSave[0] ) return "auto";
+    snprintf( path, sizeof(path), "saves/%s.sav", g_respawnSave );
+    if( !FS_FileExists( path ) ) return "auto";   // deleted since
+    SP_ComPrintf()( "reloading %s, the save loaded last\n", g_respawnSave );
+    return g_respawnSave;
+}
 
 // Internal save writer. bEAUTO selects retail SV_SaveGame's two flavours:
 //  - bEAUTO=qfalse -> eFULL: GAME=0 + ge->WriteLevel(qfalse) (full gclient + entity table). User saves and the
@@ -1961,6 +2049,7 @@ static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
 #ifdef EF_COOP
     if( g_coopRep ) SP_CoopWriteSideFile( name );
 #endif
+    if( !strcmp( name, "auto" ) ) g_respawnSave[0] = 0;   // the death reload goes back to this autosave
 }
 
 // Public save entry (the `save` console command, deferred-autosave writer, quick-save): always eFULL, exactly
@@ -1999,6 +2088,7 @@ extern "C" void SP_LoadGameFile(const char* name){
 #ifdef EF_COOP
     SP_CoopReadSideFile( name );
 #endif
+    SP_NoteLoad( name );
     static unsigned char shot[256*256*4];
     char comm[128], mpcm[1024]; int ncvc=0, game=0, tnow=0, timr=0, cscn=0;
     // EFSP 4:3: cg_forceAspect is a DISPLAY preference (the video-menu Aspect toggle), not gameplay state. The
@@ -2128,6 +2218,7 @@ extern "C" qboolean SP_StartClient(void){
     // CVSV/AMMO/ADPT chunks, and a death-respawn on this New Game would restore the previous game's weapons/health.
     // Empty carry -> Player_RestoreFromPrevLevel no-ops (it gates on strlen(playersave)) -> the default ClientSpawn
     // loadout, which is the correct New-Game respawn. Forward transitions/loads set these elsewhere and are unaffected.
+    g_respawnSave[0] = 0;   // a new game: the death reload goes back to its autosave
     Cvar_Set("playersave", "");
     for(int i=0;i<4;i++){  char nm[32]; snprintf(nm,sizeof(nm),"playerammo%d",i); Cvar_Set(nm,""); }
     for(int i=0;i<32;i++){ char nm[32]; snprintf(nm,sizeof(nm),"borgadapt%d",i); Cvar_Set(nm,""); }
@@ -2289,17 +2380,22 @@ static int SP_CoopCommandsImage( unsigned char *buf, int size ){
         put++;
     }
     memcpy( buf + 4, &put, 4 );
-    // then whether this level's start is held for the guest, whether a movie plays here now, and the
-    // newest in-game movie: [held][playing][seq][name\0] (seq 0: none yet)
+    // then whether this level's start is held for the guest, whether a movie plays here now, the
+    // newest in-game movie and the closing credits: [held][playing][seq][credits seq][name\0] (seq 0: none yet)
     int held = ( g_coopHoldLevel && g_coopHoldLevel == g_coopLevelId ) ? 1 : 0;
     int playing = CL_InGameCinematicActive() ? 1 : 0;
     memcpy( buf + len, &held, 4 ); len += 4;
     memcpy( buf + len, &playing, 4 ); len += 4;
     int ml = (int)strlen( g_coopMovie ) + 1;
     memcpy( buf + len, &g_coopMovieSeq, 4 ); len += 4;
+    memcpy( buf + len, &g_coopCreditsSeq, 4 ); len += 4;
     memcpy( buf + len, g_coopMovie, ml ); len += ml;
     return len;
 }
+// The host's closing credits are up (sys_coop_net.c: when this game has gone back to the menu
+// after them, the game is over for the guest too), and that was handled.
+extern "C" int  SP_CoopCreditsUp( void ){ return g_coopCreditsUp; }
+extern "C" void SP_CoopCreditsDone( void ){ g_coopCreditsUp = 0; }
 // The game started an in-game movie ("inGameCinematic <name>"): the guest plays it too.
 static void SP_CoopNoteMovie( const char *t ){
     char name[64]; int n = 0;
@@ -2386,6 +2482,21 @@ static void SP_CoopGuestMovieFrame( int paused ){
         g_coopMovieOn = 0;
     }
 }
+// The closing credits (voy20's end). The host's game pauses behind them and ends when they do; the
+// guest shows them too, from the same host frame, and is back at its menu when the host's are over
+// (the host ends the game then: CoopGuestStop), or earlier if this player skips them.
+static int g_coopCreditsSeen = 0;   // guest: the newest host credits seen
+static int g_coopCreditsSynced = 0; // ...decided for this level (joining: only ones that come later)
+static void SP_CoopGuestCredits( int seq ){
+    if( !g_spActive ) return;
+    if( !g_coopCreditsSynced ){ g_coopCreditsSynced = 1; g_coopCreditsSeen = seq; return; }
+    if( seq <= g_coopCreditsSeen ){ if( seq < g_coopCreditsSeen ) g_coopCreditsSeen = seq; return; }
+    g_coopCreditsSeen = seq;
+    blog("co-op: the host shows the closing credits; showing them here too\n");
+    if( g_coopMovieOn && CL_InGameCinematicActive() ) SCR_StopCinematic();
+    g_coopMovieOn = 0;
+    Cbuf_AddText( "ui_closingcredits 1\n" );
+}
 static qboolean SP_CoopSlotSame( int a, int b, int slot, const unsigned char **data, int *len ){
     *len = CoopNet_GuestFrameSlot( b, slot, data );
     if( !a ) return qfalse;
@@ -2417,11 +2528,11 @@ static void SP_CoopApplyFrame( int frame, int time ){
     if( len >= 8 ){
         int newest, count, pos = 8, held = 0;
         memcpy( &newest, d, 4 ); memcpy( &count, d + 4, 4 );
-        // the commands, then [held][movie seq][movie time][movie name]
+        // the commands, then [held][playing][movie seq][credits seq][movie name]
         const unsigned char *tail = NULL;
         { int p = 8, i;
           for( i = 0; i < count && p + 5 <= len; i++ ){ int tl = (int)strnlen( (const char *)d + p + 4, len - p - 4 ); if( p + 4 + tl >= len ) break; p += 4 + tl + 1; }
-          if( i == count && p + 13 <= len && !d[len - 1] ){ tail = d + p; memcpy( &held, tail, 4 ); } }
+          if( i == count && p + 17 <= len && !d[len - 1] ){ tail = d + p; memcpy( &held, tail, 4 ); } }
         // joining: only what comes from now on; but a level the host holds for this guest is new,
         // so all of its story text so far (an opening scroll text, the first subtitles) is shown
         if( !prev ) g_coopCmdSeen = held ? 0 : newest;
@@ -2435,10 +2546,11 @@ static void SP_CoopApplyFrame( int frame, int time ){
         }
         if( newest < g_coopCmdSeen ) g_coopCmdSeen = newest;   // (the host's count restarts with a level)
         if( tail ){
-            int playing, mseq;
-            memcpy( &playing, tail + 4, 4 ); memcpy( &mseq, tail + 8, 4 );
-            if( !prev ) g_coopMovieSynced = 0;
-            SP_CoopGuestMovie( mseq, (const char *)tail + 12, playing ? qtrue : qfalse );
+            int playing, mseq, cseq;
+            memcpy( &playing, tail + 4, 4 ); memcpy( &mseq, tail + 8, 4 ); memcpy( &cseq, tail + 12, 4 );
+            if( !prev ){ g_coopMovieSynced = 0; g_coopCreditsSynced = 0; }
+            SP_CoopGuestMovie( mseq, (const char *)tail + 16, playing ? qtrue : qfalse );
+            SP_CoopGuestCredits( cseq );
         }
     }
     g_coopRep->ApplyDone( g_spActive ? qtrue : qfalse );
@@ -2446,12 +2558,12 @@ static void SP_CoopApplyFrame( int frame, int time ){
     g_coopAppliedAt = Sys_Milliseconds();
     g_levelTime = time;
 }
-// The guest's commands. One is made for every host frame taken in (the host applies one a frame),
-// numbered g_coopSeq and kept here; each frame says the newest the host applied (g_coopAck). The
-// cgame's prediction (cg_predict.cpp, on in a replica) starts from that frame's player 2 and replays
-// the commands after it, then the one being made now. Their times are their numbers * 50 ms, and the
-// snapshot's commandTime is the acked number's (BuildSnapshot), so every replayed command moves
-// player 2 for one host frame, as the host's ClientThink will.
+// The guest's commands. One is made for every host frame, on the guest's clock (below; the host applies
+// one a frame), numbered g_coopSeq and kept here; each frame says the newest the host applied (g_coopAck).
+// The cgame's prediction (cg_predict.cpp, on in a replica) starts from that frame's player 2 and replays
+// the commands after it up to the clock's time (g_coopPredTime), the last one partly. Their times are
+// their numbers * 50 ms, and the snapshot's commandTime is the acked number's (BuildSnapshot), so every
+// replayed command moves player 2 for one host frame, as the host's ClientThink will.
 static int       g_coopBtn = 0;     // buttons pressed since the last command
 static int       g_coopSeqAt = 0;   // when the last command was made (Sys_Milliseconds)
 static int       g_coopHostPaused = 0;  // the host's game isn't going on (CoopNet_GuestHostPaused)
@@ -2463,6 +2575,75 @@ static usercmd_t g_coopCmds[COOP_CMDS];
 // it has gone is aimed in that one).
 static int       g_coopDrawnTime = 0;   // the cgame time of the last drawn frame
 static int       g_coopSentView = 0;    // ...as sent with the last command
+// The guest's clock. Commands used to be made as the host's frames came in, and those come
+// unevenly: Wi-Fi holds them back and hands over several at once, and a frame is only taken in on
+// the next drawn frame. With no command made, the prediction had nothing new to run: player 2's view
+// froze for 70-170 ms, then jumped ahead, walking straight. So the commands are made on this copy's
+// own clock, one every 50 ms of the host's level time as this copy reckons it: Sys_Milliseconds less
+// an offset that follows the earliest the host's frames come in (a late frame hardly moves it, an
+// early one at once; it creeps up after a lasting slowdown), slewed by at most a tenth of the time
+// drawn so the view never runs more than 10% fast or slow. The commands still go one per host frame
+// on average, and the host's queue takes up the rest. The clock runs at most COOP_CLOCK_LEAD past
+// the newest host frame (the host stopped, or holds its level's start: no commands), stands while
+// the host's game is paused, and starts again from the newest frame on a jump of COOP_CLOCK_RESET.
+#define COOP_CLOCK_RESET 1000
+#define COOP_CLOCK_LEAD  300
+#define COOP_CLOCK_MAKE  6      // at most this many commands in one drawn frame (else start again)
+static double    g_coopClockOfs = 0;    // the host's level time is Sys_Milliseconds - this
+static double    g_coopClockAim = 0;    // ...which follows this, the frames' earliest arrival
+static int       g_coopClockSet = 0;    // ...once a frame came (this level)
+static int       g_coopClockAt = 0;     // the last drawn frame's Sys_Milliseconds
+static int       g_coopClockCmd = 0;    // command time - host level time (commands are numbered on their own)
+static int       g_coopHostTime = 0;    // this drawn frame's host level time on that clock
+static int       g_coopPredTime = 0;    // ...in command time: what the prediction runs to
+static void SP_CoopMakeCmd( void );
+static void SP_CoopClockReset( void ){ g_coopClockSet = 0; g_coopHostTime = 0; g_coopPredTime = 0; }
+// a host frame of level time t taken in now (SP_CoopReplicaApply)
+static void SP_CoopClockSample( int t ){
+    double sample = (double)Sys_Milliseconds() - (double)t;
+    if( !g_coopClockSet || fabs( sample - g_coopClockAim ) > COOP_CLOCK_RESET ){
+        g_coopClockOfs = g_coopClockAim = sample;
+        g_coopClockCmd = g_coopSeq * SP_SV_FRAMEMSEC - t;   // the next command is for the frame after t
+        g_coopClockSet = 1;
+        return;
+    }
+    if( sample < g_coopClockAim ) g_coopClockAim = sample;
+    else g_coopClockAim += ( sample - g_coopClockAim ) * 0.02;
+}
+// once a drawn frame, after the host's frames are in: the commands that are due, and g_coopPredTime
+static void SP_CoopClockFrame( int paused ){
+    int now = Sys_Milliseconds(), dt = now - g_coopClockAt;
+    g_coopClockAt = now;
+    if( dt < 0 ) dt = 0; if( dt > 100 ) dt = 100;
+    if( !g_coopClockSet || !g_spActive ) return;
+    if( paused ){
+        g_coopClockOfs += dt; g_coopClockAim += dt;   // held where the pause found it
+    } else {
+        double d = g_coopClockAim - g_coopClockOfs, slew = dt * 0.1;
+        g_coopClockOfs += d > slew ? slew : d < -slew ? -slew : d;
+    }
+    int host = (int)floor( now - g_coopClockOfs + 0.5 );
+    if( host > g_levelTime + COOP_CLOCK_LEAD ) host = g_levelTime + COOP_CLOCK_LEAD;
+    if( host < g_coopHostTime && g_coopHostTime - host < COOP_CLOCK_RESET ) host = g_coopHostTime;   // never backwards
+    g_coopHostTime = host;
+    if( !paused ){
+        int made = 0;
+        while( ( g_coopSeq + 1 ) * SP_SV_FRAMEMSEC - g_coopClockCmd <= host ){
+            if( ++made > COOP_CLOCK_MAKE ){ g_coopClockCmd = g_coopSeq * SP_SV_FRAMEMSEC - host; break; }   // far behind: from here
+            int seq = g_coopSeq;
+            SP_CoopMakeCmd();
+            if( g_coopSeq == seq ){   // no input here now (a menu, the console): none owed for it either
+                g_coopClockCmd = g_coopSeq * SP_SV_FRAMEMSEC - host;
+                break;
+            }
+        }
+    }
+    int t = host + g_coopClockCmd;
+    int lo = g_coopAck * SP_SV_FRAMEMSEC + 1, hi = ( g_coopSeq + 1 ) * SP_SV_FRAMEMSEC;
+    if( t > hi ) t = hi;
+    if( t < lo ) t = lo;
+    g_coopPredTime = t;
+}
 static void SP_CoopMakeCmd( void ){
     usercmd_t c = g_lastcmd;
     c.buttons |= g_coopBtn;
@@ -2479,6 +2660,10 @@ static void SP_CoopMakeCmd( void ){
 }
 static int SP_CoopCurrentCmd( void ){
     if( g_coopSeq - g_coopAck >= COOP_CMDS - 4 ) return g_coopAck;   // too far ahead of the host: no replay
+    if( g_coopClockSet && g_coopPredTime <= g_coopSeq * SP_SV_FRAMEMSEC ){
+        int n = ( g_coopPredTime + SP_SV_FRAMEMSEC - 1 ) / SP_SV_FRAMEMSEC;   // the command the clock is in
+        return n > g_coopAck ? n : g_coopAck + 1;
+    }
     return g_coopSeq + 1;   // + the one being made
 }
 static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd ){
@@ -2487,15 +2672,16 @@ static qboolean SP_CoopUserCmd( int n, usercmd_t *cmd ){
         if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC ) since = SP_SV_FRAMEMSEC;
         if( g_coopHostPaused ) since = g_coopPausedSince;   // held where the pause found it
         *cmd = g_lastcmd;
-        cmd->serverTime = g_coopSeq * SP_SV_FRAMEMSEC + since;
+        cmd->serverTime = g_coopClockSet ? g_coopPredTime : g_coopSeq * SP_SV_FRAMEMSEC + since;
         return qtrue;
     }
     if( n <= 0 || n > g_coopSeq || n <= g_coopSeq - COOP_CMDS ) return qfalse;
     *cmd = g_coopCmds[n & (COOP_CMDS-1)];
+    if( g_coopClockSet && cmd->serverTime > g_coopPredTime ) cmd->serverTime = g_coopPredTime;   // the clock is inside it
     return qtrue;
 }
 // The host's frames that came in since the last call (at most 4, oldest first), each into this level
-// and a snapshot, and a command for each. Returns how many.
+// and a snapshot (the guest's clock takes their times in). Returns how many.
 extern "C" int SP_CoopReplicaApply( void ){
     int newest = CoopNet_GuestNewestFrame(), applied = 0;
     if( !g_coopReplica || !g_coopRep || !newest || newest <= g_coopApplied ) return 0;
@@ -2509,7 +2695,7 @@ extern "C" int SP_CoopReplicaApply( void ){
         if( ack > g_coopAck && ack <= g_coopSeq ) g_coopAck = ack;
         if( g_spActive ) CoopNet_GuestLevelReady( lid );
         if( t == lastTime ) continue;   // the host holds its level's start for this guest: no game time passed
-        if( g_spActive ) SP_CoopMakeCmd();
+        SP_CoopClockSample( t );   // (the commands come from the clock: SP_CoopClockFrame)
         if( g_spActive ){
             g_cmdNum++;
             g_lastcmd.serverTime = g_levelTime;
@@ -2542,7 +2728,9 @@ static void SP_CoopReplicaDrawFrame( int stereo ){
       g_lastcmd.forwardmove=fwd; g_lastcmd.rightmove=side; g_lastcmd.upmove=up; g_lastcmd.buttons=btn;
       g_lastcmd.weapon = (byte)g_weaponSelect; g_coopBtn |= btn; }
     SP_CoopReplicaApply();
-    int since = Sys_Milliseconds() - g_coopAppliedAt;
+    SP_CoopClockFrame( paused );
+    // the world is drawn on the same clock, a host frame behind (between its two newest frames)
+    int since = g_coopClockSet ? g_coopHostTime - g_levelTime : Sys_Milliseconds() - g_coopAppliedAt;
     if( since < 0 ) since = 0; if( since > SP_SV_FRAMEMSEC - 1 ) since = SP_SV_FRAMEMSEC - 1;
     int cgTime = g_levelTime - SP_SV_FRAMEMSEC + since;
     if( cgTime < g_snapBaseTime ) cgTime = g_snapBaseTime;

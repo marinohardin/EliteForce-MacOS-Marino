@@ -29,8 +29,9 @@ private:
 class CoopDialog : public QDialog {
 	Q_OBJECT
 public:
-	/* canPlay: data present and no missing patch; address: an invite's address (checked at once) */
-	CoopDialog( QWidget *parent, bool canPlay, const QString &address = QString() );
+	/* canPlay: data present and no missing patch; address: an invite's address (checked at once);
+	   dataFolder: the BaseEF in use, whose pak0-pak3 a Check compares with the host's */
+	CoopDialog( QWidget *parent, bool canPlay, const QString &address = QString(), const QString &dataFolder = QString() );
 	~CoopDialog() override;
 	enum Result { Cancelled = 0, Host = 1, Connect = 2 };
 	int choice() const { return m_choice; }
@@ -42,9 +43,13 @@ private slots:
 	void doHost();
 	void doConnect();
 	void natToggled( bool on );
+	void startNat();
 	void copyInvite();
+	void doScan();
+	void pickGame( QListWidgetItem *item );
 private:
 	void showInternet();
+	void onScanned( const lc_coop_lan_result *r );
 	void showResult( const QString &icon, const QColor &color, const QString &title, const QString &text );
 	void updateConnect();
 	QString inviteLink() const;
@@ -52,16 +57,26 @@ private:
 
 	bool m_canPlay;
 	QLineEdit *m_name, *m_hostPw, *m_address, *m_joinPw;
-	QCheckBox *m_background, *m_router;
+	QCheckBox *m_background, *m_router, *m_showLan;
+	/* Games on your network: the rows of the last search (address per row), refreshed every 5 s */
+	QListWidget *m_games;
+	QLabel *m_gamesStatus;
+	QPushButton *m_gamesRefresh;
+	QTimer *m_lanTimer;
+	bool m_scanning = false;
+	bool m_lanSearched = false;	// a search has finished: keep its text while the next one runs
+	int m_lanAutoScans = 0;		// searches the sheet ran by itself (3, then only Refresh)
 	QLabel *m_internetStatus, *m_resultIcon, *m_resultTitle, *m_resultText, *m_connectNote, *m_lanLabel;
 	QPushButton *m_copyInvite, *m_check, *m_connect, *m_host;
 	Ui::Segmented *m_munro;
+	Ui::Segmented *m_teamAttack;	/* Host: "Team attack" Off / Half / On */
+	QComboBox *m_look;
 	QProgressBar *m_spinner;
 	QWidget *m_resultWidget;
 	QStringList m_lan;
 	int m_choice = 0;
 	bool m_checking = false;
-	QString m_foundAddress, m_foundHostname, m_status;
+	QString m_foundAddress, m_foundHostname, m_status, m_warning, m_dataFolder;
 	bool m_needsPassword = false;
 	QString m_playName;
 	/* NAT mapping state (guarded by the UI thread: callbacks are marshalled) */

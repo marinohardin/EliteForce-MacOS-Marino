@@ -90,11 +90,20 @@ Joining mid-level is the M1 path (a whole frame); verified after a map change an
   written by `G_ChangeMap`, read at the next level start). Kept: it is how the game carries player 1 too
   (the playersave cvars), and it needs no file between the two levels.
 - New: every save also keeps them in `<save>.coop` next to the `.sav` (the proposal's side file). The
-  game puts them in `coop_p2saved` in `WriteLevel`; the engine writes the file after the `.sav` (and
-  removes an old one when player 2 has nothing to keep); a load reads it into `coop_p2save` before the
+  game puts them in `coop_p2saved` in `WriteLevel`; the engine writes the file after the `.sav`; a load
+  reads it into `coop_p2save` before the
   level starts. So a load, including the death respawn's level-entry autosave, brings player 2 back as
   it was when saved, not fresh. At a level-entry autosave player 2 hasn't spawned yet, so the file holds
   the carry waiting for its spawn. Single player never reads `.coop` files.
+- 1.5.0: a co-op save always writes the `.coop` (`new` when player 2 has nothing to keep, so it starts
+  afresh after the load); only a plain single-player save (`sp_coop 0`) removes an old one of the same
+  name and never writes one. A player 2 that is down, or the computer-controlled one waiting to respawn,
+  is saved as revived: a quarter of its max health, its armor, weapon and ammo.
+- 1.5.0: the death reload (`load *respawn`) loads the save loaded last instead of `auto`, until an
+  autosave is written after that load (checkpoint, level change, new game), in single player and co-op
+  alike. Before, it always reloaded `auto`, so loading save A, then save B on another map, then dying
+  went back to `auto` (often A's map). The engine keeps the name (`SP_RespawnSave`, sp_bridge.cpp); a
+  save deleted since falls back to `auto`. In co-op the reloaded save's `.coop` comes with it.
 
 ## Lag compensation for player 2's shots (step 9a)
 The guest sees the host's world about a round trip plus 50 ms late (it draws between the last two host
@@ -114,8 +123,18 @@ trace only, put them back.
   weapons whose shots are traces (phaser, compression rifle, I-MOD, proton gun, the tetrion's primary,
   the dreadnought's primary, the stasis alt), `gi.trace` is swapped for one that moves the recorded
   entities to their interpolated place at `viewTime`, traces and restores them. At most `coop_lagcomp_max`
-  (400 ms) back. Player 2 itself isn't moved; projectiles aren't shifted (they fly in the host's present).
-  Player 1's shots never go through it.
+  (400 ms) back. Player 2 itself isn't moved. Player 1's shots never go through it.
+- Player 2's projectiles (1.5.0): a missile `FireWeapon` makes for player 2 is owed the time back to
+  `viewTime` (at most `coop_lagcomp_max`, kept in `entityState_t.time2`, unused before). It leaves player
+  2's muzzle on the host like any shot, and `COOP_LagCatchUp` (start of each host frame) moves its
+  trajectory time back by the frame's length until the debt is paid: the same path at double speed, after
+  which it is where the guest's own copy of it is. `G_RunMissile` traces from where it was to where it is
+  now, so nothing is skipped. The guest's cgame draws it on the paid path at once (`COOP_MissileLerp`;
+  one already past a wall there is left out), as before. (Until 1.5.0's fix it started at `viewTime` at
+  once: in a room smaller than the shot's lead, a scavenger bolt hit the far wall in its first frame and
+  player 1 never saw player 2's shot.) The random spread of player 2's shots (scavenger, tetrion) comes
+  from a sequence seeded with `viewTime` (`COOP_SeedShot`), which the guest seeds the same way, so both
+  copies fire the same spread.
 - Cvars (host): `coop_lagcomp` (1), `coop_lagcomp_max` (400), `coop_lagcomp_debug` (prints each shifted
   trace with the result without shifting).
 
@@ -138,15 +157,35 @@ own shot's effects and leaves out the server's.
   flash on a client, the wall impact otherwise) at once. The host's temp entities of a shot fired while
   player 2 fires carry player 2's number (`entityState_t.otherEntityNum2`, unused before), and the guest
   leaves out those of the predicted weapon for a second.
-- Already at once without this: the muzzle flash and fire sound of every weapon, and the phaser's and
-  arc welder's continuous beams. Not predicted (they show a round trip later): the tetrion's spread
-  (random on the host), the stasis beam, and every projectile (scavenger, stasis, grenade launcher,
-  tetrion alt, quantum burst, arc welder alt).
+- 1.5.0, more of player 2's weapons (after cMod's `cg_predict_weapons.c`): the tetrion's primary (three
+  traces with the seeded spread, its tracers and wall impacts) and the stasis alt beam are traced and drawn
+  at once like the rifle; the host's events of those weapons are left out the same way. Projectiles
+  (scavenger both modes, the stasis main's three, grenade launcher both modes, tetrion alt, quantum burst
+  both modes) are launched on the guest as local missiles from the view weapon's muzzle with the host's
+  speeds, gravity, bounce flags and sizes, drawn by `CG_Missile` with their trails. When the host's missile
+  of the same weapon and mode, owned by player 2, flying the same way, first shows, the local one is
+  dropped and the host's is drawn with the difference eased out over 150 ms; a local missile that hits
+  something before the host's shows, or is a second old, goes away (the explosion is the host's).
+- The view weapon's firing animation runs from the guest's predicted shots (the host's torso attack
+  animation, a round trip late, is ignored for the view weapon); the phaser holds its firing frame while
+  predicted firing.
+- Already at once without this: the muzzle flash and fire sound of every weapon (from the predicted fire
+  event), ammo use and refire time (`PM_Weapon` runs the same on both sides), and the phaser's and arc
+  welder's continuous beams. Not predicted: the dreadnought's alt (a stationary burst), melee and the
+  tricorder/hypos (no shot).
 - Cvars (guest): `coop_predictshots` (1), `coop_predict_debug`.
 
 Check: in-engine screenshots every 70 ms over a 100 ms link: the first shot's impact shows in the frame
 the guest fired; with `coop_predictshots 0` the beam shows about 280 ms later. No second beam or impact
 from the host.
+
+Check (1.5.0): borg2, two copies, `coop_simlatency 100` on both, player 2 given the weapons with `give`
+on the host (the pickup gives them to player 2 too). Every shot's ammo on the guest matched the host's
+when the host's state came; the tetrion's and stasis alt's host events were left out, none drawn twice.
+Quantum burst torpedoes were handed to the host's 350 ms after launch, 12.6 units apart (eased out).
+Scavenger, stasis, tetrion alt and grenade shots down a ~380 unit corridor hit the far wall locally in
+about 250 ms, before the host's missile arrived; the explosion then comes from the host about a round
+trip after the guest's missile vanished. The host moved each of player 2's missiles 355-390 ms back.
 
 ## Internet (step 10)
 - The Co-op… sheet's Host group has "Open the port on my router": it asks the router to forward UDP
@@ -238,9 +277,12 @@ Downed players (`efgame/src/coop/coop_down.cpp`, `coop_hud.cpp`):
 - On screen: the game's own centre print isn't drawn in single player, so the host sends `coopmsg`
   lines that the cgame draws (downed: "Downed: waiting for <name>" and the seconds left; partner:
   "Hold Use to revive <name>", a progress bar while holding).
-- Saving is refused while someone is down (`GameAllowedToSaveHere`; a checkpoint autosave waits): a save
-  holds player 1 only, and one with player 1 at 0 health would load as a death. A level change revives
-  anyone down first.
+- Saving works while someone is down (1.5.0; before, it was refused and a checkpoint autosave waited).
+  A save keeps a downed player as revived: player 2 in the `.coop` (above); player 1 is written to the
+  `.sav` as `COOP_Revive` leaves them (a quarter of max health, solid, targetable, standing, the normal
+  player box) for the moment `WriteLevel` runs and put back down after it (`COOP_SaveP1Revived`, from
+  `COOP_PreSave` / `COOP_PostSave`), so the game goes on unchanged. A frozen player's box is empty;
+  saving it as is put player 1 into the floor on load. A level change revives anyone down first.
 
 Tested on one Mac (two copies, the forge3 save): the reaver fight with both players (enemies take
 player 2), a spawned reaver switching from player 1 to player 2 when player 2 is next to it, a borg2
@@ -313,3 +355,102 @@ with co-op off and with co-op on and `sp_coop 0`.
   leaving turned player 2 back into player 1's look; host as Alexandria with a male guest: player 2 male
   Munro. The sheet rendered with both new controls; Host passed `+set coop_name`. Regression harness vs
   `coop-m2-base`: ALL IDENTICAL with co-op off and with co-op on and `sp_coop 0`.
+
+## Player 2's character (2026-11-13)
+- Join has "Character" under "Munro: Male / Female": "Munro (default)", then Voyager's crew and the
+  Hazard Team (`CoopGuestCharacter`, `+set coop_look <id>`). The sex still picks the voice (pain, death,
+  jump and gasp sounds from `sound/voice/munro|alexa/misc`) and the default Munro; a character changes
+  only the models. The list is `efgame/src/game/coop_characters.h`, one table the sheet and the game
+  share: id, name, and the head, torso and legs (model/skin) the game's own NPC definitions give that
+  character.
+- Only characters from pak0-pak2: crew (Janeway, Chakotay, Tuvok, Paris, Torres, Kim, Seven, the Doctor,
+  Neelix) and the Hazard Team (Tuvok and Seven in hazard suits, Biessman, Chang, Chell, Foster, Telsia,
+  Jurot, Laird, Kenn, Odell, Nelson, Oviedo, Csatlos, Jaworski). Every body there (crewthin,
+  crewfemale, seven, hazard, hazardfemale) is a human-sized skeletal model with tag_head and
+  tag_weapon and the stand, walk, run, jump, crouch, weapon and death animations a player uses. Left
+  out: the Borg, aliens, Klingons and Hirogen (110% NPCs, other animation sets), bots and disguises.
+  The crew bodies have no ladder or swim animations: on a ladder player 2 keeps its last pose (a missing
+  animation is skipped, as for NPCs).
+- Connect carries an optional `look` key (lower case letters, digits and `_`, at most 23; anything else
+  is dropped by the engine). No protocol bump: the key is optional, and an older peer is already refused
+  by the app version check. Bridge version 5 adds `GuestLook` and `CorePakFile`.
+- The host's game (`coop_look.cpp`) takes the id only if it is in the table and every file the cgame
+  loads for it (head.md3, upper/lower.mdr, the three skins, the legs' animation.cfg) comes from its own
+  pak0-pak2: `CorePakFile` asks the engine where the file would be read from (`FS_FileSource`, the
+  pack's checksum, matched with `FS_CoopCorePakIndex`). An unknown id, or a file in a folder or another
+  pack, gives the default Munro of the chosen sex and a console line. The guest's replica gets the
+  model names with player 2's entity and registers them itself, as before.
+- Player 2 keeps the player's box, eye height and hit box whatever it wears (only model names change).
+- Found and fixed on the way: after a model change the cgame kept playing the old body's frame numbers
+  (its animation state for a client is looked up again only when the animation number changes;
+  hazard and hazardfemale share a layout, so the Munro swap never showed it, crewfemale printed "no such
+  frame" every frame). `COOP_ForgetAnimFrames` resets player 2's legs and torso animation state after a
+  change, on the host and on the guest's replica.
+- Tested on one Mac (host + guest, borg2, in-engine screenshots on both): male Janeway, female Seven in
+  the hazard suit, female default Munro (Alexandria), male Tuvok, male Doctor, female Telsia: the same
+  character on both screens, the guest's first-person weapon unchanged; `soundlist` showed the alexa
+  voice registered on both for a female guest. `borgqueen` -> "unknown character", Munro; `../janeway`
+  -> dropped by the engine, Munro; a loose `models/players/janeway/head_default.skin` in the host's
+  folder -> "isn't all in this game's pak0-pak2", Munro. Through the launcher (VOYAGERSP_TEST_COOP_JOIN
+  with the prefs set to female + Tuvok): Check, Connect, host "joined ... (female) as tuvok".
+
+## The Use key: hold to teleport, double-tap to ping (1.5.0)
+`efgame/src/coop/coop_use.cpp` (host's game) and `coop_ping.cpp` / `coop_hud.cpp` (cgame). Both work
+only when Use has nothing to do: nothing usable in the crosshair within Use's reach (what the game's
+own Use looks for: usable movers, models and breakables, a locked stasis door, a crew member who
+answers), no use-button trigger the player stands in, and no downed partner within revive reach. A tap
+on a door or button works as before: the game's Use runs unchanged, and such a press never counts.
+
+Hold Use to teleport player 2 to player 1:
+- Only player 2 with a guest steering it. Hold Use `coop_teleporthold` seconds (host cvar, default 5);
+  after 0.4 s the guest sees "Teleporting to <name> (keep holding Use)" and a fill bar over the whole
+  hold. The host sends the bar as a `coopmsg` line `#<done>/<total>` four times a second and the cgame
+  fills it smoothly in between. At the end player 2 is put next to player 1 on the spot the catch-up
+  teleport uses (`COOP_FindSpotNear`: behind, beside, in front, with a floor and a straight line to
+  player 1), with the transporter sound. "No room next to <name>" when there is none.
+- One teleport per press; then 3 s of cooldown ("Teleport ready in N s" while held).
+- Not while a script holds the players (`player_locked`), a camera runs, player 2 is hidden, the game
+  is over, or anyone is down or dead.
+- The game sees the guest's buttons once a host frame; a frame without a guest command (a late
+  packet) doesn't end a hold.
+
+Revive and teleport never mix (revive always wins):
+1. A downed partner within revive reach (the same distance and line-of-sight test the revive uses,
+   `COOP_CanReviveNow`) makes Use a revive: the teleport hold doesn't run.
+2. While player 1 is down or dead (anywhere on the map), or player 2 is down, there is no teleport at
+   all (the revive lines are what's on screen).
+3. A hold that is running when someone goes down, or a revive becomes possible, is cancelled and its
+   bar removed; it doesn't resume: Use must be released and pressed again.
+4. A press that started or finished a revive never turns into a teleport: after the revive, Use must
+   be released first.
+5. So the revive's progress ("Reviving <name>" / "<name> is reviving you") and the teleport's fill bar
+   ("Teleporting to <name>") are never on screen together.
+6. A press that starts a revive doesn't count toward a double tap.
+
+Double-tap Use: "look here":
+- Either player: two presses within 0.35 s, both with nothing to use. The host traces from the
+  player's eye along the view (8192 units, as a shot) and sends `cooping <player> <x> <y> <z> <name>` to
+  both cgames (one server command to everyone; the guest gets it with the replica's commands).
+  A partner standing in the way is looked through (the spot is what is behind them). Nothing on the
+  sky or into the void. At most one ping a second per player; a new one replaces the
+  player's previous one.
+- Each screen shows it for 4 s (fading in the last second): a flare and a ring at the spot (the
+  game's yellow particle and white ring sprites, tinted: player 1 amber, player 2 light blue), a
+  pulsing diamond with the pinger's name over the spot, also through walls, and, while the spot is off
+  screen, an arrowhead (drawn from small squares) on the screen's edge pointing the way to turn, with
+  the name. The communicator chirp (`sound/interface/communicator.wav`) plays on both.
+- A ping's second press doesn't start a teleport hold.
+- Test cvar `coop_use_debug 1` (host): each press prints what it found ("uses a use trigger",
+  "uses a downed partner", "nothing to use, func_breakable").
+
+Tested on one Mac (two copies, borg2, guest input through `+use`/`-use` on its console): a 5 s hold
+put player 2 next to player 1 from about 480 units away, with the bar on the guest's screen; holding in
+a use-button trigger (t149) found the trigger and didn't teleport; player 1 downed next to player 2:
+holding Use 10 s revived after 3 s and didn't teleport afterwards; a double tap there didn't ping
+(both presses "uses a downed partner"); player 1 downed far away: 6 s of holding did nothing (the
+"<name> is down: revive them" line stayed); a hold cancelled when player 1 went down 2 s into it
+and didn't come back while Use stayed down; holding during borg1's opening camera did nothing.
+Pings both ways: the guest's on both screens over the spot, the host's as an arrow on the edge of
+the guest's screen while it looked away; the communicator chirp on both (`s_show 1`). Not tested:
+`player_locked` on its own (player 2's buttons are cleared while it is set, so a hold can't start),
+two Macs.

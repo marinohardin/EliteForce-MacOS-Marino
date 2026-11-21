@@ -99,6 +99,7 @@ Test hooks (environment variables):
 
 #include "sys_osx_launcher.h"
 #include "sys_osx_coop.h"
+#include "launcher_titles.h"
 
 #define KEY_LAUNCHERMODE	@"LauncherMode"
 #define KEY_UPDATECHECK		@"CheckForUpdates"		// NO: never ask GitHub on its own
@@ -406,6 +407,31 @@ NSTextField *VSP_Label( NSString *text, NSFont *font, NSColor *color )
 	return l;
 }
 
+// The header's title lettering (launcher_titles.h): an alpha mask drawn as a template image,
+// tinted with color, so it follows light and dark mode. Its size is the image's in points;
+// VoiceOver reads it as the text it shows.
+static NSImageView *VSP_TitleView( int which, NSColor *color )
+{
+	const launcherTitle_t *t = &launcherTitles[which];
+	NSImage *image = [[NSImage alloc] initWithData: [NSData dataWithBytesNoCopy: (void *)t->png length: t->pngLen
+		freeWhenDone: NO]];
+	NSImageView *v;
+
+	[image setSize: NSMakeSize( t->w, t->h )];
+	[image setTemplate: YES];
+	v = [NSImageView imageViewWithImage: image];
+	[v setImageScaling: NSImageScaleAxesIndependently];
+	[v setContentTintColor: color];
+	[[v widthAnchor] constraintEqualToConstant: t->w].active = YES;
+	[[v heightAnchor] constraintEqualToConstant: t->h].active = YES;
+	[v setContentHuggingPriority: NSLayoutPriorityRequired forOrientation: NSLayoutConstraintOrientationHorizontal];
+	[v setContentCompressionResistancePriority: NSLayoutPriorityRequired forOrientation: NSLayoutConstraintOrientationHorizontal];
+	[v setAccessibilityRole: NSAccessibilityStaticTextRole];
+	[v setAccessibilityLabel: @( t->text )];
+	[v setAccessibilityValue: @( t->text )];
+	return v;
+}
+
 NSTextField *VSP_WrapLabel( NSString *text, NSFont *font, NSColor *color )
 {
 	NSTextField *l = [NSTextField wrappingLabelWithString: text];
@@ -679,6 +705,7 @@ static NSStackView *HStackOf( NSArray *views )
 	NSTextField *expansion;
 	BOOL updating;
 	NSView *updateBadge;
+	NSView *brandTitle;			// "AwayTeamEF", where the update badge shows when there is one
 	NSTextField *updateText;
 	NSString *updateURL;
 	NSArray<NSMenuItem *> *updateItems;	// in the app menu while the launcher runs
@@ -771,7 +798,7 @@ static NSStackView *HStackOf( NSArray *views )
 	NSView *document;
 	NSGridView *grid, *nameGrid, *serverGrid;
 	NSButton *config, *browse;
-	NSImageView *appIcon;
+	NSImageView *appIcon, *stvTitle, *efTitle;
 	NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey: @"CFBundleShortVersionString"];
 	NSButton *quit;
 
@@ -793,17 +820,35 @@ static NSStackView *HStackOf( NSArray *views )
 	[appIcon setImageScaling: NSImageScaleProportionallyUpOrDown];
 	[[appIcon widthAnchor] constraintEqualToConstant: 56].active = YES;
 	[[appIcon heightAnchor] constraintEqualToConstant: 56].active = YES;
-	headerText = [NSStackView stackViewWithViews: @[
-		VSP_Label( @"Star Trek: Voyager", [NSFont systemFontOfSize: 12 weight: NSFontWeightSemibold], [NSColor secondaryLabelColor] ),
-		VSP_Label( @"Elite Force", [NSFont systemFontOfSize: 24 weight: NSFontWeightBold], nil ),
+	// the title lettering (Star Trek fonts, as images: launcher_titles.h)
+	stvTitle = VSP_TitleView( LT_STAR_TREK_VOYAGER, [NSColor secondaryLabelColor] );
+	efTitle = VSP_TitleView( LT_ELITE_FORCE, [NSColor labelColor] );
+	headerText = [NSStackView stackViewWithViews: @[ stvTitle, efTitle,
 		VSP_Label( @"Choose how you want to play.", [NSFont systemFontOfSize: 13], [NSColor secondaryLabelColor] ) ]];
 	[headerText setOrientation: NSUserInterfaceLayoutOrientationVertical];
 	[headerText setAlignment: NSLayoutAttributeLeading];
 	[headerText setSpacing: 2];
+	[headerText setCustomSpacing: 6 afterView: stvTitle];
+	[headerText setCustomSpacing: 7 afterView: efTitle];
 	header = [NSStackView stackViewWithViews: @[ appIcon, headerText, [NSView new], [self buildUpdateBadge] ]];
 	[header setSpacing: 14];
 	[header setAlignment: NSLayoutAttributeCenterY];
 	[[header views][2] setContentHuggingPriority: 1 forOrientation: NSLayoutConstraintOrientationHorizontal];
+	// the update badge's text needs the room the wider title lettering takes: one narrow gap before it
+	[header setCustomSpacing: 8 afterView: headerText];
+	[header setCustomSpacing: 0 afterView: [header views][2]];
+	// "AwayTeamEF" at the header's right edge, on Elite Force's baseline (the update badge takes
+	// its place while it shows)
+	brandTitle = VSP_TitleView( LT_AWAY_TEAM_EF, [NSColor colorWithSRGBRed: 0xD6 / 255.0 green: 0xA0 / 255.0
+		blue: 0x3C / 255.0 alpha: 1] );
+	[brandTitle setTranslatesAutoresizingMaskIntoConstraints: NO];
+	[header addSubview: brandTitle];
+	[NSLayoutConstraint activateConstraints: @[
+		[[brandTitle trailingAnchor] constraintEqualToAnchor: [header trailingAnchor]],
+		[[brandTitle topAnchor] constraintEqualToAnchor: [efTitle bottomAnchor]
+			constant: -launcherTitles[LT_AWAY_TEAM_EF].baseline],
+		[[brandTitle leadingAnchor] constraintGreaterThanOrEqualToAnchor: [headerText trailingAnchor] constant: 16],
+	]];
 
 	// the three modes; hosting has its Config… right in its card
 	config = [NSButton buttonWithTitle: @"Config…" target: self action: @selector(configServer:)];
@@ -1858,6 +1903,7 @@ static BOOL UpdateCheckEnabled( void )
 	[updateText setStringValue: newer ? [NSString stringWithFormat: @"Version %@ · you have %@", version, AppVersion()] : @""];
 	[updateBadge setToolTip: newer ? [NSString stringWithFormat: @"Elite Force for Mac %@ is on GitHub", version] : nil];
 	[updateBadge setHidden: !newer];
+	[brandTitle setHidden: newer];
 }
 
 - (void)startUpdateCheck
@@ -2013,6 +2059,7 @@ static BOOL UpdateCheckEnabled( void )
 @implementation VSPModalMenu
 {
 	NSMutableArray *saved;		// @[ item, target or NSNull, action name ]
+	id editKeys;				// the text fields' Cmd+A/Z/X/C/V (the menu bar has no Edit menu)
 }
 
 - (BOOL)worksWhenModal	{ return YES; }
@@ -2061,6 +2108,25 @@ static BOOL UpdateCheckEnabled( void )
 		[item setTarget: self];
 		[item setAction: NSSelectorFromString( mine )];
 	}
+
+	// SDL's menu bar has no Edit menu, and a text field gets Cmd+A, Cmd+Z and
+	// the like only through one: send them to the field being edited directly
+	editKeys = [NSEvent addLocalMonitorForEventsMatchingMask: NSEventMaskKeyDown handler: ^NSEvent *( NSEvent *e ) {
+		NSEventModifierFlags mods = [e modifierFlags] & ( NSEventModifierFlagCommand | NSEventModifierFlagShift
+			| NSEventModifierFlagOption | NSEventModifierFlagControl );
+		NSString *key = [[e charactersIgnoringModifiers] lowercaseString];
+		NSString *action = nil;
+
+		if( ![[[e window] firstResponder] isKindOfClass: [NSText class]] )
+			return e;
+		if( mods == NSEventModifierFlagCommand )
+			action = @{ @"a": @"selectAll:", @"c": @"copy:", @"x": @"cut:", @"v": @"paste:", @"z": @"undo:" }[key];
+		else if( mods == ( NSEventModifierFlagCommand | NSEventModifierFlagShift ) && [key isEqualToString: @"z"] )
+			action = @"redo:";
+		if( action && [NSApp sendAction: NSSelectorFromString( action ) to: nil from: nil] )
+			return nil;
+		return e;
+	}];
 }
 
 - (void)uninstall
@@ -2072,6 +2138,9 @@ static BOOL UpdateCheckEnabled( void )
 		[item setAction: NSSelectorFromString( s[2] )];
 	}
 	saved = nil;
+	if( editKeys )
+		[NSEvent removeMonitor: editKeys];
+	editKeys = nil;
 }
 
 @end

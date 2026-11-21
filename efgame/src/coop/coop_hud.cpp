@@ -3,6 +3,8 @@
 // The host's game sends "coopmsg <text>" to one player (coop_down.cpp; '|' separates lines),
 // several times a second while it applies; the text goes away soon after the last one. The
 // game's own centre print is not drawn in single player, so this has its own spot on screen.
+// A line "#<done>/<total>" (ms) is a fill bar (the teleport hold, coop_use.cpp) that runs on by
+// itself between updates. "cooping" (a look-here ping) goes to coop_ping.cpp.
 
 #include "../cgame/cg_local.h"
 #include "../game/coop_public.h"
@@ -12,8 +14,16 @@
 static char	coop_hudText[256];
 static int	coop_hudTime;
 
+extern void	COOP_PingCommand( void );		// coop_ping.cpp
+extern void	COOP_DrawPings( void );
+
 qboolean COOP_ServerCommand( const char *cmd )
 {
+	if ( !strcmp( cmd, "cooping" ) )
+	{
+		COOP_PingCommand();
+		return qtrue;
+	}
 	if ( strcmp( cmd, "coopmsg" ) )
 	{
 		return qfalse;
@@ -30,6 +40,7 @@ void COOP_DrawStatus( void )
 	const char			*s = coop_hudText;
 	int					y = SCREEN_HEIGHT * 0.3f;
 
+	COOP_DrawPings();
 	if ( !coop_hudText[0] || cg.time < coop_hudTime || cg.time - coop_hudTime > COOP_HUD_HOLD )
 	{
 		return;
@@ -43,7 +54,19 @@ void COOP_DrawStatus( void )
 			n++;
 		}
 		line[n] = 0;
-		CG_DrawProportionalString( SCREEN_WIDTH / 2, y, line, UI_CENTER | UI_SMALLFONT, color );
+		int done, total;
+		if ( line[0] == '#' && sscanf( line + 1, "%d/%d", &done, &total ) == 2 && total > 0 )
+		{
+			static const vec4_t	back = { 0.0f, 0.0f, 0.0f, 0.5f };
+			float				frac = (float)( done + cg.time - coop_hudTime ) / total;
+			frac = frac < 0 ? 0 : frac > 1 ? 1 : frac;
+			CG_FillRect( SCREEN_WIDTH / 2 - 101, y + 3, 202, 12, back );
+			CG_FillRect( SCREEN_WIDTH / 2 - 100, y + 4, 200 * frac, 10, color );
+		}
+		else
+		{
+			CG_DrawProportionalString( SCREEN_WIDTH / 2, y, line, UI_CENTER | UI_SMALLFONT, color );
+		}
 		y += 20;
 		s += n;
 		if ( *s == '|' )

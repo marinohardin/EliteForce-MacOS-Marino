@@ -7,7 +7,7 @@
 #ifndef COOP_BRIDGE_H
 #define COOP_BRIDGE_H
 
-#define COOP_BRIDGE_VERSION	4
+#define COOP_BRIDGE_VERSION	5
 
 typedef struct
 {
@@ -24,6 +24,11 @@ typedef struct
 	int			(*GuestViewTime)( void );
 	// how the guest wants player 2 to look: "male", "female", or "" (like player 1, or no guest)
 	const char	*(*GuestSex)( void );
+	// the character the guest chose for player 2 (an id from coop_characters.h), "" for the
+	// default Munro or without a guest; the game checks it before using it
+	const char	*(*GuestLook)( void );
+	// qtrue when the copy of qpath the game would load comes from the game's own pak0-pak2
+	qboolean	(*CorePakFile)( const char *qpath );
 } coopBridge_t;
 
 extern "C" void COOP_SetBridge( const coopBridge_t *bridge );

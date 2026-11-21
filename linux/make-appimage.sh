@@ -71,8 +71,18 @@ SYS_BUNDLE='libxcb-cursor.so.0 libxcb-icccm.so.4 libxcb-image.so.0 libxcb-keysym
 SYS_LIBDIR=/usr/lib/x86_64-linux-gnu
 GLIBC_MAX="${GLIBC_MAX:-2.31}"
 
+# Pinned packaging tools, so the same sources give the same AppImage. appimagetool on its own
+# downloads the type 2 runtime from the moving "continuous" release; we hand it a fixed one with
+# --runtime-file instead. To bump either: pick a release tag of github.com/AppImage/appimagetool
+# (appimagetool-x86_64.AppImage) or github.com/AppImage/type2-runtime (runtime-x86_64), take the
+# asset's SHA-256 from the release ("gh api repos/AppImage/type2-runtime/releases/tags/<tag>" shows
+# "digest"), check it against a local download, update the pair below, and compare the runtime's
+# LICENSE at that tag with linux/licenses/appimage-runtime/type2-runtime-LICENSE.txt (and the
+# version in THIRD_PARTY_LICENSES.md). A checksum mismatch fails the build.
 APPIMAGETOOL_VERSION=1.9.1
 APPIMAGETOOL_SHA256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0	# from the GitHub release's asset digest
+APPIMAGE_RUNTIME_VERSION=20251108
+APPIMAGE_RUNTIME_SHA256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d	# runtime-x86_64, from the release's asset digest
 
 # ---- 1. build -------------------------------------------------------------------
 if [ -z "${NO_BUILD:-}" ]; then
@@ -232,7 +242,7 @@ lic_copy sdl2-compat-zlib-LICENSE.txt "$DEPS/share/licenses/sdl2-compat/LICENSE.
 lic_copy liblzma-0BSD.txt "$DEPS/licenses/xz-COPYING.0BSD.txt"
 lic_copy XZ-Utils-COPYING.txt "$DEPS/licenses/xz-COPYING.txt"
 # The AppImage runtime (the ELF stub appimagetool puts in front of the squashfs image, from
-# github.com/AppImage/type2-runtime): MIT, statically linked with musl, libfuse (LGPL-2.1),
+# github.com/AppImage/type2-runtime, release $APPIMAGE_RUNTIME_VERSION): MIT, statically linked with musl, libfuse (LGPL-2.1),
 # squashfuse, zstd and zlib; their texts are kept in linux/licenses/appimage-runtime.
 for f in "$ROOT"/linux/licenses/appimage-runtime/*.txt; do
 	lic_copy "AppImage-runtime/$(basename "$f")" "$f"
@@ -329,17 +339,25 @@ fi
 
 # ---- 5. appimagetool ---------------------------------------------------------------
 mkdir -p "$TOOLS"
+# fetch_pinned <file> <url> <sha256> <name>: download once, verify, keep; a cached copy is re-verified
+fetch_pinned() {
+	if [ ! -f "$1" ]; then
+		curl -fL -o "$1.part" "$2"
+		mv "$1.part" "$1"
+	fi
+	got="$(sha256sum "$1" | awk '{print $1}')"
+	[ "$got" = "$3" ] || { rm -f "$1"; echo "error: $4 checksum mismatch (got $got, want $3)" >&2; exit 1; }
+	chmod +x "$1"
+}
 AIT="$TOOLS/appimagetool-$APPIMAGETOOL_VERSION-x86_64.AppImage"
-if [ ! -x "$AIT" ]; then
-	curl -fL -o "$AIT.part" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-x86_64.AppImage"
-	got="$(sha256sum "$AIT.part" | awk '{print $1}')"
-	[ "$got" = "$APPIMAGETOOL_SHA256" ] || { rm -f "$AIT.part"; echo "appimagetool checksum mismatch ($got)" >&2; exit 1; }
-	chmod +x "$AIT.part"
-	mv "$AIT.part" "$AIT"
-fi
+fetch_pinned "$AIT" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-x86_64.AppImage" \
+	"$APPIMAGETOOL_SHA256" "appimagetool $APPIMAGETOOL_VERSION"
+RUNTIME="$TOOLS/type2-runtime-$APPIMAGE_RUNTIME_VERSION-x86_64"
+fetch_pinned "$RUNTIME" "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_VERSION/runtime-x86_64" \
+	"$APPIMAGE_RUNTIME_SHA256" "AppImage type2-runtime $APPIMAGE_RUNTIME_VERSION"
 rm -f "$OUT"
-# --appimage-extract-and-run: no FUSE inside the container. appimagetool 1.9 embeds the
-# static type-2 runtime, so the result needs no libfuse2 beyond what the user's system has.
+# --appimage-extract-and-run: no FUSE inside the container. --runtime-file: the pinned static
+# type 2 runtime (above), so the result needs no libfuse2 beyond what the user's system has.
 # Run a copy with the AppImage magic ("AI\002" at ELF offset 8) zeroed: emulated amd64
 # containers (Rosetta, qemu-user binfmt on Apple Silicon) refuse to exec it otherwise
 # ("Exec format error"). Native Linux doesn't care either way.
@@ -347,7 +365,7 @@ AIT_RUN="$TOOLS/appimagetool-run"
 cp "$AIT" "$AIT_RUN"
 printf '\000\000\000' | dd of="$AIT_RUN" bs=1 seek=8 count=3 conv=notrunc 2>/dev/null
 chmod +x "$AIT_RUN"
-ARCH=x86_64 "$AIT_RUN" --appimage-extract-and-run --no-appstream "$APPDIR" "$OUT"
+ARCH=x86_64 "$AIT_RUN" --appimage-extract-and-run --no-appstream --runtime-file "$RUNTIME" "$APPDIR" "$OUT"
 chmod 755 "$OUT"
 if [ -n "${HOST_UID:-}" ]; then
 	chown -R "$HOST_UID:$HOST_GID" "$DIST" "$ROOT/build/appimage" 2>/dev/null || true

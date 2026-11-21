@@ -15,6 +15,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 #endif
 
 #include "lc_launch.h"
+#include "lc_coop.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
@@ -55,6 +56,7 @@ static void Addf( char *buf, size_t size, const char *fmt, ... )
 	va_start( ap, fmt );
 	vsnprintf( buf + n, size - n, fmt, ap );
 	va_end( ap );
+	buf[ size - 1 ] = '\0';	/* msvcrt's _vsnprintf leaves a truncated result unterminated */
 }
 
 /* The §3.2 list as one string (each item followed by a space). used = what the
@@ -93,17 +95,25 @@ static void BuildArgs( const lc_launch *o, const char *homeBase, size_t used, si
 	if ( !holomatch ) {		/* co-op (§6.2) */
 		int ok = 1;
 
-		if ( o->coopHost )
+		if ( o->coopHost ) {
 			Addf( args, argsSize, "+set sp_coop 1 +set coop_backgroundPlay %d ", o->coopBackground ? 1 : 0 );
-		else if ( o->coopConnect && *o->coopConnect ) {
+			if ( o->coopHidden )
+				Addf( args, argsSize, "+set coop_lanVisible 0 " );
+			if ( o->coopTeamAttack == 1 || o->coopTeamAttack == 2 )
+				Addf( args, argsSize, "+set coop_teamAttack %d ", o->coopTeamAttack );
+		} else if ( o->coopConnect && *o->coopConnect ) {
 			const char *p;
 
 			for ( p = o->coopConnect; *p; p++ )
 				if ( !( ( *p >= '0' && *p <= '9' ) || *p == '.' || *p == ':' ) )
 					break;
-			if ( !*p )
+			if ( !*p ) {
 				Addf( args, argsSize, "+set coop_connect \"%s\" +set coop_sex %s ", o->coopConnect,
 					o->coopSex && !strcmp( o->coopSex, "female" ) ? "female" : "male" );
+				/* (an id from coop_characters.h: lower case letters, digits and _) */
+				if ( lc_coop_character_valid( o->coopLook ) )
+					Addf( args, argsSize, "+set coop_look %s ", o->coopLook );
+			}
 		} else
 			ok = 0;
 		if ( ok && o->coopName && *o->coopName ) {

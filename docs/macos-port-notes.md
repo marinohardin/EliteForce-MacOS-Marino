@@ -339,7 +339,11 @@ The launcher's third card, **Host a Server**, runs a Holomatch dedicated server 
   **Check for Updates…** (an alert with the answer) and **Check for Updates Automatically**
   (`CheckForUpdates`, on unless set NO) while the launcher is up.
 - **Releasing.** Nothing extra: publishing a `macos-v<version>` release (not a pre-release) is
-  what users are told about. Keep the tag format; a different prefix isn't seen.
+  what users are told about. Keep the tag format; a different prefix isn't seen. Since 1.5.0
+  that one release also carries the Windows and Linux downloads (docs/PUBLISHING.md), and the
+  Windows/Linux launchers (`efcode/launcher/lc_update.c`) look for it too: a `macos-v` release
+  counts for them only when it has their platform's file (setup `.exe` / `-windows-x64.zip`,
+  `.AppImage`); old `windows-v`/`linux-v` tags still count.
 - **Tests.** `VOYAGERSP_TEST_UPDATE=<version>|none` answers instead of GitHub (not saved);
   `VOYAGERSP_TEST_UPDATE_ALERT=<file.png>` runs Check for Updates… and renders the alert.
 
@@ -1228,7 +1232,8 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
   handler opens as the Co-op… sheet with the address checked.
 - Bandwidth host to guest: borg2 23.8 to 4.3 KB/s, borg1 15.3 to 3.9, voy1 12.5 to 3.0 (host-only
   fields masked from entity images, far entities sent every 10th frame).
-- Test cvars: `coop_simlatency` / `coop_simloss` (simulated link), `coop_netstats 2` (which fields
+- Test cvars: `coop_simlatency` / `coop_simloss` / `coop_simjitter` (0..n ms extra per packet) /
+  `coop_simburst` (now and then hold everything 60-100% of n ms, then send it at once) (simulated link), `coop_netstats 2` (which fields
   change), `coop_p2_target` (a swaying target in front of player 2).
 
 ## Co-op: enemies and both players, downed and revive (2026-11-11, branch `1_4_0/coop-m1` only)
@@ -1258,6 +1263,12 @@ Experimental, never merged without the user's approval. Plan: `docs/coop-proposa
 - Not forwarded: the stasis fliers' and fixits' client think functions (cgame per-frame thinks on
   entities), debug drawing (CG_Cube/CG_Line).
 - Test hook: `coop_p2_damage <n> near` (player 2 damages the nearest breakable).
+- 1.5.0: the same for the cgame calls that are named `FX_*` rather than `CG_*`, missed before: the Borg
+  beam-in (every Borg NPC spawn and the script event `borgteleport`; borg1's I-MOD ambush showed the
+  green beams on the host only), the sparks and green shield flash of shots on Borg (adapting or not),
+  an Etherian's charge and the Vohrsoth's ground tendrils. A camera shake started outside a cutscene
+  (scripts, the warrior bot's steps) now reaches the guest the same way; inside a cutscene the camera's
+  state already carries it.
 
 ## Co-op: nobody stuck at the start of voy4 (2026-11-12, branch `1_4_0/coop-fx` only)
 - voy4 starts with the players held (`player_locked`) in the turbolift while an NPC walks up and
@@ -1376,5 +1387,37 @@ visible screen were that tall (checked at 500, 600 and 700 with `screencapture -
   what it links statically (`linux/licenses/appimage-runtime/`), and the Debian copyright file of each
   xcb / xkbcommon / brotli library copied from the Steam Runtime container. `make-release.sh` and
   `make-appimage.sh` fail when any of these is missing. THIRD_PARTY_LICENSES.md lists them.
+- AppImage tools are pinned: `linux/make-appimage.sh` downloads appimagetool 1.9.1 and the type 2
+  runtime release 20251108 (`runtime-x86_64`, handed over with `--runtime-file` instead of letting
+  appimagetool fetch the moving "continuous" runtime), checks both against the SHA-256 in the script and
+  fails on a mismatch. To bump: change `APPIMAGETOOL_*` / `APPIMAGE_RUNTIME_*` there (the comment
+  above them says how) and the runtime row in THIRD_PARTY_LICENSES.md.
 - `windows/ReadMe.txt` and `linux/ReadMe.txt` describe the launcher and its data setup (and get the
   version filled in); the installer's first Start menu entry is now "Elite Force" (the launcher).
+
+## Co-op on Windows and Linux (1.5.0)
+- The `windows-x64` and `linux-x64` presets set `EF_COOP=ON` (CI, `windows/make-release.sh` and
+  `linux/make-appimage.sh` configure with them), so both releases have co-op. The CMake default
+  stays OFF, and `macos/make-app.sh` / `macos/regress.sh` are unchanged.
+- `lc_coop_ui_enabled()` is now just `LC_COOP_BUILT`: `LC_COOP_UI_ENABLED` and `EF_SHOW_COOP` are gone.
+- The launcher core gained what the Mac sheet does in `sys_osx_coop.m`: the pak compare after a
+  Check (`lc_pak_checksum`, the engine's pack checksum from a pk3's central directory;
+  `lc_coop_check_paks`, the same sentences as `CoopNet_ComparePaks`; status "paks" or a `warning`
+  for the Expansion Pack only), and player 2's character from `efgame/src/game/coop_characters.h`
+  (`coop_look`, saved as `coopguestcharacter`). The Win32 and Qt sheets show a Character menu, the
+  red/yellow results and **Join Anyway** like the Mac. The Qt sheet's Check also no longer shows a
+  failed send ("error") as a version mismatch.
+- The host's version-mismatch reply says "Elite Force" instead of "Elite Force for Mac" off Apple
+  (`#ifdef __APPLE__`, so the Mac build is unchanged).
+- tests/launcher: test_coop uses protocol 7 and covers MD4, the pak compare, the checksum of a
+  generated zip and the character arguments.
+
+## SP and co-op: the death reload goes back to the save loaded last (1.5.0)
+
+- The death screen's `load *respawn` loaded `auto` (the last level start or checkpoint). Loading save A,
+  then save B on another map, then dying went back to `auto`, often A's map (reported in co-op; plain
+  single player did the same).
+- Now `SP_Load_f` asks `SP_RespawnSave` (sp_bridge.cpp): the name of the save loaded last, until `auto`
+  is written after it (checkpoint, level change, new game: `SP_SaveGameInternal`, `SP_StartClient`).
+  Loading `auto` itself clears it; a save deleted since falls back to `auto`. Console: "reloading <name>,
+  the save loaded last". In co-op the reloaded save's `.coop` comes with it.

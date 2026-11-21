@@ -74,17 +74,31 @@ Configstrings and server commands travel as slots instead, so they need no relia
   teleport effect, assimilation overlay), the eye point and weapon changes. The rest already went
   through `cg.snap->ps.clientNum`, which is P2's in the guest's snapshots. The scoreboard's mission
   statistics and the camera code still read entity 0 (P1, the story player).
-- The guest makes one command for every host frame it takes in (the latest angles and moves, with
-  every button pressed since the last one), numbers it, keeps it, and sends it at once with the few
-  before it. The host queues them (at most 3; a full queue drops the oldest but keeps its buttons)
-  and applies one per game frame; with none waiting P2 stands with the newest angles. Each replica
-  frame names the last command applied (`ackCmd`).
+- The guest makes one command every 50 ms of the host's level time as its own clock reckons it
+  (the latest angles and moves, with every button pressed since the last one), numbers it, keeps it,
+  and sends it at once with the few before it. The clock is `Sys_Milliseconds` less an offset that
+  follows the earliest the host's frames come in (a late frame hardly moves it, an early one at once,
+  it creeps up after a lasting slowdown), slewed by at most 10% of the time drawn; it runs at most
+  300 ms past the newest host frame and stands while the host is paused. (Commands used to be made as
+  the host's frames came in: Wi-Fi delivers those late and in bursts, so P2's view froze for
+  70-170 ms and then jumped, walking straight.) The host queues them (at most 3; a full queue drops
+  the oldest but keeps its buttons) and applies one per game frame; with none waiting (a late command)
+  P2 keeps the newest angles and, for 5 frames (250 ms) in a row, its moves (forward, side, up; no
+  buttons), then stands still. Such a frame stands in for the next command: it counts as applied, and
+  when that command comes only its buttons are kept, so a late command doesn't add a step the guest
+  never predicted (when its moves are the same, as walking straight, the guest's prediction is
+  exact). Zeroed moves made a crouching P2 stand up for a frame with standing legs, a pop the guest
+  saw. Each replica frame names the last command applied (`ackCmd`).
 - The guest's snapshot stamps `cmdNum` with that ack and `ps.commandTime` with ack * 50 ms; command
-  n has `serverTime` n * 50 ms, and the one being made now n * 50 + the time since the last one. So
-  the cgame's own prediction (`CG_PredictPlayerState`, used in a replica even at timescale 1)
-  replays every unacknowledged command as one host frame, the way the host's `ClientThink` runs it.
-  The prediction-error decay is skipped in a replica (the newest command stays current over several
-  drawn frames, so the usual check would see its own partial move as an error).
+  n has `serverTime` n * 50 ms, and the cgame predicts to the clock's time: the commands after the ack
+  up to it, the last one partly (the one being made goes on with this frame's input). So the cgame's
+  own prediction (`CG_PredictPlayerState`, used in a replica even at timescale 1) replays every
+  unacknowledged command as one host frame, the way the host's `ClientThink` runs it. The world is
+  drawn on the same clock, a host frame behind.
+- Prediction errors: Q3's check is skipped in a replica (the newest command stays current over several
+  drawn frames, so it would see its own partial move as an error); instead the newest command predicted
+  in full last frame is compared with what it gives now, and a difference is eased out over
+  `cg_errorDecay` (one over 64 units is taken at once).
 - Measured on borg2 with two copies on one Mac: the host's P2 matched the guest's prediction of
   each acknowledged command exactly (0.00 units) in 405 of 406 frames (one 14-unit miss right after
   joining). The guest's commands run about 2 host frames behind; prediction hides it.

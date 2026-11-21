@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "q_shared.h"
 #include "qcommon.h"
 #include "unzip.h"
+#include <errno.h>
 
 /*
 =============================================================================
@@ -285,6 +286,10 @@ static	int			fs_readCount;			// total bytes read
 static	int			fs_loadCount;			// total files read
 static	int			fs_loadStack;			// total files in memory
 static	int			fs_packFiles = 0;		// total number of files in packs
+// .pk3 files that couldn't be opened because the process has too many open
+// files (each loaded pk3 stays open), so the "missing pak0" error can say why
+static	int			fs_paksNotOpened = 0;
+static	char		fs_paksNotOpenedReason[128];
 
 static int fs_checksumFeed;
 
@@ -2488,6 +2493,23 @@ ZIP FILE LOADING
 
 /*
 =================
+FS_PakAlloc
+
+Zeroed memory for a pack's index, outside the zone (freed with free()).
+=================
+*/
+static void *FS_PakAlloc( size_t size )
+{
+	void	*p = calloc( 1, size ? size : 1 );
+
+	if ( !p ) {
+		Com_Error( ERR_FATAL, "FS_LoadZipFile: out of memory (%lu bytes)", (unsigned long)size );
+	}
+	return p;
+}
+
+/*
+=================
 FS_LoadZipFile
 
 Creates a new pak_t in the search chain for the contents
@@ -2511,7 +2533,12 @@ static pack_t *FS_LoadZipFile(const char *zipfile, const char *basename)
 
 	fs_numHeaderLongs = 0;
 
+	errno = 0;
 	uf = unzOpen(zipfile);
+	if ( !uf && ( errno == EMFILE || errno == ENFILE ) ) {
+		fs_paksNotOpened++;
+		Com_sprintf( fs_paksNotOpenedReason, sizeof( fs_paksNotOpenedReason ), "%s", strerror( errno ) );
+	}
 	err = unzGetGlobalInfo (uf,&gi);
 
 	if (err != UNZ_OK)
@@ -2529,9 +2556,11 @@ static pack_t *FS_LoadZipFile(const char *zipfile, const char *basename)
 		unzGoToNextFile(uf);
 	}
 
-	buildBuffer = Z_Malloc( (gi.number_entry * sizeof( fileInPack_t )) + len );
+	// The pack's index (and the pack itself) lives outside the zone, so that
+	// thousands of .pk3 files don't use up com_zoneMegs; FS_FreePak frees it.
+	buildBuffer = FS_PakAlloc( (gi.number_entry * sizeof( fileInPack_t )) + len );
 	namePtr = ((char *) buildBuffer) + gi.number_entry * sizeof( fileInPack_t );
-	fs_headerLongs = Z_Malloc( ( gi.number_entry + 1 ) * sizeof(int) );
+	fs_headerLongs = FS_PakAlloc( ( gi.number_entry + 1 ) * sizeof(int) );
 	fs_headerLongs[ fs_numHeaderLongs++ ] = LittleLong( fs_checksumFeed );
 
 	// get the hash table size from the number of files in the zip
@@ -2542,7 +2571,7 @@ static pack_t *FS_LoadZipFile(const char *zipfile, const char *basename)
 		}
 	}
 
-	pack = Z_Malloc( sizeof( pack_t ) + i * sizeof(fileInPack_t *) );
+	pack = FS_PakAlloc( sizeof( pack_t ) + i * sizeof(fileInPack_t *) );
 	pack->hashSize = i;
 	pack->hashTable = (fileInPack_t **) (((char *) pack) + sizeof( pack_t ));
 	for(i = 0; i < pack->hashSize; i++) {
@@ -2588,7 +2617,7 @@ static pack_t *FS_LoadZipFile(const char *zipfile, const char *basename)
 	pack->checksum = LittleLong( pack->checksum );
 	pack->pure_checksum = LittleLong( pack->pure_checksum );
 
-	Z_Free(fs_headerLongs);
+	free(fs_headerLongs);
 
 	pack->buildBuffer = buildBuffer;
 	return pack;
@@ -2605,8 +2634,8 @@ Frees a pak structure and releases all associated resources
 static void FS_FreePak(pack_t *thepak)
 {
 	unzClose(thepak->handle);
-	Z_Free(thepak->buildBuffer);
-	Z_Free(thepak);
+	free(thepak->buildBuffer);
+	free(thepak);
 }
 
 /*
@@ -2646,7 +2675,9 @@ DIRECTORY SCANNING FUNCTIONS
 =================================================================================
 */
 
-#define	MAX_FOUND_FILES	0x1000
+// at most this many names in one FS_ListFilteredFiles list (a menu's map or
+// model list, for instance); more are left out, with a warning
+#define	MAX_FOUND_FILES	0x8000
 
 static int FS_ReturnPath( const char *zname, char *zpath, int *depth ) {
 	int len, at, newdep;
@@ -2676,10 +2707,16 @@ static int FS_ReturnPath( const char *zname, char *zpath, int *depth ) {
 FS_AddFileToList
 ==================
 */
-static int FS_AddFileToList( char *name, char *list[MAX_FOUND_FILES], int nfiles ) {
+static int FS_AddFileToList( char *name, char **list, int nfiles ) {
 	int		i;
 
 	if ( nfiles == MAX_FOUND_FILES - 1 ) {
+		static qboolean warned;
+		if ( !warned ) {
+			warned = qtrue;
+			Com_Printf( S_COLOR_YELLOW "WARNING: more than %d files match a file list "
+				"(MAX_FOUND_FILES); the rest are left out\n", MAX_FOUND_FILES - 1 );
+		}
 		return nfiles;
 	}
 	for ( i = 0 ; i < nfiles ; i++ ) {
@@ -2704,7 +2741,7 @@ from all search paths
 char **FS_ListFilteredFiles( const char *path, const char *extension, char *filter, int *numfiles, qboolean allowNonPureFilesOnDisk ) {
 	int				nfiles;
 	char			**listCopy;
-	char			*list[MAX_FOUND_FILES];
+	char			**list;
 	searchpath_t	*search;
 	int				i;
 	int				pathLength;
@@ -2733,6 +2770,11 @@ char **FS_ListFilteredFiles( const char *path, const char *extension, char *filt
 	extensionLength = strlen( extension );
 	nfiles = 0;
 	FS_ReturnPath(path, zpath, &pathDepth);
+
+	list = malloc( MAX_FOUND_FILES * sizeof( *list ) );	// too big for the stack
+	if ( !list ) {
+		Com_Error( ERR_FATAL, "FS_ListFilteredFiles: out of memory" );
+	}
 
 	//
 	// search through the path, one element at a time, adding to list
@@ -2816,6 +2858,7 @@ char **FS_ListFilteredFiles( const char *path, const char *extension, char *filt
 	*numfiles = nfiles;
 
 	if ( !nfiles ) {
+		free( list );
 		return NULL;
 	}
 
@@ -2824,6 +2867,7 @@ char **FS_ListFilteredFiles( const char *path, const char *extension, char *filt
 		listCopy[i] = list[i];
 	}
 	listCopy[i] = NULL;
+	free( list );
 
 	return listCopy;
 }
@@ -3421,6 +3465,7 @@ void FS_AddGameDirectory( const char *path, const char *dir ) {
 
 	int				pakwhich;
 	int				len;
+	int				notOpened;
 
 	// Unique
 	for ( sp = fs_searchpaths ; sp ; sp = sp->next ) {
@@ -3437,6 +3482,7 @@ void FS_AddGameDirectory( const char *path, const char *dir ) {
 
 	// Get .pk3 files
 	pakfiles = Sys_ListFiles(curpath, ".pk3", NULL, &numfiles, qfalse);
+	notOpened = fs_paksNotOpened;
 
 	// From cMod by Noah Metzger (Chomenor): also load the pk3s in the
 	// downloads/ subfolder. They're sorted in with the others by name (their
@@ -3547,6 +3593,12 @@ void FS_AddGameDirectory( const char *path, const char *dir ) {
 
 			pakdirsi++;
 		}
+	}
+
+	if ( fs_paksNotOpened > notOpened ) {
+		Com_Printf( S_COLOR_YELLOW "WARNING: %d of the %d .pk3 files in %s could not be opened (%s): "
+			"the system's limit on open files was reached\n", fs_paksNotOpened - notOpened, numfiles, curpath,
+			fs_paksNotOpenedReason );
 	}
 
 	// done
@@ -3949,6 +4001,7 @@ static void FS_Startup( const char *gameName )
 	Com_Printf( "----- FS_Startup -----\n" );
 
 	fs_packFiles = 0;
+	fs_paksNotOpened = 0;
 
 	fs_debug = Cvar_Get( "fs_debug", "0", 0 );
 	fs_cdpath = Cvar_Get ("fs_cdpath", "", CVAR_INIT );
@@ -4256,6 +4309,16 @@ static void FS_CheckPak0( void )
 	if(!com_standalone->integer && (foundPak & 0x07) != 0x07)
 	{
 		char errorText[MAX_STRING_CHARS] = "";
+
+		if(fs_paksNotOpened)
+		{
+			// not missing: there are more .pk3 files than the game can keep open
+			Q_strcat(errorText, sizeof(errorText),
+				va("%d .pk3 files could not be opened (%s): the system's limit on open files "
+				"was reached, so some of the game's own files may not have been loaded. "
+				"Move some of the other .pk3 files out of the %s folder.\n",
+				fs_paksNotOpened, fs_paksNotOpenedReason, BASEGAME));
+		}
 
 		if((foundPak & 0x01) != 0x01)
 		{
