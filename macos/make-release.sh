@@ -161,7 +161,7 @@ done
 if [ -n "${UPLOAD:-}" ]; then
 	[ -n "$IDENTITY" ] && [ -n "$NOTARY" ] || { echo "UPLOAD: only a signed, notarized build is uploaded" >&2; exit 1; }
 	TAG="macos-v$VERSION"
-	REPO="marinohardin/EliteForce-MacOS-Marino"
+	REPO="marinohardin/AwayTeamEF"
 	TITLE="AwayTeamEF $VERSION"
 	if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
 		gh release edit "$TAG" --repo "$REPO" --title "$TITLE" >/dev/null
