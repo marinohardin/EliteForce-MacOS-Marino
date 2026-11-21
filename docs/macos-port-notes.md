@@ -67,8 +67,6 @@ SDL_VULKAN_LIBRARY=/opt/homebrew/lib/libvulkan.1.dylib build-macos/efsp +set fs_
      builds against FFmpeg 9 as-is, but cinematic playback is untested without data.
 
 ## What blocked (all resolved)
-- The Claude Code auto-mode classifier refused to build the cloned third-party code until the
-  user approved it.
 - `/tmp` cleanup wiped the first scratchpad clone overnight, so the work moved to `~/gitdir/VoyagerSP-macos`.
 - The prebuilt FFmpeg `.a` files the Android CMake expects (`ffmpeg/lib64`) are **not in the
   repo**, despite the README. This doesn't matter on macOS (Homebrew FFmpeg is used instead).
