@@ -95,6 +95,8 @@ has the Expansion Pack (`pak3.pk3`), Check shows a warning and you can still joi
 
 ### Host and Join
 
+<img width="198" height="142" alt="AwayTeamEF: Single Player card with Co-op button" src="https://github.com/user-attachments/assets/a9da8116-f652-44ae-b32c-19afe8c5447b" />
+
 Click **Co-op…** on the launcher's Single Player card. The sheet has:
 
 - **Your name**, shown to the other player in co-op messages (such as "Hold Use to revive …").
@@ -123,6 +125,9 @@ Click **Co-op…** on the launcher's Single Player card. The sheet has:
   have only Holomatch's few animations, so player 2 plays the nearest one for each single-player
   move (no pain, ladder or crawl animations of its own). Type the
   password if the host set one.
+
+  <img width="601" height="1056" alt="AwayTeamEF: Co-Op menu" src="https://github.com/user-attachments/assets/3833f0ac-025b-4fb5-a5ea-a7a1b0bfed2e" />
+
 
 As the guest you see the host's world live from player 2's eyes: enemies, doors, lifts,
 explosions, cutscenes and in-game movies, with the host's voice lines, sounds and messages. You
