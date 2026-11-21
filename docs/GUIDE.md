@@ -1,3 +1,4 @@
+
 # AwayTeamEF player's guide
 
 The details behind the [README](../README.md): game files, co-op, Holomatch, hosting, and the
@@ -58,6 +59,8 @@ For Windows and Linux, see
 
    Then pick **Single Player** or **Holomatch**, adjust the graphics if you like, and
    click **Play**.
+
+<img width="628" height="964" alt="AwayTeamEF: Launch Screen" src="https://github.com/user-attachments/assets/8832f4f0-6a6a-4d2b-a364-635eea857bec" />
 
 ### Saves and settings
 
@@ -136,6 +139,10 @@ and triggers, pickups and weapons work for either player.
 
 Without a guest, a computer-controlled player 2 follows the host around. Co-op is only on when you
 use **Host** or **Join**: the normal **Play** and New Game are plain single player, as before.
+
+### Communicate with Pings
+
+Double tapping the "Use" button will Ping a location on both player's screens in Co-Op.
 
 ### Downed, not dead
 
