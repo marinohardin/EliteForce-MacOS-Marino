@@ -33,13 +33,14 @@ the other joins as a second Hazard Team member, on the same network or over the 
 
 - **Click Co-op… in the launcher**, then **Host** or pick your friend's game from the list.
 - **Downed, not dead.** Run out of health and your partner has about 30 seconds to revive you by holding Use.
+- **Work together.** Double tap use to send a **Ping** for your teammate. P2 can press and hold Use to teleport to P1.
 - **Saves work as before.** The host saves; player 2's health and weapons come back with the save.
 - **Pick your look.** Play player 2 as male or female Munro, a Voyager crew member, or one of 24
   Holomatch characters like Gowron and Captain Proton.
 - **Mix computers.** Mac, Windows and Linux all have co-op and use the same protocol.
 
-Co-op is new, so expect the odd glitch. See the [co-op guide](docs/GUIDE.md#co-op) for the
-details and its known limits.
+Co-op is new, but has tested well. See the [co-op guide](docs/GUIDE.md#co-op) for the
+details and its known limits, and report any issues.
 
 ## Screenshots
 
