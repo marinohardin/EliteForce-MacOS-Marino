@@ -273,6 +273,8 @@ jobs:
         # the Vulkan loader and FFmpeg are built from source by macos/build-*.sh.
         run: brew install cmake ninja pkg-config molten-vk vulkan-headers
 
+      # the installed .pc files hold absolute paths under the checkout, which is named after the
+      # repository: a cache from before a rename points at a folder that no longer exists
       - name: Cache dependencies
         id: cache
         uses: actions/cache@v4.2.0
@@ -280,7 +282,7 @@ jobs:
           path: |
             build-deps
             build-ffmpeg
-          key: deps-macos-${{ hashFiles('deps/versions.sh', 'macos/build-deps.sh', 'macos/build-ffmpeg.sh') }}
+          key: deps-macos-${{ github.event.repository.name }}-${{ hashFiles('deps/versions.sh', 'macos/build-deps.sh', 'macos/build-ffmpeg.sh') }}
 
       # make-app.sh builds anything missing (deps, FFmpeg, game modules, engine)
       - name: Build and package (unsigned)
