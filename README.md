@@ -7,7 +7,7 @@
 My family didn't let me play M-rated games like Quake growing up, so I played Elite Force as a kid!
 With this project, I wanted to make an easy way to play it again, especially at LAN parties.
 
-**[⬇ Download the latest release](https://github.com/marinohardin/AwayTeamEF/releases/latest)**
+**[Download the latest release](https://github.com/marinohardin/AwayTeamEF/releases/latest)**
 for macOS (Apple Silicon), Windows or Linux & Steam Deck. You need your own copy of the game.
 
 ## What This Is
@@ -43,9 +43,10 @@ details and its known limits.
 
 ## Screenshots
 
-<img width="2047" height="1147" alt="AwayTeamEF: Borg lighting" src="https://github.com/user-attachments/assets/5e19c8bf-c23c-45db-aacf-07fd942648eb" />
+<img width="2047" height="1147" alt="AwayTeamEF: Borg lighting" src="https://github.com/user-attachments/assets/3298a13c-faf3-43b5-a72d-3d1deff3e529" />
 <img width="2047" height="1147" alt="AwayTeamEF: Holomatch" src="https://github.com/user-attachments/assets/e23b315c-6f1d-4a55-8e8a-db6cff2e469c" />
-<img width="2050" height="1150" alt="AwayTeamEF: Seven of Nine" src="https://github.com/user-attachments/assets/49a38191-5eaf-44c7-99f6-d014cd2e59d3" />
+<img width="2047" height="1147" alt="AwayTeamEF: Bridge Co-Op" src="https://github.com/user-attachments/assets/03475e2d-8a76-43ea-81d6-b90088e88b92" />
+
 
 ## Get Started
 
@@ -79,8 +80,11 @@ Steps for each platform, Steam Deck setup, and where saves live:
   [cMod](https://github.com/Chomenor/ioef-cmod)'s fixes, widescreen HUD and lag compensation.
 - **A server browser** with player lists, map previews, favorites and `stvef://` join links.
 - **One-click server hosting** with a status window and automatic router port opening.
-- **Modern graphics:** widescreen, Retina / high resolution, full screen, Vulkan, and quality presets.
+- **Modern graphics:** widescreen, Retina / high resolution, full screen, and quality presets.
 - **Automatic update checks** so you know when a new version is out.
+-
+- <img width="783" height="964" alt="AwayTeamEF: Holomatch Menus" src="https://github.com/user-attachments/assets/70a4ed86-ad1c-449f-89a7-6efecc681add" />
+
 
 ## Learn More
 
@@ -92,11 +96,9 @@ Steps for each platform, Steam Deck setup, and where saves live:
 ## Known Issues
 
 - **The Mac is the most tested platform.** Windows and Linux have had less testing on real PCs.
-- **Co-op is new.** It has mostly been tested with two copies on one Mac. Please report what
-  you find, especially between two computers or over the internet.
-- **Expansion Pack content needs the Expansion Pack's data**, and the Expansion Pack itself is
-  barely tested.
-- **Back up your saves.**
+- **Co-op is new.** Please report what you find, especially between different OS's or over the internet.
+- **Expansion Pack content needs the Expansion Pack's data**. 
+- **Back up your saves.** Just in case.
 
 ## Reporting Issues
 
